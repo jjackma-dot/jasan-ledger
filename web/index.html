@@ -24,7 +24,10 @@
   --ink:#14181F; --ink2:#48515F; --muted:#7C8593; --line:#E1E4EA; --line2:#D2D7DF;
   --brass:#8A6420; --brass-soft:#F2E7D2; --on-brass:#FFFFFF;
   --up:#C93A34; --down:#2B5FC0;
-  --c1:#BE7A16; --c2:#0F8A6B; --c3:#4A55CE;
+  /* c1~c3 은 색각 검증을 통과한 3계열 팔레트다. 누적 그래프가 5계열이라 c4·c5 를 더했다.
+     띠가 서로 붙어 있어 선 그래프보다 구분이 쉽지만, 색만으로 읽게 두지 말고
+     범례와 툴팁의 이름을 항상 함께 보여줄 것. */
+  --c1:#BE7A16; --c2:#0F8A6B; --c3:#4A55CE; --c4:#A3486F; --c5:#5E6A79;
   --shadow:0 1px 2px rgba(20,24,31,.05),0 4px 14px rgba(20,24,31,.05);
   --r:12px;
 }
@@ -34,7 +37,7 @@
     --ink:#E9ECF1; --ink2:#AFB7C3; --muted:#79828F; --line:#262C36; --line2:#333B48;
     --brass:#D6A24A; --brass-soft:#2A2418; --on-brass:#151009; --on-brass:#151009;
     --up:#EC6259; --down:#6C9BEE;
-    --c1:#C28722; --c2:#1BA07C; --c3:#7078DE;
+    --c1:#C28722; --c2:#1BA07C; --c3:#7078DE; --c4:#D07A9C; --c5:#93A0B0;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.25);
   }
 }
@@ -43,7 +46,7 @@
   --ink:#E9ECF1; --ink2:#AFB7C3; --muted:#79828F; --line:#262C36; --line2:#333B48;
   --brass:#D6A24A; --brass-soft:#2A2418; --on-brass:#151009;
   --up:#EC6259; --down:#6C9BEE;
-  --c1:#C28722; --c2:#1BA07C; --c3:#7078DE;
+  --c1:#C28722; --c2:#1BA07C; --c3:#7078DE; --c4:#D07A9C; --c5:#93A0B0;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.25);
 }
 *{box-sizing:border-box}
@@ -125,12 +128,36 @@ svg.chart{display:block;width:100%;height:auto;overflow:visible}
 .row .vals{margin-left:auto;text-align:right;line-height:1.25}
 .row .v{font-size:13.5px;font-weight:600}
 .row .d{font-size:11px;font-weight:500}
+
+/* 중분류 헤더 — 눌러서 소분류를 편다. 합계는 항상 보인다 */
+.grp-t{display:flex;align-items:center;gap:7px;width:100%;background:none;border:0;
+  border-top:1px solid var(--line);cursor:pointer;text-align:left;font:inherit;
+  font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink2);
+  font-weight:600;padding:11px 15px}
+.grp-t:first-child{border-top:0}
+.grp-t .caret{color:var(--muted);font-size:9px;width:9px;flex:none;letter-spacing:0}
+.grp-t .vals{margin-left:auto;display:flex;align-items:baseline;gap:9px;letter-spacing:0;text-transform:none}
+.grp-t .v{font-size:14px;font-weight:700;color:var(--ink)}
+.grp-t .v .u{font-size:10px;font-weight:500;color:var(--muted);margin-left:2px}
+.grp-t .d{font-size:11px;font-weight:500;min-width:44px;text-align:right}
+.row.sub-row{background:var(--surf2);padding-left:31px}
+.row.sub-row+.row.sub-row{border-top:1px solid var(--line)}
+
+/* 누적 그래프 범례 — 색만으로 읽히지 않게 이름을 항상 붙인다 */
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;padding:8px 2px 0}
+.legend .lg{display:inline-flex;align-items:center;gap:5px;font-size:11px;color:var(--muted)}
+.legend .lg i{width:9px;height:9px;border-radius:2px;flex:none}
 .bar{height:3px;border-radius:2px;background:var(--line);overflow:hidden;margin-top:5px}
 .bar i{display:block;height:100%;border-radius:2px}
 
 .cum3{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:12px}
-.cum3 div{background:var(--surf);padding:9px 10px}
-.cum3 .k{font-size:10.5px;color:var(--muted);font-weight:600;letter-spacing:.04em}
+.cum3 div{background:var(--surf);padding:9px 8px}
+/* '주식+DC+자녀' 처럼 긴 이름도 한 줄에 들어가야 한다. 좁은 화면에서는 자간을 조여
+   맞추고, 그래도 넘치면 줄바꿈 대신 폭에 맞춰 눌러 준다. 숫자 줄과 높이가 어긋나면
+   세 칸의 바닥선이 안 맞아 표가 지저분해진다. */
+.cum3 .k{font-size:10.5px;color:var(--muted);font-weight:600;letter-spacing:.02em;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media (max-width:390px){ .cum3 .k{font-size:9.5px;letter-spacing:-.02em} .cum3 div{padding:9px 6px} }
 .cum3 .n{font-size:14.5px;letter-spacing:-.01em;white-space:nowrap;font-weight:600;margin-top:2px;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
 .src{font-size:9.5px;font-weight:600;padding:1px 5px;border-radius:4px;margin-left:6px;letter-spacing:.02em}
 .src.carry{background:var(--brass-soft);color:var(--brass)}
@@ -233,8 +260,8 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
     <section class="pane on" id="p-sum">
       <div class="seg" id="scopeSeg" role="group" aria-label="자산 범위">
         <button data-v="fin" aria-pressed="false">금융</button>
-        <button data-v="asset" aria-pressed="false">자산</button>
-        <button data-v="total" aria-pressed="true">전체</button>
+        <button data-v="asset" aria-pressed="true">자산</button>
+        <button data-v="total" aria-pressed="false">전체</button>
       </div>
 
       <div class="card hero" style="margin-top:12px">
@@ -242,9 +269,10 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         <div class="big num"><span id="heroVal">—</span><span class="unit">만원</span></div>
         <div id="heroDelta" class="delta fl">—</div>
         <div class="chartwrap" id="cw-sum">
-          <svg class="chart" id="ch-sum" viewBox="0 0 340 150" aria-label="자산 추이"></svg>
+          <svg class="chart" id="ch-sum" viewBox="0 0 340 150" aria-label="항목별 누적 자산 추이"></svg>
           <div class="tip" id="tip-sum"></div>
         </div>
+        <div class="legend" id="chLegend"></div>
         <div style="display:flex;gap:6px;padding:10px 0 12px">
           <div class="seg mini" id="scaleSeg" style="flex:1" role="group" aria-label="시간 단위">
             <button data-v="d" aria-pressed="true">일</button>
@@ -265,11 +293,16 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
 
     <!-- ============ 분석 ============ -->
     <section class="pane" id="p-ana">
+      <div class="seg" id="anaSeg" role="group" aria-label="손익 범위">
+        <button data-v="asset" aria-pressed="true">자산</button>
+        <button data-v="total" aria-pressed="false">전체</button>
+      </div>
+
       <div class="card hero" style="margin-top:12px">
-        <div class="lbl">보유분 평가손익 · 합계</div>
+        <div class="lbl" id="plLbl">금융손익</div>
         <div class="big num"><span id="plVal">—</span><span class="unit">만원</span></div>
         <div id="plRate" class="delta fl">—</div>
-        <div class="note" style="margin-top:8px">손익기준 시트의 항목별 매입금액 대비 현재 평가액.</div>
+        <div class="note" style="margin-top:8px" id="plNote">손익기준 시트의 항목별 매입금액 대비 현재 평가액. 부동산은 여기 포함하지 않습니다.</div>
       </div>
 
       <h2 class="sec">항목별 손익</h2>
@@ -583,6 +616,12 @@ const isEmptyLedger = () => { const k = Object.keys(state.days); return k.length
 const latestKey = () => dayKeys().slice(-1)[0];
 const latest = () => state.days[latestKey()];
 
+/* 중분류. 누적 그래프의 쌓는 순서(아래→위)이자 목록 표시 순서다.
+   과거 시계열(SEED.months/years)의 열과 1:1로 맞춰 뒀다 —
+   부동산 re / 주식 stock / 현금 sav / DC dc·db / 자녀 kid.
+   순서를 바꾸면 buildStack() 도 같이 바꿔야 한다. */
+const GROUPS = ['부동산', '주식', '현금', 'DC', '자녀'];
+
 /* 항목 정의 (금액은 모두 만원)
    cat  re   = 부동산   → 금융에서 제외, 자산·전체에 포함
    cat  core = 공통     → 세 범위 모두 포함
@@ -593,16 +632,16 @@ function items(x) {
     { g: '부동산', cat: 're', k: 'ber', n: L('ber', '부동산 A'), v: num(x.re.ber) },
     { g: '부동산', cat: 're', k: 'dia', n: L('dia', '부동산 B'), v: num(x.re.dia) },
     { g: '부동산', cat: 're', k: 'loan', n: '대출', v: num(x.re.loan) },
-    { g: '미국주식', cat: 'core', k: 'mmT', n: '무매 TQQQ', s: fmt(x.mm.T.q) + '주', v: num(x.mm.T.q) * num(p.T) * c.fx / 1e4 },
-    { g: '미국주식', cat: 'core', k: 'mmS', n: '무매 SOXL', s: fmt(x.mm.S.q) + '주', v: num(x.mm.S.q) * num(p.S) * c.fx / 1e4 },
-    { g: '미국주식', cat: 'core', k: 'vrT', n: 'VR TQQQ', s: fmt(x.vr.T.q) + '주', v: num(x.vr.T.q) * num(p.T) * c.fx / 1e4 },
-    { g: '국내·퇴직', cat: 'core', k: 'isa', n: 'ISA 레버리지', s: fmt(x.isa.q) + '주', v: c.isaV },
-    { g: '국내·퇴직', cat: 'ex', k: 'dc', n: 'DC 퇴직연금', v: c.dcv },
-    { g: '국내·퇴직', cat: 'ex', k: 'kid', n: '자녀 QLD', s: c.kidQ.toFixed(2) + '주', v: c.kidV },
-    { g: '현금성', cat: 'core', k: 'usd', n: '외화예수금', s: '$' + fmt(x.usd, 0), v: c.cashK },
-    { g: '현금성', cat: 'core', k: 'krw', n: '원화예수금', v: c.krw },
-    { g: '현금성', cat: 'core', k: 'hana', n: '하나은행', v: num(x.sav.h) },
-    { g: '현금성', cat: 'core', k: 'woori', n: '우리은행', v: num(x.sav.w) }
+    { g: '주식', cat: 'core', k: 'mmT', n: '무매 TQQQ', s: fmt(x.mm.T.q) + '주', v: num(x.mm.T.q) * num(p.T) * c.fx / 1e4 },
+    { g: '주식', cat: 'core', k: 'mmS', n: '무매 SOXL', s: fmt(x.mm.S.q) + '주', v: num(x.mm.S.q) * num(p.S) * c.fx / 1e4 },
+    { g: '주식', cat: 'core', k: 'vrT', n: 'VR TQQQ', s: fmt(x.vr.T.q) + '주', v: num(x.vr.T.q) * num(p.T) * c.fx / 1e4 },
+    { g: '주식', cat: 'core', k: 'isa', n: 'ISA 레버리지', s: fmt(x.isa.q) + '주', v: c.isaV },
+    { g: '현금', cat: 'core', k: 'usd', n: '외화예수금', s: '$' + fmt(x.usd, 0), v: c.cashK },
+    { g: '현금', cat: 'core', k: 'krw', n: '원화예수금', v: c.krw },
+    { g: '현금', cat: 'core', k: 'hana', n: '하나은행', v: num(x.sav.h) },
+    { g: '현금', cat: 'core', k: 'woori', n: '우리은행', v: num(x.sav.w) },
+    { g: 'DC', cat: 'ex', k: 'dc', n: 'DC 퇴직연금', v: c.dcv },
+    { g: '자녀', cat: 'ex', k: 'kid', n: '자녀 QLD', s: c.kidQ.toFixed(2) + '주', v: c.kidV }
   ];
 }
 function inScope(it, scope) {
@@ -665,7 +704,71 @@ function buildSeries(scope, scale, span) {
   return out;
 }
 
+/* 중분류별 시계열 — 누적 그래프용.
+   과거는 SEED 의 항목 열을 그대로 쓴다. 아래 항등식이 전 구간에서 오차 0 임을 확인했다.
+     fin = stock + sav + dc + kid   (연도 데이터는 dc 대신 db, 자녀는 2026년부터라 0)
+     net = re + stock + sav
+     tot = re + fin
+   re 는 이미 대출을 뺀 순액이라 그대로 쌓으면 높이가 순자산과 맞는다. */
+const GKEY = { '부동산': 're', '주식': 'stock', '현금': 'sav', 'DC': 'dc', '자녀': 'kid' };
+const GCAT = { '부동산': 're', '주식': 'core', '현금': 'core', 'DC': 'ex', '자녀': 'ex' };
+
+function stackGroups(scope) {
+  return GROUPS.filter(g => inScope({ cat: GCAT[g] }, scope));
+}
+/* 하루치 기록에서 중분류 합계를 뽑는다 */
+function dayGroupVals(rec) {
+  const o = {}; GROUPS.forEach(g => o[g] = 0);
+  items(rec).forEach(it => o[it.g] += it.v);
+  return o;
+}
+/* SEED 의 월/연 레코드에서 중분류 합계를 뽑는다 */
+function seedGroupVals(r, yearly) {
+  const g = k => num(r[k]);
+  return {
+    '부동산': g('re'), '주식': g('stock'), '현금': g('sav'),
+    /* 퇴직금이 두 열에 나뉘어 있다. 2026-05 이전 월은 db 에 들어 있고 dc 는 0,
+       2026-06 부터 dc·kid 로 갈라지면서 db 가 0 이 된다. 연도 데이터는 전부 db 다.
+       dc 만 읽으면 과거 월 그래프에서 퇴직금이 통째로 빠진다. */
+    'DC': g('dc') || g('db'), '자녀': g('kid')
+  };
+}
+function buildStack(scope, scale, span) {
+  const gs = stackGroups(scope);
+  const rows = [];                                   // [{t, label?, est, vals{}}]
+  if (scale === 'd') {
+    const end = parseISO(latestKey());
+    // 일별 기록이 없는 날은 그리지 않는다. 월별을 항목별로 보간하면 없는 정밀도를 지어내는 셈이다
+    for (let i = span - 1; i >= 0; i--) {
+      const d = new Date(end); d.setDate(d.getDate() - i);
+      const rec = state.days[iso(d)];
+      if (rec) rows.push({ t: d, est: false, vals: dayGroupVals(rec) });
+    }
+  } else if (scale === 'm') {
+    const byM = {};
+    SEED.months.forEach(m => byM[m.k] = seedGroupVals(m, false));
+    dayKeys().forEach(k => byM[k.slice(0, 7)] = dayGroupVals(state.days[k]));   // 실측이 있는 달은 대체
+    Object.keys(byM).sort().slice(-span).forEach(k => {
+      const [y, m] = k.split('-').map(Number);
+      rows.push({ t: new Date(y, m, 0), est: false, vals: byM[k] });
+    });
+  } else {
+    const byY = {};
+    SEED.years.forEach(y => byY[y.y] = seedGroupVals(y, true));
+    dayKeys().forEach(k => byY[+k.slice(0, 4)] = dayGroupVals(state.days[k]));
+    Object.keys(byY).map(Number).sort((a, b) => a - b).slice(-span).forEach(y =>
+      rows.push({ t: new Date(y, 11, 31), label: y + '', est: false, vals: byY[y] }));
+  }
+  return gs.map((g, i) => ({
+    name: g, color: STACK_C[i % STACK_C.length],
+    pts: rows.map(r => ({ t: r.t, label: r.label, est: r.est, v: r.vals[g] || 0 }))
+  }));
+}
+
 /* ===================== 차트 ===================== */
+/* 누적 그래프 색 — 아래(부동산)부터 위(자녀)로. part1.html 의 차트 팔레트와 같은 계열이다 */
+const STACK_C = ['--c1', '--c2', '--c3', '--c4', '--c5'];
+
 function drawChart(svg, tipEl, series, opt = {}) {
   const C = { line: cssv('--line'), line2: cssv('--line2'), muted: cssv('--muted'), surf: cssv('--surf') };
   series = series.map(s => ({ ...s, color: s.color.startsWith('--') ? cssv(s.color) : s.color }));
@@ -673,7 +776,17 @@ function drawChart(svg, tipEl, series, opt = {}) {
   const vb = svg.getAttribute('viewBox').split(' ').map(Number);
   const W = vb[2], H = vb[3], L = 6, R = 46, T = 12, B = 20;
   const iw = W - L - R, ih = H - T - B;
-  const all = series.flatMap(s => s.pts.map(p => p.v)).filter(v => isFinite(v));
+  /* 누적 모드 — series 는 아래에서 위로 쌓을 순서로 온다.
+     각 계열에 누적 상한(cum)을 미리 계산해 두고, 아래 그리기에서 띠로 채운다.
+     축 범위는 맨 위 누적선 기준이라 0 부터 총합까지가 된다. */
+  const stack = !!opt.stack;
+  if (stack) {
+    const run = new Array(series[0].pts.length).fill(0);
+    series.forEach(s => s.pts.forEach((p, i) => { run[i] += p.v; p.cum = run[i]; p.base = run[i] - p.v; }));
+  }
+  const all = stack
+    ? series[series.length - 1].pts.map(p => p.cum).concat([0]).filter(v => isFinite(v))
+    : series.flatMap(s => s.pts.map(p => p.v)).filter(v => isFinite(v));
   if (!all.length) { svg.innerHTML = ''; return; }
   let lo = Math.min(...all), hi = Math.max(...all);
   if (hi === lo) { hi = lo + 1; lo = lo - 1; }
@@ -681,6 +794,13 @@ function drawChart(svg, tipEl, series, opt = {}) {
   const allPos = Math.min(...all) >= 0;
   lo -= padv; hi += padv;
   if (allPos && lo < 0) lo = 0;
+  /* 축 경계를 억 단위 정수로 맞춘다. '117,682' 같은 여섯 자리보다 '12억' 이 읽힌다.
+     경계를 먼저 스냅해야 라벨이 자연수로 떨어진다 — 값만 반올림하면 눈금선과 어긋난다. */
+  const EOK = 1e4;
+  if (hi - lo >= EOK) {
+    hi = Math.ceil(hi / EOK) * EOK;
+    lo = allPos && lo <= 0 ? 0 : Math.floor(lo / EOK) * EOK;
+  }
   const n = series[0].pts.length;
   const X = i => L + (n === 1 ? iw / 2 : iw * i / (n - 1));
   const Y = v => T + ih - ih * (v - lo) / (hi - lo);
@@ -692,10 +812,24 @@ function drawChart(svg, tipEl, series, opt = {}) {
     const y = T + ih * i / 2;
     g += `<line x1="${L}" y1="${y}" x2="${L + iw}" y2="${y}" stroke="${C.line}" stroke-width="1"/>`;
   }
-  g += `<text x="${L + iw + 5}" y="${T + 4}" font-size="9" fill="${C.muted}" font-family="IBM Plex Mono,monospace">${esc(fmt(hi, 0))}</text>`;
-  g += `<text x="${L + iw + 5}" y="${T + ih + 3}" font-size="9" fill="${C.muted}" font-family="IBM Plex Mono,monospace">${esc(fmt(lo, 0))}</text>`;
+  /* 세로축 라벨. 경계를 억으로 스냅해 뒀으면 자연수로 떨어진다.
+     범위가 1억 미만이면 억으로 못 쓰니 만원 그대로 둔다. */
+  const axis = v => (hi - lo >= EOK) ? Math.round(v / EOK) + '억' : fmt(v, 0);
+  g += `<text x="${L + iw + 5}" y="${T + 4}" font-size="9" fill="${C.muted}" font-family="IBM Plex Mono,monospace">${esc(axis(hi))}</text>`;
+  g += `<text x="${L + iw + 5}" y="${T + ih + 3}" font-size="9" fill="${C.muted}" font-family="IBM Plex Mono,monospace">${esc(axis(lo))}</text>`;
 
-  series.forEach(s => {
+  if (stack) {
+    // 위에서부터 그려야 아래 띠가 가려지지 않는다
+    [...series].reverse().forEach(s => {
+      const pts = s.pts;
+      const top = pts.map((p, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(p.cum).toFixed(1)).join(' ');
+      const bot = pts.map((p, i) => 'L' + X(pts.length - 1 - i).toFixed(1) + ' ' + Y(pts[pts.length - 1 - i].base).toFixed(1)).join(' ');
+      g += `<path d="${top} ${bot} Z" fill="${s.color}" fill-opacity=".62"/>`;
+      g += `<path d="${top}" fill="none" stroke="${s.color}" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>`;
+    });
+    const tp = series[series.length - 1].pts;
+    g += `<circle cx="${X(n - 1).toFixed(1)}" cy="${Y(tp[n - 1].cum).toFixed(1)}" r="4" fill="${series[series.length - 1].color}" stroke="${C.surf}" stroke-width="2"/>`;
+  } else series.forEach(s => {
     const pts = s.pts;
     if (series.length === 1) {
       const area = pts.map((p, i) => (i ? 'L' : 'M') + X(i).toFixed(1) + ' ' + Y(p.v).toFixed(1)).join(' ')
@@ -748,13 +882,20 @@ function drawChart(svg, tipEl, series, opt = {}) {
     cross.querySelector('line').setAttribute('x1', X(i)); cross.querySelector('line').setAttribute('x2', X(i));
     cross.querySelectorAll('circle').forEach(c => {
       const s = series[+c.dataset.si];
-      c.setAttribute('cx', X(i)); c.setAttribute('cy', Y(s.pts[i].v));
+      c.setAttribute('cx', X(i)); c.setAttribute('cy', Y(stack ? s.pts[i].cum : s.pts[i].v));
     });
     const p0 = series[0].pts[i];
-    tipEl.innerHTML = `<div class="t-d">${esc(p0.label || p0.t.toLocaleDateString('ko-KR', { year: '2-digit', month: 'short', day: opt.scale === 'd' ? 'numeric' : undefined }))}${p0.est ? ' · 추정' : ''}</div>`
-      + series.map(s => series.length === 1
-        ? `<div class="t-v">${esc(eok(s.pts[i].v))}<span style="font-size:10px;color:var(--muted)"> 만원</span></div>`
-        : `<div class="t-r"><span class="swatch" style="background:${s.color}"></span>${esc(s.name)} <b style="margin-left:auto;font-family:IBM Plex Mono,monospace">${esc(eok(s.pts[i].v))}</b></div>`).join('');
+    const head = `<div class="t-d">${esc(p0.label || p0.t.toLocaleDateString('ko-KR', { year: '2-digit', month: 'short', day: opt.scale === 'd' ? 'numeric' : undefined }))}${p0.est ? ' · 추정' : ''}</div>`;
+    tipEl.innerHTML = stack
+      // 화면에 쌓인 순서(위→아래)대로 읽히게 뒤집는다. 맨 끝에 합계를 붙인다
+      ? head + [...series].reverse().map(s =>
+        `<div class="t-r"><span class="swatch" style="background:${s.color}"></span>${esc(s.name)} <b style="margin-left:auto;font-family:IBM Plex Mono,monospace">${esc(fmt(s.pts[i].v, 0))}</b></div>`).join('')
+      + `<div class="t-r" style="border-top:1px solid var(--line);margin-top:4px;padding-top:4px"><b>합계</b><b style="margin-left:auto;font-family:IBM Plex Mono,monospace">${esc(fmt(series[series.length - 1].pts[i].cum, 0))}</b></div>`
+      // 여러 계열은 화면에 그려진 높이 순(위 → 아래)으로 적는다. 눈과 순서가 어긋나면 읽기 어렵다
+      : head + (series.length === 1
+        ? `<div class="t-v">${esc(eok(series[0].pts[i].v))}<span style="font-size:10px;color:var(--muted)"> 만원</span></div>`
+        : [...series].sort((a, b) => b.pts[i].v - a.pts[i].v).map(s =>
+          `<div class="t-r"><span class="swatch" style="background:${s.color}"></span>${esc(s.name)} <b style="margin-left:auto;font-family:IBM Plex Mono,monospace">${esc(eok(s.pts[i].v))}</b></div>`).join(''));
     tipEl.classList.add('on');
     const tw = tipEl.offsetWidth;
     let lft = (X(i) / W) * r.width - tw / 2;
@@ -768,7 +909,9 @@ function drawChart(svg, tipEl, series, opt = {}) {
 }
 
 /* ===================== 종합 탭 ===================== */
-let UI = { scope: 'total', scale: 'd', span: 90, tab: 'sum', plan: 'asset' };
+let UI = { scope: 'asset', scale: 'd', span: 90, tab: 'sum', plan: 'asset', ana: 'asset' };
+/* 종합 탭에서 펼쳐 둔 중분류. 처음에는 다 접혀 있고 합계만 보인다 */
+let OPEN_G = {};
 const SPANS = { d: [[60, '60일'], [90, '90일'], [180, '180일']], m: [[12, '1년'], [36, '3년'], [60, '5년']], y: [[10, '10년'], [20, '20년'], [30, '30년']] };
 const SCOPE_LBL = { fin: '금융자산', asset: '자산 (부동산 포함)', total: '전체 자산' };
 
@@ -793,27 +936,41 @@ function renderSummary() {
     de.innerHTML = `<span>전일비 ${dv >= 0 ? '+' : '−'}${fmt(Math.abs(dv), 0)}만원</span>`
       + `<span class="pill">${dv >= 0 ? '+' : '−'}${fmt(Math.abs(dv / (c[UI.scope] - dv) * 100), 2)}%</span>`;
   }
-  const ser = buildSeries(UI.scope, UI.scale, UI.span);
-  drawChart($('#ch-sum'), $('#tip-sum'), [{ name: SCOPE_LBL[UI.scope], color: '--c1', pts: ser }], { scale: UI.scale });
-  const est = isEmptyLedger() ? 0 : ser.filter(p => p.est).length;
-  $('#estNote').innerHTML = est
-    ? `<div class="warn"><span>◔</span><div>앞쪽 <b>${est}일</b> 구간은 일별 기록이 없어 월말 기록을 이어 그린 <b>보간선</b>(점선)입니다. 일별 실측은 <b>${dayKeys()[0].slice(2).replace(/-/g, '.')}</b>부터 매일 쌓입니다.</div></div>`
+  const stk = buildStack(UI.scope, UI.scale, UI.span);
+  drawChart($('#ch-sum'), $('#tip-sum'), stk, { scale: UI.scale, stack: true });
+  $('#chLegend').innerHTML = [...stk].reverse().map(s =>
+    `<span class="lg"><i style="background:var(${s.color})"></i>${s.name}</span>`).join('');
+  const shown = stk.length ? stk[0].pts.length : 0;
+  $('#estNote').innerHTML = (UI.scale === 'd' && shown < UI.span && !isEmptyLedger())
+    ? `<div class="warn"><span>◔</span><div>일별 기록이 있는 <b>${shown}일</b>만 그립니다. 항목별 누적 그래프는 월말 값을 항목 단위로 쪼갤 수 없어 보간하지 않습니다. 긴 구간은 <b>월</b>·<b>연</b>으로 보세요.</div></div>`
     : (UI.scale === 'm' && !isEmptyLedger() ? `<div class="warn"><span>◔</span><div>월 그래프는 <b>월말 기록</b> 기준입니다. 일별 기록이 있는 달은 그 달의 마지막 기록일 값으로 대체됩니다.</div></div>` : '');
 
-  // 항목 행
+  // 항목 행 — 중분류는 합계를 달고, 소분류는 눌러서 편다
   const its = items(x).filter(it => inScope(it, UI.scope));
   const pits = prevK ? items(state.days[prevK]) : null;
   const maxAbs = Math.max(...its.map(i => Math.abs(i.v)), 1);
-  let html = '', lastG = null;
-  its.forEach(it => {
-    if (it.g !== lastG) { lastG = it.g; html += `<div class="grp-h" style="padding-left:15px">${it.g}</div>`; }
-    const prev = pits ? pits.find(p => p.k === it.k) : null;
-    const d = prev ? it.v - prev.v : null;
+  const dCell = d => {
     const cls = d == null || Math.abs(d) < 0.5 ? 'fl' : d > 0 ? 'up' : 'dn';
-    html += `<div class="row"><div><div class="nm">${it.n}${it.s ? `<span class="sub">${it.s}</span>` : ''}</div>
-      <div class="bar" style="width:96px"><i style="width:${Math.min(100, Math.abs(it.v) / maxAbs * 100)}%;background:${it.v < 0 ? 'var(--down)' : 'var(--c1)'}"></i></div></div>
-      <div class="vals"><div class="v num">${fmt(it.v, 0)}</div>
-      <div class="d num ${cls}">${d == null ? '—' : (d >= 0 ? '+' : '−') + fmt(Math.abs(d), 0)}</div></div></div>`;
+    return `<div class="d num ${cls}">${d == null ? '—' : (d >= 0 ? '+' : '−') + fmt(Math.abs(d), 0)}</div>`;
+  };
+  let html = '';
+  GROUPS.forEach(g => {
+    const gi = its.filter(it => it.g === g);
+    if (!gi.length) return;
+    const sum = gi.reduce((a, it) => a + it.v, 0);
+    const psum = pits ? pits.filter(it => it.g === g).reduce((a, it) => a + it.v, 0) : null;
+    const open = !!OPEN_G[g];
+    html += `<button class="grp-h grp-t" data-g="${g}" aria-expanded="${open}">
+        <span class="caret">${open ? '▾' : '▸'}</span><span>${g}</span>
+        <span class="vals"><span class="v num">${fmt(sum, 0)}<span class="u">만원</span></span>${dCell(psum == null ? null : sum - psum)}</span>
+      </button>`;
+    if (!open) return;
+    gi.forEach(it => {
+      const prev = pits ? pits.find(p => p.k === it.k) : null;
+      html += `<div class="row sub-row"><div><div class="nm">${it.n}${it.s ? `<span class="sub">${it.s}</span>` : ''}</div>
+        <div class="bar" style="width:96px"><i style="width:${Math.min(100, Math.abs(it.v) / maxAbs * 100)}%;background:${it.v < 0 ? 'var(--down)' : 'var(--c1)'}"></i></div></div>
+        <div class="vals"><div class="v num">${fmt(it.v, 0)}</div>${dCell(prev ? it.v - prev.v : null)}</div></div>`;
+    });
   });
   $('#itemRows').innerHTML = html;
 }
@@ -825,30 +982,60 @@ function plRows() {
   const B = {}; BKEYS.forEach(k => B[k] = (SEED.basis && SEED.basis[k]) || { cost: 0 });
   const man = w => w / 1e4;                                  // 원 → 만원
   const usdCost = num(B['무매 TQQQ'].cost) + num(B['무매 SOXL'].cost) + num(B['VR TQQQ'].cost);
-  /* 매입원가 대비 평가손익 — 서로 겹치지 않으므로 단순 합산이 성립 */
+  /* 매입원가 대비 평가손익 — 서로 겹치지 않으므로 단순 합산이 성립.
+     cat 은 종합 탭과 같은 뜻이다. core = 주식계좌, ex = DC·자녀.
+     부동산은 여기 넣지 않는다 — 자산이든 전체든 손익 목록에서는 뺀다. */
   const rows = [
-    { n: '무매 TQQQ', sub: '달러손익 × 현재환율', v: (num(x.mm.T.q) * num(p.T) - num(B['무매 TQQQ'].cost)) * fx / 1e4, cost: num(B['무매 TQQQ'].cost) * fx / 1e4 },
-    { n: '무매 SOXL', sub: '달러손익 × 현재환율', v: (num(x.mm.S.q) * num(p.S) - num(B['무매 SOXL'].cost)) * fx / 1e4, cost: num(B['무매 SOXL'].cost) * fx / 1e4 },
-    { n: 'VR TQQQ', sub: '달러손익 × 현재환율', v: (num(x.vr.T.q) * num(p.T) - num(B['VR TQQQ'].cost)) * fx / 1e4, cost: num(B['VR TQQQ'].cost) * fx / 1e4 },
-    { n: '환차손익', sub: '미국주식 매입금액 + 달러예수금', v: (usdCost + num(x.usd)) * (fx - fx0) / 1e4, cost: (usdCost + num(x.usd)) * fx0 / 1e4 },
-    { n: 'ISA 레버리지', v: c.isaV - man(num(B['주식 레버리지'].cost)), cost: man(num(B['주식 레버리지'].cost)) },
-    { n: '자녀 QLD', sub: '환차손익 포함', v: c.kidV - man(num(B['자녀 QLD'].cost)), cost: man(num(B['자녀 QLD'].cost)) },
-    { n: 'DC 퇴직연금', v: c.dcv - man(num(B['DC'].cost)), cost: man(num(B['DC'].cost)) }
+    { cat: 'core', n: '무매 TQQQ', sub: '달러손익 × 현재환율', v: (num(x.mm.T.q) * num(p.T) - num(B['무매 TQQQ'].cost)) * fx / 1e4, cost: num(B['무매 TQQQ'].cost) * fx / 1e4 },
+    { cat: 'core', n: '무매 SOXL', sub: '달러손익 × 현재환율', v: (num(x.mm.S.q) * num(p.S) - num(B['무매 SOXL'].cost)) * fx / 1e4, cost: num(B['무매 SOXL'].cost) * fx / 1e4 },
+    { cat: 'core', n: 'VR TQQQ', sub: '달러손익 × 현재환율', v: (num(x.vr.T.q) * num(p.T) - num(B['VR TQQQ'].cost)) * fx / 1e4, cost: num(B['VR TQQQ'].cost) * fx / 1e4 },
+    { cat: 'core', n: '환차손익', sub: '미국주식 매입금액 + 달러예수금', v: (usdCost + num(x.usd)) * (fx - fx0) / 1e4, cost: (usdCost + num(x.usd)) * fx0 / 1e4 },
+    { cat: 'core', n: 'ISA 레버리지', v: c.isaV - man(num(B['주식 레버리지'].cost)), cost: man(num(B['주식 레버리지'].cost)) },
+    { cat: 'ex', n: '자녀 QLD', sub: '환차손익 포함', v: c.kidV - man(num(B['자녀 QLD'].cost)), cost: man(num(B['자녀 QLD'].cost)) },
+    { cat: 'ex', n: 'DC 퇴직연금', v: c.dcv - man(num(B['DC'].cost)), cost: man(num(B['DC'].cost)) }
   ];
   /* 주식 반영수익 = (DC·자녀 제외 전체 금융자산) − 원금 */
   const realized = { n: '주식 반영수익', sub: '무매+VR+레버리지 − 원금', v: c.stockAcct - num(state.principal), cost: num(state.principal) };
   return { rows, realized, c, x };
 }
+/* 메리츠 계좌 — 무매 + VR + 예수금(외화·원화) + ISA 레버리지.
+   DC 는 미래에셋, 자녀는 토스라 계좌가 다르다. 은행 예적금(하나·우리)도 여기 아니다.
+   기준원금 16,000만원이 대응하는 것이 바로 이 계좌다. */
+const meritz = c => c.usK + c.cashK + c.krw + c.isaV;
+
+/* 1년 누적수익.
+
+   원칙은 '원금을 넘는 부분이 수익' 이다. 입출금이 있으면 applyFlow() 가 기준원금을
+   같은 금액만큼 움직여 주므로(위 FLOW_TGT 참고) 원금 대비 차액은 입출금에 오염되지 않는다.
+
+   1년 전 잔액과 비교하는 방법도 되지만, 25년 9월~현재 구간의 월별 기록이 계좌 단위로
+   명확하지 않다. 그래서 **기록이 없으면 현재 원금 입력값과 비교**한다.
+   원금은 실적·계획 탭에서 고칠 수 있다.
+
+   전체 범위는 여기에 DC·자녀 손익을 더한다. 그쪽은 계좌가 달라 원금도 따로다. */
+function yearProfit(anaScope, c, allRows) {
+  const base = meritz(c) - num(state.principal);
+  if (anaScope !== 'total') return { v: base, ref: '원금' };
+  const ex = allRows.filter(r => r.cat === 'ex').reduce((a, r) => a + r.v, 0);   // DC + 자녀
+  return { v: base + ex, ref: '원금 + DC·자녀 매입원가' };
+}
 function renderAnalysis() {
-  const { rows, realized, c, x } = plRows();
+  const { rows: allRows, realized, c, x } = plRows();
+  const rows = allRows.filter(r => inScope(r, UI.ana));      // 자산 = 주식계좌만, 전체 = DC·자녀까지
   const sum = rows.reduce((a, r) => a + r.v, 0);
-  const cost = rows.reduce((a, r) => a + r.cost, 0);
   $('#plVal').textContent = eok(sum);
+  $('#plLbl').textContent = UI.ana === 'total' ? '금융손익 · 전체' : '금융손익 · 자산';
+
+  const yp = yearProfit(UI.ana, c, allRows);
+  const y1 = yp.v, denom = num(state.principal);
   const pr = $('#plRate');
-  pr.className = 'delta ' + (sum > 0 ? 'up' : sum < 0 ? 'dn' : 'fl');
-  pr.innerHTML = cost > 0
-    ? `<span>매입원가 ${eok(cost)}만원 대비</span><span class="pill">${sum >= 0 ? '+' : '−'}${fmt(Math.abs(sum / cost * 100), 2)}%</span>`
-    : `<span>손익기준이 아직 없습니다</span>`;
+  pr.className = 'delta ' + (y1 > 0.5 ? 'up' : y1 < -0.5 ? 'dn' : 'fl');
+  pr.innerHTML = `<span>1년 누적수익 ${y1 >= 0 ? '+' : '−'}${fmt(Math.abs(y1), 0)}만원</span>`
+    + (denom > 0 ? `<span class="pill">${y1 >= 0 ? '+' : '−'}${fmt(Math.abs(y1 / denom * 100), 1)}%</span>` : '');
+  $('#plNote').innerHTML = `큰 숫자는 <b>매입원가 대비 평가손익</b>의 합입니다. 부동산은 여기 포함하지 않습니다.`
+    + `<br>1년 누적수익은 메리츠 계좌 평가액 <b>${fmt(meritz(c), 0)}만원</b>에서 기준원금 ${fmt(denom, 0)}만원을 뺀 값입니다`
+    + (UI.ana === 'total' ? `. 전체는 여기에 DC·자녀 손익을 더합니다.` : `. 은행 예적금과 DC·자녀는 계좌가 달라 빠집니다.`)
+    + ` 기준원금은 실적·계획 탭에서 고칠 수 있습니다.`;
 
   const bar = (v, mx) => `<div class="bar" style="width:110px"><i style="width:${Math.min(100, Math.abs(v) / mx * 100)}%;background:var(--${v < 0 ? 'down' : 'up'})"></i></div>`;
   const line = (r, mx) => {
@@ -866,25 +1053,39 @@ function renderAnalysis() {
   $('#fxNow').value = (+x.px.FX).toFixed(2);
   $('#principal').value = state.principal;
 
-  /* 항등식 검증 — 부동산까지 포함하면 전체 손익과 일치해야 함 */
+  /* 항등식 검증 — 범위와 무관하게 7개 항목 전부로 확인한다.
+     부동산 손익에서 대출을 뺐다. 예전에는 대출 포함 평가액에서 매입원가를 빼서
+     −19,435 라는 값이 나왔는데, 이건 '부동산이 손해'가 아니라 대출 잔액이 섞인 수치였다.
+     대출은 매입원가에 대응하는 자산이 아니라 부채이므로 별도 항으로 뺀다.
+     이렇게 해도 항등식은 그대로 성립한다 — 전체자산에 대출이 이미 음수로 들어 있어서다. */
   const B = {}; BKEYS.forEach(k => B[k] = (SEED.basis && SEED.basis[k]) || { cost: 0 });
   const man = w => w / 1e4;
-  const reP = c.reT - num(B['부동산'].cost);
+  const loan = num(x.re.loan);                                  // 음수
+  const reP = (c.reT - loan) - num(B['부동산'].cost);            // 대출 제외 평가액 − 매입원가
   const totalCost = (num(B['무매 TQQQ'].cost) + num(B['무매 SOXL'].cost) + num(B['VR TQQQ'].cost) + num(x.usd)) * num(state.fx0) / 1e4
     + man(num(B['자녀 QLD'].cost)) + man(num(B['DC'].cost)) + man(num(B['주식 레버리지'].cost)) + num(B['부동산'].cost)
     + c.krw + c.savT;
   const direct = c.total - totalCost;
-  const gap = Math.abs(direct - (sum + reP));
-  const unreal = rows[0].v + rows[1].v + rows[2].v + rows[3].v + rows[4].v;   // 주식계좌 미실현
+  const sumAll = allRows.reduce((a, r) => a + r.v, 0);
+  const gap = Math.abs(direct - (sumAll + reP + loan));
+  const unreal = allRows.filter(r => r.cat === 'core').reduce((a, r) => a + r.v, 0);   // 주식계좌 미실현
+  const reCum = reP + num(state.rePast);                        // 과거 실현분까지 더한 부동산 누적수익
+  /* 누적수익을 기간으로 가른다. 총액은 실적/계획 탭의 주식 누적수익과 같은 정의다.
+     1년치는 메리츠 계좌 기준으로 고정한다 — 범위(자산/전체)를 따라가면
+     총액(주식 기준)과 앞뒤가 안 맞는다. 과거수익은 나머지다. */
+  const cumAll = num(state.stPast) + realized.v;
+  const cum1 = meritz(c) - num(state.principal);
   $('#idCheck').innerHTML = `<div style="font-size:11.5px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">검증</div>
     <div class="scroll" style="margin-top:8px"><table class="tbl">
-    <tr><td>위 7개 항목 합</td><td>${fmt(sum, 1)}</td></tr>
-    <tr><td>부동산 (목록 제외)</td><td>${fmt(reP, 1)}</td></tr>
+    <tr><td>손익 7개 항목 합</td><td>${fmt(sumAll, 1)}</td></tr>
+    <tr><td>부동산 <span class="u">대출 제외</span></td><td>${fmt(reP, 1)}</td></tr>
+    <tr><td>대출 <span class="u">부채</span></td><td>${fmt(loan, 1)}</td></tr>
     <tr><td>전체자산 − 총 매입원가</td><td>${fmt(direct, 1)}</td></tr>
     <tr><td style="color:var(--ink);font-weight:600">차이</td><td style="color:var(--${gap < 0.5 ? 'c2' : 'up'});font-weight:600">${fmt(gap, 2)} 만원</td></tr>
     </table></div>
     <p class="note" style="margin-top:8px">${gap < 0.5
-      ? '무매 + VR + 환차손익 + ISA + 자녀 + DC + 부동산의 손익 합이 전체 손익과 정확히 일치합니다.'
+      ? `무매 + VR + 환차손익 + ISA + 자녀 + DC + 부동산 + 대출의 합이 전체 손익과 정확히 일치합니다.
+         부동산에 과거 실현수익 ${fmt(num(state.rePast), 0)}만원을 더한 <b>누적수익은 ${fmt(reCum, 0)}만원</b>입니다.`
       : '차이가 있습니다. 매입 평균환율 또는 손익기준 매입금액을 확인하세요.'}</p>
     <div class="scroll" style="margin-top:12px"><table class="tbl">
     <tr><th>주식 반영수익 분해</th><th>만원</th></tr>
@@ -894,7 +1095,14 @@ function renderAnalysis() {
     <tr><td>그중 현재 미실현</td><td>${fmt(unreal, 0)}</td></tr>
     <tr><td>과거 매도 실현분</td><td>${fmt(realized.v - unreal, 0)}</td></tr>
     </table></div>
-    <p class="note" style="margin-top:8px">반영수익은 위 목록의 무매·VR·환차·ISA와 계좌가 겹치므로 합산 대상이 아닙니다. 원금 대비 계좌 전체 성과를 따로 보는 값입니다.</p>`;
+    ${cum1 == null ? '' : `<div class="scroll" style="margin-top:12px"><table class="tbl">
+    <tr><th>누적수익 기간 분해</th><th>만원</th></tr>
+    <tr><td>1년 누적수익 <span class="u">원금 대비</span></td><td>${fmt(cum1, 0)}</td></tr>
+    <tr><td>과거수익 <span class="u">그 이전</span></td><td>${fmt(cumAll - cum1, 0)}</td></tr>
+    <tr><td style="color:var(--ink);font-weight:600">= 누적수익</td><td style="font-weight:600">${fmt(cumAll, 0)}</td></tr>
+    </table></div>`}
+    <p class="note" style="margin-top:8px">반영수익은 위 목록의 무매·VR·환차·ISA와 계좌가 겹치므로 합산 대상이 아닙니다. 원금 대비 계좌 전체 성과를 따로 보는 값입니다.
+    ${cum1 == null ? '' : `누적수익은 과거 실현수익 ${fmt(num(state.stPast), 0)}만원에 반영수익을 더한 값이고, 그중 최근 1년치를 갈라 놓은 것이 위 표입니다.`}</p>`;
 }
 
 /* ===================== 시세 자동 조회 =====================
@@ -1283,21 +1491,33 @@ function renderPlan() {
 
   /* ── 누적수익 3열 ── */
   const cells = useTotal
-    ? [['주식+DC+자녀', g.totalCol], ['부동산', g.re], ['전체', g.total]]
+    ? [['주식·DC·자녀', g.totalCol], ['부동산', g.re], ['전체', g.total]]
     : [['주식', g.stock], ['부동산', g.re], ['자산', g.asset]];
   $('#cum3').innerHTML = cells.map(([k, v]) =>
     `<div><div class="k">${k}</div><div class="n ${v > 0 ? 'up' : v < 0 ? 'dn' : ''}">${v >= 0 ? '' : '−'}${fmt(Math.abs(v), 0)}</div></div>`).join('');
 
   const x = latest(), c0 = calc(latest());
-  $('#reEdit').innerHTML = [
-    ['reCost', '부동산 매입원가', '만원', num(state.reCost)],
-    ['rePast', '과거 부동산 실현수익', '만원', num(state.rePast)],
-    ['stPast', '과거 주식 실현수익', '만원', num(state.stPast)],
-    ['principal', '주식 기준원금', '만원', num(state.principal)]
-  ].map(([k, l, u, v]) =>
-    `<div class="erow"><label>${l} <span class="u">${u}</span></label>
-     <input class="num" type="number" step="1" data-plan="${k}" value="${v}"></div>`).join('')
-    + `<p class="note" style="padding:8px 15px 0">부동산 수익은 <b>대출을 뺀 평가액</b>(${fmt(num(x.re.ber) + num(x.re.dia), 0)}만원)에서 매입원가를 뺀 뒤 과거 실현수익을 더합니다.
+  /* 평가액 세 줄은 오늘 기록을 직접 고치는 값이라 data-hold 로 묶는다.
+     입력 탭의 보유 현황과 같은 경로·같은 핸들러를 쓴다. 아래 기준값 네 줄은
+     날짜와 무관한 설정이라 data-plan 이다. 둘을 섞지 말 것. */
+  const hold = [
+    ['re.ber', L('ber', '부동산 A') + ' 평가액'],
+    ['re.dia', L('dia', '부동산 B') + ' 평가액'],
+    ['re.loan', '대출 잔액']
+  ].map(([p, l]) =>
+    `<div class="erow"><label>${l} <span class="u">만원</span></label>
+     <input class="num" type="number" step="1" data-hold="${p}" value="${num(getPath(x, p))}"></div>`).join('');
+  const plan = [
+    ['reCost', '부동산 매입원가', num(state.reCost)],
+    ['rePast', '과거 부동산 실현수익', num(state.rePast)],
+    ['stPast', '과거 주식 실현수익', num(state.stPast)],
+    ['principal', '주식 기준원금', num(state.principal)]
+  ].map(([k, l, v]) =>
+    `<div class="erow"><label>${l} <span class="u">만원</span></label>
+     <input class="num" type="number" step="1" data-plan="${k}" value="${v}"></div>`).join('');
+  $('#reEdit').innerHTML = hold
+    + `<div class="grp-h" style="padding-left:15px">손익 기준값</div>` + plan
+    + `<p class="note" style="padding:8px 15px 0">부동산 수익은 <b>대출을 뺀 평가액</b>(${fmt(num(x.re.ber) + num(x.re.dia), 0)}만원)에서 매입원가를 뺀 뒤 과거 실현수익을 더합니다. 대출은 부채라 수익 계산에 넣지 않습니다.
        주식 수익은 과거 실현수익에 <b>기준원금 대비 증감분</b>(${fmt(c0.stockAcct - num(state.principal), 0)}만원)을 더합니다.
        입출금이 있으면 기준원금을 그만큼 조정해야 수익이 부풀지 않습니다.</p>`;
 
@@ -1313,9 +1533,9 @@ function renderPlan() {
     ['자녀자산', s => s.G, '억', 0],
     ['자녀 목표 부족분', s => s.kidShort, '억', 0],
     ['은퇴 인출가능', s => s.avail, '억', 1],
-    ['국민연금(월)', s => s.pen, '만원', 0],
-    ['세후 월 인출액', s => s.drawM, '만원', 0],
-    ['월 현금흐름', s => s.cashM, '만원', 1]
+    ['국민연금(월)', s => s.pen, '만', 0],
+    ['세후 월 인출액', s => s.drawM, '만', 0],
+    ['월 현금흐름', s => s.cashM, '만', 1]
   ];
   $('#retTbl').innerHTML =
     `<tr><th>항목</th>${SCN.map(n => `<th>${n}</th>`).join('')}</tr>`
@@ -1363,21 +1583,60 @@ function renderPlan() {
   if (!SEED.years.length && isEmptyLedger()) {
     $('#ch-plan').innerHTML = ''; $('#lg-plan').innerHTML = ''; return;
   }
-  const yr = {};
-  SEED.years.forEach(y => yr[y.y] = { re: y.re, stock: y.stock + y.sav, db: y.db, tot: y.tot, net: y.net });
+  /* 과거는 실제 기록, 미래는 세 시나리오. 항목별이 아니라 시나리오별로 가른다.
+     그리는 값은 언제나 '전체 자산' — 부동산 + 금융 + DC + 자녀에서 대출을 뺀 순자산이다.
+
+     과거 구간에서 현재·목표는 실제 기록이라 같은 값이고, 예상만 아래로 갈라진다.
+
+       예상[y] = 실제[y] − 주식 누적수익[y]
+
+     '주식 투자를 하지 않았다면' 이라는 뜻이다. 부동산 상승이나 퇴직금 적립은
+     그대로 두고 주식으로 번 것만 걷어낸다.
+
+     **누적수익은 단조 증가여야 한다.** 실현하면 다른 자산으로 옮겨갈 뿐 없어지지
+     않고, 총 누적수익이 마이너스였던 적도 없다. 그러니 예상선은 실제선 위로
+     올라갈 수 없다. 이 성질이 깨지면 모델이 틀린 것이다.
+
+     연도별 수익 기록이 없어 지금 값(cumulative().stock)을 배분한다. 가중치는
+     **주식 잔액의 누적합**이다. 잔액은 음수가 될 수 없으니 누적합은 반드시
+     단조 증가하고, 많이 투자한 해에 수익이 더 실린다.
+
+     버린 방법: 그 해 잔액 비율로 배분(= cum × stock[y]/stock[now]). 2021년처럼
+     잔액이 0인 해에서 그때까지의 수익이 통째로 사라져 차감액이 늘었다 줄었다 했다.
+     한 해 앞을 투영하는 방법(실제[y−1] + 저축 + ΔDC)도 버렸다. 매년 실제값으로
+     리셋돼 이전 수익을 기억하지 못하고, 손실 난 해에는 예상이 실제 위로 올라간다. */
+  const yrPast = {};
+  SEED.years.forEach(y => yrPast[y.y] = { tot: num(y.tot), stock: num(y.stock) });
   dayKeys().forEach(k => {
     const y = +k.slice(0, 4), c = calc(state.days[k]);
-    yr[y] = { re: c.reT, stock: c.stockAcct, db: c.dcv + c.kidV, tot: c.total, net: c.asset, real: true };
+    yrPast[y] = { tot: c.total, stock: c.stockAcct };
   });
-  const ys = Object.keys(yr).map(Number).sort((a, b) => a - b);
-  if (!ys.length) return;
-  const sName = useTotal ? '주식+DC+자녀' : '주식';
-  const mk = f => ys.map(y => ({ t: new Date(y, 11, 31), label: y + '', v: f(yr[y]), est: false }));
-  const series = [
-    { name: sName, color: '--c1', pts: mk(o => o.stock + (useTotal ? o.db : 0)) },
-    { name: '부동산', color: '--c2', pts: mk(o => o.re), dash: '7 3' },
-    { name: useTotal ? '전체' : '자산', color: '--c3', pts: mk(o => useTotal ? o.tot : o.net), dash: '2 2' }
-  ];
+  const pastYs = Object.keys(yrPast).map(Number).sort((a, b) => a - b).filter(y => y <= P.baseYear);
+  const expo = {};                                             // 주식 잔액 누적합
+  let run = 0;
+  pastYs.forEach(y => { run += Math.max(0, yrPast[y].stock); expo[y] = run; });
+  const cumStock = cumulative().stock;
+  const gainAt = y => run > 0 ? cumStock * (expo[y] / run) : 0;
+
+  // sims 는 위 은퇴 요약표에서 이미 만들어 둔 것을 그대로 쓴다 (SCN 순서 그대로)
+  const reAt = y => y <= P.baseYear ? num(P.re26) : num(P.targetRE);
+  /* 은퇴 연도에는 자녀 계좌를 목표액으로 본다.
+     simulate() 가 그 해에 kidSettle = G − kidTarget 을 금융자산 E 에 이미 넣었다.
+     정산 뒤 자녀 계좌가 들고 있는 건 kidTarget 이다. 여기서 G 를 그대로 더하면
+     부족분이 두 번 빠져 2042년이 2041년보다 작아진다(예상 −21,047, 현재 −10,270).
+     이렇게 고치면 은퇴 요약표의 net 과 정확히 같아진다. */
+  const totalOf = r => reAt(r.y) + r.E + r.F
+    + (r.y === P.retireYear ? num(P.kidTarget) : r.G) - r.B;   // 대출은 부채라 뺀다
+
+  const series = SCN.map((n, i) => {
+    const pts = pastYs.map(y => ({
+      t: new Date(y, 11, 31), label: y + '', est: false,
+      v: yrPast[y].tot - (n === '예상' ? gainAt(y) : 0)
+    }));
+    const rows = sims[i].rows.filter(r => r.y > P.baseYear);
+    rows.forEach(r => pts.push({ t: new Date(r.y, 11, 31), label: r.y + '', est: true, v: totalOf(r) }));
+    return { name: n, color: ['--c3', '--c1', '--c4'][i], pts, dash: i === 0 ? '2 2' : i === 2 ? '7 3' : null };
+  });
   drawChart($('#ch-plan'), $('#tip-plan'), series, { scale: 'y' });
   $('#lg-plan').innerHTML = series.map(s =>
     `<span><i class="swatch" style="background:${cssv(s.color)}"></i>${s.name}</span>`).join('');
@@ -1402,6 +1661,13 @@ function segBind(sel, key, after) {
 }
 segBind('#scopeSeg', 'scope', renderSummary);
 segBind('#planSeg', 'plan', renderPlan);
+segBind('#anaSeg', 'ana', renderAnalysis);
+/* 중분류 접기·펴기 */
+$('#itemRows').addEventListener('click', e => {
+  const b = e.target.closest('.grp-t'); if (!b) return;
+  OPEN_G[b.dataset.g] = !OPEN_G[b.dataset.g];
+  renderSummary();
+});
 $('#scaleSeg').addEventListener('click', e => {
   const b = e.target.closest('button'); if (!b) return;
   UI.scale = b.dataset.v; UI.span = SPANS[UI.scale][1][0];
@@ -1478,6 +1744,11 @@ $('#fxNow').addEventListener('change', e => { latest().px.FX = +e.target.value; 
 const planSave = () => { schedulePush(); saveLocal(); renderPlan(); renderAnalysis(); };
 document.getElementById('p-plan').addEventListener('change', e => {
   const t = e.target, P = state.plan;
+  // 부동산 평가액·대출은 오늘 기록을 고치는 값이다. 입력 탭과 같은 경로를 쓴다
+  if (t.dataset.hold) {
+    setPath(latest(), t.dataset.hold, +t.value);
+    markDirty(latestKey()); saveLocal(); renderAll(); toast('수정 반영됨'); return;
+  }
   if (t.dataset.plan) { state[t.dataset.plan] = +t.value; planSave(); toast('반영했습니다'); return; }
   if (t.dataset.pc) {
     const k = t.dataset.pc;
@@ -1537,9 +1808,28 @@ $('#impBtn').addEventListener('click', () => {
    claude.ai Artifact로 열면 이 경로는 사용되지 않고 Artifact db가 쓰인다.
    GitHub Pages 등에 올려 쓰면 아래 설정값으로 Supabase에 붙어
    알림수집 APK가 넣은 체결 원문과 시세를 그대로 받아온다.                   */
+/* 이 배포본이 붙을 프로젝트의 기본값. 새 기기에서 주소와 키를 타이핑하지 않게 해준다.
+   publishable key 는 원래 브라우저에 노출되는 값이라 여기 둬도 된다 — 실제 방어는
+   로그인과 RLS 다. 다만 이 값이 공개 저장소에 들어가므로 프로젝트가 외부에 드러난다.
+   그래서 Supabase 쪽에서 회원가입을 막아 둔 것이 전제다.
+   다른 프로젝트에 붙이려면 입력 탭에서 덮어쓰면 되고, 그 값이 이후 우선한다. */
+/* const 가 아니라 함수인 이유: 위쪽 입력 탭 배선이 로드 시점에 sbCfg() 를 부르는데,
+   이 자리는 그보다 아래라 const 였다면 TDZ 에 걸려 앱 전체가 죽는다. 함수는 호이스팅된다. */
+function sbDefaults() {
+  return {
+    url: 'https://muznvsmbggncmcigfcpx.supabase.co',
+    key: 'sb_publishable_NlGvDmIb1OnICgMMdzEEgA_VuNB1weH'
+  };
+}
 const SBK = 'jasan_sb';
 let SB = null, sbTok = null;
-function sbCfg() { try { return JSON.parse(localStorage.getItem(SBK) || 'null'); } catch (e) { return null; } }
+function sbCfg() {
+  let s = null;
+  try { s = JSON.parse(localStorage.getItem(SBK) || 'null'); } catch (e) { }
+  const c = sbDefaults();
+  for (const k in (s || {})) if (s[k]) c[k] = s[k];   // 빈 값은 기본값을 덮지 않는다
+  return c;
+}
 function sbSave(c) { localStorage.setItem(SBK, JSON.stringify(c)); }
 async function sbReq(path, opt = {}) {
   const c = SB; if (!c) throw new Error('no config');
