@@ -155,10 +155,11 @@ svg.chart{display:block;width:100%;height:auto;overflow:visible}
 /* '주식+DC+자녀' 처럼 긴 이름도 한 줄에 들어가야 한다. 좁은 화면에서는 자간을 조여
    맞추고, 그래도 넘치면 줄바꿈 대신 폭에 맞춰 눌러 준다. 숫자 줄과 높이가 어긋나면
    세 칸의 바닥선이 안 맞아 표가 지저분해진다. */
-.cum3 .k{font-size:10.5px;color:var(--muted);font-weight:600;letter-spacing:.02em;
+.cum3 .k{font-size:10.5px;color:var(--muted);font-weight:600;letter-spacing:.02em;line-height:1.2;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media (max-width:390px){ .cum3 .k{font-size:9.5px;letter-spacing:-.02em} .cum3 div{padding:9px 6px} }
-.cum3 .n{font-size:14.5px;letter-spacing:-.01em;white-space:nowrap;font-weight:600;margin-top:2px;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+.cum3 .n{font-size:14.5px;letter-spacing:-.01em;white-space:nowrap;font-weight:600;margin-top:-1px;
+  line-height:1.15;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
 .src{font-size:9.5px;font-weight:600;padding:1px 5px;border-radius:4px;margin-left:6px;letter-spacing:.02em}
 .src.carry{background:var(--brass-soft);color:var(--brass)}
 .src.manual{background:var(--surf3);color:var(--ink2)}
@@ -1080,6 +1081,35 @@ function renderAnalysis() {
      총액(주식 기준)과 앞뒤가 안 맞는다. 과거수익은 나머지다. */
   const cumAll = num(state.stPast) + realized.v;
   const cum1 = meritz(c) - num(state.principal);
+
+  /* 무매·VR 은 Pool(대기 현금)을 끼고 도는 전략이다. 라오어 무한매수법 4.0 과
+     VR 5.0 은 매입금액을 정해진 분할로 쪼개 넣고 남은 돈을 Pool 로 들고 있는다.
+     그래서 '매입금액 대비 수익률' 은 실제 성과를 부풀린다 — 놀고 있는 Pool 이
+     분모에서 빠지기 때문이다. 시드 전체(매입금액 + Pool) 대비로 봐야 맞다.
+
+     달러 기준으로 계산한다. 전략 자체가 달러로 돌아가고, 환율을 섞으면 매매 성과와
+     환차손익이 뒤엉킨다. 환차는 위 목록에 따로 있다.
+
+     Pool 은 두 계좌(3020 무매 · 3081 VR)의 예수금 합이다. 앱이 외화예수금을 하나로만
+     들고 있어 계좌별로 가르지 못한다. 계좌별 수익률이 필요해지면 예수금 입력을
+     둘로 나눠야 한다. */
+  const usdCost = num(B['무매 TQQQ'].cost) + num(B['무매 SOXL'].cost) + num(B['VR TQQQ'].cost);
+  const usdVal = num(x.mm.T.q) * num(x.px.T) + num(x.mm.S.q) * num(x.px.S) + num(x.vr.T.q) * num(x.px.T);
+  const pool = num(x.usd), seed = usdCost + pool, gainU = usdVal - usdCost;
+  const usd0 = v => '$' + fmt(v, 0);
+  const poolBlock = seed > 0 ? `<div class="scroll" style="margin-top:12px"><table class="tbl">
+    <tr><th>무매 · VR — Pool 포함</th><th>USD</th></tr>
+    <tr><td>주식 평가액</td><td>${usd0(usdVal)}</td></tr>
+    <tr><td>Pool <span class="u">대기 현금</span></td><td>${usd0(pool)}</td></tr>
+    <tr><td>= 계좌 평가액</td><td>${usd0(usdVal + pool)}</td></tr>
+    <tr><td>시드 <span class="u">매입금액 + Pool</span></td><td>${usd0(seed)}</td></tr>
+    <tr><td style="color:var(--ink);font-weight:600">Pool 포함 수익률</td>
+        <td style="font-weight:600;color:var(--${gainU >= 0 ? 'up' : 'down'})">${gainU >= 0 ? '+' : '−'}${fmt(Math.abs(gainU / seed * 100), 2)}%</td></tr>
+    <tr><td>매입금액 대비 <span class="u">참고</span></td>
+        <td style="color:var(--muted)">${usdCost > 0 ? (gainU >= 0 ? '+' : '−') + fmt(Math.abs(gainU / usdCost * 100), 2) + '%' : '—'}</td></tr>
+    </table></div>
+    <p class="note" style="margin-top:8px">Pool 이 시드의 <b>${fmt(pool / seed * 100, 0)}%</b> 입니다.
+    분할매수 전략은 놀고 있는 Pool 까지 시드에 넣어야 실제 성과가 보입니다. 환차손익은 위 목록에 따로 있습니다.</p>` : '';
   $('#idCheck').innerHTML = `<div style="font-size:11.5px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">검증</div>
     <div class="scroll" style="margin-top:8px"><table class="tbl">
     <tr><td>손익 7개 항목 합</td><td>${fmt(sumAll, 1)}</td></tr>
@@ -1100,6 +1130,7 @@ function renderAnalysis() {
     <tr><td>그중 현재 미실현</td><td>${fmt(unreal, 0)}</td></tr>
     <tr><td>과거 매도 실현분</td><td>${fmt(realized.v - unreal, 0)}</td></tr>
     </table></div>
+    ${poolBlock}
     ${cum1 == null ? '' : `<div class="scroll" style="margin-top:12px"><table class="tbl">
     <tr><th>누적수익 기간 분해</th><th>만원</th></tr>
     <tr><td>1년 누적수익 <span class="u">원금 대비</span></td><td>${fmt(cum1, 0)}</td></tr>
