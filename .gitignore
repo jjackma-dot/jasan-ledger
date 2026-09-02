@@ -1,0 +1,14 @@
+# ── 개인 금융정보. 절대 커밋하지 말 것 ───────────────────
+private/
+src/seed.json
+
+# Android
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+*.iml
+.idea/
+
+# OS
+.DS_Store

@@ -3,10 +3,16 @@
 매일 자산을 누적 관리하는 개인용 웹앱과, 카카오 알림톡의 체결 내역을 자동으로 받아오는 안드로이드 수집 앱.
 
 ```
-web/       설치형 웹앱 (PWA) — 모든 화면·계산·그래프
+CLAUDE.md  Claude Code 작업 지침 — 개발을 이어받는다면 여기부터
+docs/      설계 문서 (요구사항·계산모델·은퇴시뮬레이션·수집앱·작업이력)
+src/       빌드 원본 — 코드는 여기를 고친다
+web/       설치형 웹앱 (PWA, 생성물) — 모든 화면·계산·그래프
 android/   알림수집 앱 — 화면은 설정 한 장, 백그라운드에서 알림만 수집
 supabase/  데이터베이스 스키마
+private/   개인 데이터 (커밋되지 않음) — 엑셀 원본·seed.sql·알림톡 샘플
 ```
+
+> 코드를 고칠 때는 `web/index.html` 이 아니라 `src/` 를 고치고 `cd src && python3 build.py` 를 실행합니다.
 
 ## 왜 이렇게 나눠져 있나
 
@@ -14,20 +20,20 @@ supabase/  데이터베이스 스키마
 
 두 쪽이 공유하는 것은 데이터베이스뿐이라 **끊어질 연결 자체가 없습니다.** 앱이 꺼져 있든, 웹앱이 안 떠 있든, 비행기 모드든 알림은 디스크에 남고 네트워크가 돌아오면 자동으로 올라갑니다.
 
-기능을 고칠 때는 `web/index.html` 한 파일만 바꾸면 됩니다. 수집 앱은 한 번 설치한 뒤 다시 손댈 일이 거의 없습니다.
+기능을 고칠 때는 `src/` 만 바꾸면 됩니다. 수집 앱은 한 번 설치한 뒤 다시 손댈 일이 거의 없습니다.
 
 ---
 
 ## 설치 순서
 
-> **저장소는 공개(Public)로 만들어도 됩니다.** 여기 올라가는 `web/index.html` 에는 금액·이름·계좌가 하나도 없습니다. 실제 자산 기록은 `supabase/seed.sql` 에만 들어 있고, 이 파일은 **저장소에 올리지 말고** 따로 빼두었다가 Supabase SQL Editor 에서 한 번만 실행하세요.
+> **저장소는 공개(Public)로 만들어도 됩니다.** 여기 올라가는 `web/index.html` 에는 금액·이름·계좌가 하나도 없습니다. 실제 자산 기록은 `private/` 안에만 있고, 이 폴더는 `.gitignore` 로 커밋에서 제외됩니다.
 
 ### 1단계 — Supabase 만들기 (6분)
 
 1. [supabase.com](https://supabase.com) 가입 후 새 프로젝트 생성 (무료 플랜, 리전은 **Northeast Asia (Seoul)** 권장)
 2. 왼쪽 **Authentication › Users › Add user** 에서 본인 계정을 하나 만듭니다 (메일 주소 + 비밀번호). *Auto Confirm User* 를 켜두세요.
 3. 왼쪽 **SQL Editor** 에서 `supabase/schema.sql` 내용을 통째로 붙여넣고 실행
-   - 이어서 따로 빼둔 `supabase/seed.sql` 도 붙여넣고 실행하면 지금까지의 기록이 들어갑니다 (한 번만)
+   - 이어서 `private/seed.sql` 도 붙여넣고 실행하면 지금까지의 기록이 들어갑니다 (한 번만)
 4. 왼쪽 **Settings › API Keys** 에서 **공개 키** 를 복사해 둡니다
    - `sb_publishable_...` 로 시작하는 **Publishable key**, 또는 예전 방식의 `anon` 키(`eyJ...`) 중 화면에 보이는 쪽 아무거나 됩니다
 5. 왼쪽 **Settings › Data API** 에서 `Project URL` 을 복사해 둡니다 — `https://xxxxx.supabase.co`
@@ -91,7 +97,7 @@ supabase/  데이터베이스 스키마
 | `3020` | 무매 | TQQQ, SOXL |
 | `3081` | VR | TQQQ |
 
-계좌를 추가하려면 `web/index.html` 의 `const ACCTS = { '3020': 'mm', '3081': 'vr' }` 한 줄만 고치면 됩니다.
+계좌를 추가하려면 `src/part3.js` 의 `const ACCTS = { '3020': 'mm', '3081': 'vr' }` 한 줄을 고치고 다시 빌드하면 됩니다.
 
 등록되지 않은 계좌나 형식이 다른 알림은 **버려지지 않고** 서버 `inbox` 테이블에 `failed` 로 남습니다. 나중에 파서를 고쳐 다시 처리할 수 있습니다.
 

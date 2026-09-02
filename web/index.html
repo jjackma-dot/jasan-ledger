@@ -131,11 +131,30 @@ svg.chart{display:block;width:100%;height:auto;overflow:visible}
 .cum3{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:12px}
 .cum3 div{background:var(--surf);padding:9px 10px}
 .cum3 .k{font-size:10.5px;color:var(--muted);font-weight:600;letter-spacing:.04em}
-.cum3 .n{font-size:15px;font-weight:600;margin-top:2px;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+.cum3 .n{font-size:14.5px;letter-spacing:-.01em;white-space:nowrap;font-weight:600;margin-top:2px;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
 .src{font-size:9.5px;font-weight:600;padding:1px 5px;border-radius:4px;margin-left:6px;letter-spacing:.02em}
 .src.carry{background:var(--brass-soft);color:var(--brass)}
 .src.manual{background:var(--surf3);color:var(--ink2)}
 .src.auto{background:color-mix(in srgb,var(--c2) 15%,transparent);color:var(--c2)}
+
+details.inl{border-top:1px solid var(--line);margin-top:12px}
+details.inl summary{padding:10px 0 9px;cursor:pointer;font-size:13px;font-weight:600;color:var(--ink2);list-style:none}
+details.inl summary::-webkit-details-marker{display:none}
+details.inl summary::before{content:"\25B8 ";color:var(--brass)}
+details.inl[open] summary::before{content:"\25BE "}
+details.inl.bare{border-top:0}
+details.inl.bare+details.inl.bare{border-top:1px solid var(--line)}
+details.inl.bare summary{padding:11px 15px}
+.dbody{padding-bottom:6px}
+table.rt td:first-child{width:36%;padding-right:6px;font-size:12px}
+table.rt th{text-align:right;font-size:10px}
+table.rt th:first-child{text-align:left}
+table.rt td{font-size:12.5px;padding:7px 0;white-space:nowrap}
+table.rt tr.hi td{background:var(--surf2);font-weight:600;color:var(--ink)}
+table.rt tr.hi td:first-child{color:var(--ink);border-radius:6px 0 0 6px;padding-left:7px}
+table.rt tr.hi td:last-child{border-radius:0 6px 6px 0;padding-right:7px}
+table.rt td.neg{color:var(--down)}
+table.rt .u{font-size:9.5px;color:var(--muted);margin-left:2px;font-family:"IBM Plex Sans KR",sans-serif}
 
 /* generic */
 h2.sec{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:600;margin:20px 3px 8px}
@@ -150,6 +169,7 @@ button.act:hover{filter:brightness(1.07)}
 button.act:disabled{opacity:.45;cursor:default;filter:none}
 button.ghost{font:inherit;font-size:12.5px;font-weight:500;border-radius:8px;padding:8px 12px;cursor:pointer;border:1px solid var(--line2);background:var(--surf);color:var(--ink2)}
 button.ghost:hover{background:var(--surf2)}
+select{font:inherit;color:var(--ink);background:var(--surf2);border:1px solid var(--line2);border-radius:9px;padding:8px 10px}
 textarea,input{font:inherit;color:var(--ink);background:var(--surf2);border:1px solid var(--line2);border-radius:9px;padding:9px 10px;width:100%}
 textarea{min-height:110px;resize:vertical;font-size:12.5px;line-height:1.5}
 input[type=number],input.num{font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums;text-align:right}
@@ -314,6 +334,25 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
       </div>
       <p class="note" style="margin:8px 3px 0" id="sbNote">연결하면 알림수집 앱이 보낸 체결 내역과 시세를 자동으로 받아옵니다. 기기 여러 대에서 같은 기록을 보게 됩니다.</p>
 
+      <h2 class="sec">입출금</h2>
+      <div class="card">
+        <div class="erow"><label>금액 <span class="u">만원</span></label>
+          <input class="num" type="number" step="10" id="flowAmt" placeholder="0"></div>
+        <div class="erow"><label>반영 대상</label>
+          <select id="flowTgt" style="width:150px;flex:none">
+            <option value="krw">원화예수금</option>
+            <option value="usd">외화예수금</option>
+            <option value="hana">하나은행</option>
+            <option value="woori">우리은행</option>
+          </select></div>
+        <div class="erow" style="gap:8px">
+          <button class="act" id="flowIn" style="flex:1">입금</button>
+          <button class="ghost" id="flowOut" style="flex:1;padding:10px">출금</button>
+        </div>
+      </div>
+      <p class="note" style="margin:8px 3px 0">입출금은 <b>수익에 영향을 주지 않습니다.</b> 금융자산과 기준원금이 같은 폭으로 움직이므로 누적수익은 그대로입니다. 수익금 자체를 바로잡으려면 실적/계획 탭의 <b>기준원금</b>을 직접 고치세요.</p>
+      <div class="card rows" id="flowList" style="margin-top:10px"></div>
+
       <h2 class="sec">데이터</h2>
       <div class="card pad">
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -333,28 +372,35 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         <button data-v="total" aria-pressed="false">전체</button>
       </div>
 
-      <div class="card hero" style="margin-top:12px">
-        <div class="lbl">2012년 이후 누적수익</div>
-        <div class="big num"><span id="cumVal">—</span><span class="unit">만원</span></div>
-        <div id="cumSub" class="note" style="margin-top:6px">—</div>
-        <div class="cum3" id="cum3"></div>
+      <div class="card hero" style="margin-top:12px;padding-bottom:14px">
+        <div class="lbl">2012년 이후 누적수익 <span style="text-transform:none;letter-spacing:0;font-weight:500">· 만원</span></div>
+        <div class="cum3" id="cum3" style="margin-top:10px"></div>
+        <details class="inl" id="reDetail">
+          <summary>부동산 내역 입력·수정</summary>
+          <div class="dbody" id="reEdit"></div>
+        </details>
+      </div>
+
+      <h2 class="sec"><span id="retTitle">2042년말 은퇴 요약</span> <span class="tag" style="margin-left:6px">현재가치</span></h2>
+      <div class="card pad scroll"><table class="tbl rt" id="retTbl"></table></div>
+      <p class="note" style="margin:8px 3px 0">물가상승률을 제거한 현재가치 기준. <b>부동산 순자산</b>은 잔여 대출을 뺀 값, <b>금융</b>은 대출 상환·자녀 정산 전 금액입니다. <b>은퇴 인출가능</b>은 대출을 갚고 자녀 목표액을 떼어준 뒤 국민연금 공백 53개월분까지 뺀, 실제로 쓸 수 있는 돈입니다.</p>
+
+      <h2 class="sec">연도별 자산</h2>
+      <div class="card hero" style="margin-top:0;padding-top:14px">
         <div class="chartwrap" id="cw-plan">
-          <svg class="chart" id="ch-plan" viewBox="0 0 340 160" aria-label="연도별 누적 추이"></svg>
+          <svg class="chart" id="ch-plan" viewBox="0 0 340 160" aria-label="연도별 자산 추이"></svg>
           <div class="tip" id="tip-plan"></div>
         </div>
         <div class="legend" id="lg-plan"></div>
         <div style="height:12px"></div>
       </div>
 
-      <h2 class="sec">목표 시나리오</h2>
+      <h2 class="sec">시뮬레이션 설정</h2>
       <div class="card">
-        <div class="erow"><label>연 목표 수익률 <span class="u">%</span></label><input class="num" type="number" step="0.5" id="tgtRate" value="8"></div>
-        <div class="erow"><label>예측 기간 <span class="u">년</span></label><input class="num" type="number" step="1" id="tgtYears" value="10"></div>
+        <details class="inl bare"><summary>공통 가정</summary><div class="dbody" id="planCommon"></div></details>
+        <details class="inl bare"><summary>시나리오별 수익률</summary><div class="dbody" id="planSc"></div></details>
+        <details class="inl bare"><summary>26년말 출발 자산</summary><div class="dbody" id="planABC"></div></details>
       </div>
-      <p class="note" style="margin:8px 3px 0">예상·목표 수익률 곡선은 별도 첨부 예정 자료를 반영하면 과거 실적에 이어 붙습니다. 지금은 위 입력값으로 단순 복리 추정선을 그립니다.</p>
-
-      <h2 class="sec">연도별 기록</h2>
-      <div class="card pad scroll"><table class="tbl" id="yrTbl"></table></div>
       <div style="height:8px"></div>
     </section>
   </main>
@@ -371,7 +417,7 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
 </div>
 
 <script>
-let SEED={"days": [], "months": [], "years": [], "basis": {}, "past": {}};
+let SEED={"days": [], "months": [], "years": [], "basis": {}, "past": {}, "plan": {}};
 /* ===================== 유틸 ===================== */
 /* SEED(과거 월·연 기록, 손익기준)는 개인정보라 공개 저장소 빌드에는 비어 있고,
    서버에 연결하면 meta.seed 에서 받아 채운다. */
@@ -426,7 +472,14 @@ function defaultState() {
   const days = {};
   (SEED.days || []).forEach(d => days[d.d] = clone(d));
   if (!Object.keys(days).length) { const k = iso(new Date()); days[k] = blankDay(k); }
-  return { v: 2, ts: Date.now(), days, fx0: SEED.days.length ? 1429.26 : 0, principal: SEED.days.length ? 16000 : 0, tgt: { rate: 8, years: 10 }, api: { provider: 'auto', key: '' } };
+  return {
+    v: 3, ts: Date.now(), days,
+    fx0: SEED.days.length ? 1429.26 : 0,
+    principal: SEED.days.length ? 16000 : 0,
+    reCost: null, rePast: null, stPast: null,
+    plan: planDefaults(),
+    api: { provider: 'auto', key: '' }
+  };
 }
 function loadLocal() {
   try { const s = localStorage.getItem(LS); if (s) return JSON.parse(s); } catch (e) { }
@@ -494,7 +547,7 @@ async function pushCloud() {
       Object.entries(state.days).forEach(([k, v]) => { if (k.startsWith(mk)) days[k] = v; });
       await dbRef.doc('ledger/m_' + mk).set({ days, ts: state.ts });
     }
-    await dbRef.doc('ledger/meta').set({ months, ts: state.ts, fx0: state.fx0, tgt: state.tgt, principal: num(state.principal) });
+    await dbRef.doc('ledger/meta').set({ months, ts: state.ts, fx0: state.fx0, plan: state.plan, principal: num(state.principal), reCost: num(state.reCost), rePast: num(state.rePast), stPast: num(state.stPast) });
     syncNote(true);
   } catch (e) { todo.forEach(m => dirty.add(m)); syncNote(false, e); }
 }
@@ -945,11 +998,67 @@ function fillToToday() {
   return made;
 }
 /* 옛 기록에 출처 필드 보강 */
+function ensurePlan() {
+  const d = planDefaults();
+  if (!state.plan) state.plan = d;
+  else {
+    for (const k in d) if (state.plan[k] === undefined) state.plan[k] = d[k];
+    if (!state.plan.sc) state.plan.sc = d.sc;
+    for (const n of SCN) state.plan.sc[n] = Object.assign({}, d.sc[n], state.plan.sc[n] || {});
+    // 아직 값이 없는 개인 수치는 서버에서 받은 기본값으로 채운다
+    PLAN_KEYS.forEach(k => { if (!num(state.plan[k])) state.plan[k] = d[k]; });
+    SCN.forEach(n => { if (!num(state.plan.sc[n].pen)) state.plan.sc[n].pen = d.sc[n].pen; });
+  }
+  const B = SEED.basis || {}, past = SEED.past || {};
+  if (state.reCost == null && B['부동산']) state.reCost = num(B['부동산'].cost);
+  if (state.rePast == null && past['부동산'] != null) state.rePast = num(past['부동산']);
+  if (state.stPast == null && past['주식'] != null) state.stPast = num(past['주식']) / 1e4;
+  if (state.tgt) delete state.tgt;
+}
 function ensureMeta() {
   Object.values(state.days).forEach(d => {
     if (!d.pxs) { d.pxs = {}; Object.keys(SYM).forEach(k => d.pxs[k] = d.stale ? 'carry' : 'manual'); }
     if (!d.pxt) d.pxt = {};
   });
+}
+
+/* ===================== 입출금 =====================
+   수익금에 영향을 주지 않는 자금 이동. 금융자산과 기준원금이 같은 폭으로 움직이므로
+   '주식 누적수익 = 과거 실현수익 + (주식계좌 − 기준원금)' 값은 그대로 유지된다.   */
+const FLOW_TGT = [['krw', '원화예수금'], ['usd', '외화예수금'], ['hana', '하나은행'], ['woori', '우리은행']];
+function applyFlow(amtMan, target, sign) {
+  const x = latest(), c = calc(x);
+  if (!(amtMan > 0)) { toast('금액을 입력해 주세요'); return; }
+  if (target === 'usd') {
+    if (!(c.fx > 0)) { toast('환율이 아직 없습니다'); return; }
+    x.usd = +(num(x.usd) + sign * amtMan * 1e4 / c.fx).toFixed(2);
+  }
+  else if (target === 'krw') x.krw = +(num(x.krw) + sign * amtMan).toFixed(2);
+  else if (target === 'hana') x.sav.h = +(num(x.sav.h) + sign * amtMan).toFixed(2);
+  else if (target === 'woori') x.sav.w = +(num(x.sav.w) + sign * amtMan).toFixed(2);
+  state.principal = +(num(state.principal) + sign * amtMan).toFixed(2);
+  state.flows = state.flows || [];
+  state.flows.unshift({ d: latestKey(), amt: amtMan, t: target, s: sign, ts: Date.now() });
+  state.flows = state.flows.slice(0, 50);
+  markDirty(latestKey()); schedulePush(); saveLocal(); renderAll();
+  toast(`${sign > 0 ? '입금' : '출금'} ${fmt(amtMan, 0)}만원 반영 · 기준원금 ${fmt(state.principal, 0)}만원`);
+}
+function undoFlow(i) {
+  const f = (state.flows || [])[i]; if (!f) return;
+  state.flows.splice(i, 1);
+  applyFlow(f.amt, f.t, -f.s);
+  state.flows.shift();                       // 되돌리기 자체는 기록하지 않는다
+  saveLocal(); renderAll();
+}
+function renderFlows() {
+  const el = $('#flowList'); if (!el) return;
+  const L = (state.flows || []).slice(0, 5);
+  el.innerHTML = L.length ? L.map((f, i) => {
+    const nm = (FLOW_TGT.find(t => t[0] === f.t) || [, f.t])[1];
+    return `<div class="row"><div><div class="nm">${f.s > 0 ? '입금' : '출금'} · ${nm}<span class="sub">${f.d.slice(2)}</span></div></div>
+      <div class="vals"><div class="v num ${f.s > 0 ? 'up' : 'dn'}">${f.s > 0 ? '+' : '−'}${fmt(f.amt, 0)}</div></div>
+      <button class="ghost" data-undo="${i}" style="padding:4px 8px;font-size:11.5px;flex:none">되돌리기</button></div>`;
+  }).join('') : `<div class="row"><div class="nm" style="color:var(--muted)">기록 없음</div></div>`;
 }
 
 /* ===================== 입력 탭 ===================== */
@@ -1049,65 +1158,234 @@ function applyPending() {
   toast(`${n}건 반영 · 예수금 $${fmt(x.usd, 0)}`);
 }
 
+
+/* ===================== 은퇴 시뮬레이션 =====================
+   엑셀('설정'·'시계열'·'요약' 시트)을 그대로 옮긴 것. 모든 금액은 만원, 현재가치.
+   실질수익률 = 명목수익률 − 물가상승률로 복리 운용한다.                        */
+/* 개인 수치(부동산가·저축액·연금 등)는 공개 빌드에 넣지 않는다.
+   서버의 meta.seed.plan 에서 받아 채운다.                       */
+const PLAN_BASE = {
+  infl: 0.023, loanRate: 0.05,
+  baseYear: 2026, retireYear: 2042, pensionYear: 2046, crevasseMonths: 53,
+  targetRE: 0, re26: 0, save: 0, dcAdd: 0, kidTarget: 0,
+  useLive: true, a: 0, b: 0, c: 0,
+  sc: {
+    예상: { fin: 0.023, dc: 0.023, ret: 0.040, pen: 0 },
+    현재: { fin: 0.080, dc: 0.050, ret: 0.060, pen: 0 },
+    목표: { fin: 0.120, dc: 0.080, ret: 0.080, pen: 0 }
+  }
+};
+const PLAN_KEYS = ['targetRE', 're26', 'save', 'dcAdd', 'kidTarget'];
+const planDefaults = () => {
+  const d = clone(PLAN_BASE), sp = SEED.plan || {};
+  for (const k in sp) {
+    if (k === 'sc') { for (const n in sp.sc) d.sc[n] = Object.assign(d.sc[n] || {}, sp.sc[n]); }
+    else d[k] = sp[k];
+  }
+  return d;
+};
+const SCN = ['예상', '현재', '목표'];
+const pmt = (r, n, pv) => pv * r / (1 - Math.pow(1 + r, -n));
+
+/* 26년말 출발 자산 — 앱의 실시간 값을 쓰거나 직접 넣은 값을 쓴다.
+   '예상'은 2012년 이후 주식 투자를 하지 않았다는 가정이므로
+   주식 누적수익(과거 실현 + 현재 평가)을 걷어낸 금액에서 출발한다.        */
+function startAssets(scenario) {
+  const P = state.plan;
+  const base = P.useLive ? (() => { const c0 = calc(latest()); return { a: c0.stockAcct, b: c0.kidV, c: c0.dcv }; })()
+    : { a: num(P.a), b: num(P.b), c: num(P.c) };
+  if (scenario === '예상') base.a = base.a - cumulative().stock;
+  return base;
+}
+
+function simulate(name) {
+  const P = state.plan, s = P.sc[name], S = startAssets(name);
+  const fr = s.fin - P.infl, dr = s.dc - P.infl, rr = s.ret - P.infl;
+  const nYears = P.retireYear - P.baseYear;                  // 2026 → 2042
+  const B = [0], C = [0], D = [P.save], E = [S.a], F = [S.c], G = [S.b];
+  const rows = [{ y: P.baseYear, B: 0, C: 0, D: P.save, E: S.a, F: S.c, G: S.b }];
+
+  // 27년: 부동산 잔금에서 대출 발생
+  const gap = P.targetRE - P.re26;
+  const pool = E[0] * (1 + fr) + P.save;
+  B.push(Math.max(0, gap - pool));
+  C.push(0); D.push(0);
+  E.push(B[1] > 0 ? 0 : pool - gap);
+  F.push(F[0] * (1 + dr) + P.dcAdd);
+  G.push(G[0] * (1 + fr));
+  rows.push({ y: P.baseYear + 1, B: B[1], C: C[1], D: D[1], E: E[1], F: F[1], G: G[1] });
+
+  const loan0 = B[1];                                        // 원리금균등 기준 원금
+  for (let i = 2; i < nYears; i++) {
+    const pb = B[i - 1];
+    let c = 0;
+    if (pb > 0) c = (name === '목표') ? pmt(P.loanRate, 30, loan0) : Math.min(pb * (1 + P.loanRate), P.save);
+    B.push(Math.max(0, pb * (1 + P.loanRate) - c));
+    C.push(c); D.push(P.save - c);
+    E.push(E[i - 1] * (1 + fr) + (P.save - c));
+    F.push(F[i - 1] * (1 + dr) + P.dcAdd);
+    G.push(G[i - 1] * (1 + fr));
+    rows.push({ y: P.baseYear + i, B: B[i], C: C[i], D: D[i], E: E[i], F: F[i], G: G[i] });
+  }
+  // 은퇴 연도: 잔여 대출 일시 상환 + 자녀 목표액 정산
+  const i = nYears;
+  const loanLeft = B[i - 1] * (1 + P.loanRate);
+  const g = G[i - 1] * (1 + fr);
+  const f = F[i - 1] * (1 + dr) + P.dcAdd;
+  const kidSettle = g - P.kidTarget;
+  const e = E[i - 1] * (1 + fr) + P.save - loanLeft + kidSettle;
+  rows.push({ y: P.retireYear, B: 0, C: 0, D: P.save, E: e, F: f, G: g });
+
+  // 요약
+  const crevasse = s.pen * P.crevasseMonths;
+  const avail = e + f - crevasse;
+  const draw = avail * rr;
+  const dcShare = (e + f) ? f / (e + f) : 0;
+  const dcDraw = draw * dcShare;
+  const taxDc = Math.min(dcDraw, 2000) * 0.055 + Math.max(0, dcDraw - 2000) * 0.165;
+  const taxInc = s.pen * 12 * 0.035;
+  const health = (60 + 13 * (P.targetRE / 10000)) + s.pen * 12 * 0.04;
+  const deduct = taxDc + taxInc + health;
+  const cashM = (draw + s.pen * 12 - deduct) / 12;
+
+  return {
+    name, rows, loanLeft, kidSettle,
+    E: e, F: f, G: g,
+    reNet: P.targetRE - loanLeft,                            // 부동산 순자산 (대출 차감)
+    finDisp: e + loanLeft - kidSettle,                       // 대출·자녀정산 전 금융
+    net: P.targetRE + e + f + P.kidTarget,                   // 총 순자산
+    kidShort: kidSettle,
+    avail, draw, dcDraw, taxDc, taxInc, health, deduct,
+    pen: s.pen, cashM, drawM: cashM - s.pen
+  };
+}
+
+/* ===================== 누적수익 ===================== */
+function cumulative() {
+  const c = calc(latest()), x = latest(), P = state.plan;
+  const B = SEED.basis || {}, past = SEED.past || {};
+  const reNow = num(x.re.ber) + num(x.re.dia);               // 대출 제외
+  const reCost = num(state.reCost != null ? state.reCost : (B['부동산'] || {}).cost);
+  const rePast = num(state.rePast != null ? state.rePast : past['부동산']);
+  const stPast = num(state.stPast != null ? state.stPast : (past['주식'] || 0) / 1e4);
+  const stock = stPast + (c.stockAcct - num(state.principal));
+  const re = reNow - reCost + rePast;
+  const dc = c.dcv - num((B['DC'] || {}).cost) / 1e4;
+  const kid = c.kidV - num((B['자녀 QLD'] || {}).cost) / 1e4;
+  return { stock, re, dc, kid, asset: stock + re, totalCol: stock + dc + kid, total: stock + dc + kid + re };
+}
+
 /* ===================== 실적/계획 탭 ===================== */
 function renderPlan() {
   const useTotal = UI.plan === 'total';
+  const P = state.plan;
+  const g = cumulative();
+
+  /* ── 누적수익 3열 ── */
+  const cells = useTotal
+    ? [['주식+DC+자녀', g.totalCol], ['부동산', g.re], ['전체', g.total]]
+    : [['주식', g.stock], ['부동산', g.re], ['자산', g.asset]];
+  $('#cum3').innerHTML = cells.map(([k, v]) =>
+    `<div><div class="k">${k}</div><div class="n ${v > 0 ? 'up' : v < 0 ? 'dn' : ''}">${v >= 0 ? '' : '−'}${fmt(Math.abs(v), 0)}</div></div>`).join('');
+
+  const x = latest(), c0 = calc(latest());
+  $('#reEdit').innerHTML = [
+    ['reCost', '부동산 매입원가', '만원', num(state.reCost)],
+    ['rePast', '과거 부동산 실현수익', '만원', num(state.rePast)],
+    ['stPast', '과거 주식 실현수익', '만원', num(state.stPast)],
+    ['principal', '주식 기준원금', '만원', num(state.principal)]
+  ].map(([k, l, u, v]) =>
+    `<div class="erow"><label>${l} <span class="u">${u}</span></label>
+     <input class="num" type="number" step="1" data-plan="${k}" value="${v}"></div>`).join('')
+    + `<p class="note" style="padding:8px 15px 0">부동산 수익은 <b>대출을 뺀 평가액</b>(${fmt(num(x.re.ber) + num(x.re.dia), 0)}만원)에서 매입원가를 뺀 뒤 과거 실현수익을 더합니다.
+       주식 수익은 과거 실현수익에 <b>기준원금 대비 증감분</b>(${fmt(c0.stockAcct - num(state.principal), 0)}만원)을 더합니다.
+       입출금이 있으면 기준원금을 그만큼 조정해야 수익이 부풀지 않습니다.</p>`;
+
+  /* ── 은퇴 요약 표 ── */
+  const sims = SCN.map(simulate);
+  $('#retTitle').textContent = `${P.retireYear}년말 은퇴 요약`;
+  const eok1 = v => (v / 10000).toFixed(1);
+  const ROWS = [
+    ['총 순자산', s => s.net, '억', 1],
+    ['부동산 순자산', s => s.reNet, '억', 0],
+    ['금융', s => s.finDisp, '억', 0],
+    ['DC', s => s.F, '억', 0],
+    ['자녀자산', s => s.G, '억', 0],
+    ['자녀 목표 부족분', s => s.kidShort, '억', 0],
+    ['은퇴 인출가능', s => s.avail, '억', 1],
+    ['국민연금(월)', s => s.pen, '만원', 0],
+    ['세후 월 인출액', s => s.drawM, '만원', 0],
+    ['월 현금흐름', s => s.cashM, '만원', 1]
+  ];
+  $('#retTbl').innerHTML =
+    `<tr><th>항목</th>${SCN.map(n => `<th>${n}</th>`).join('')}</tr>`
+    + ROWS.map(([lbl, fn, unit, hi]) =>
+      `<tr class="${hi ? 'hi' : ''}"><td>${lbl}</td>` + sims.map(s => {
+        const v = fn(s);
+        const txt = unit === '억' ? eok1(v) : fmt(v, 0);
+        return `<td class="${v < 0 ? 'neg' : ''}">${txt}<span class="u">${unit}</span></td>`;
+      }).join('') + `</tr>`).join('');
+
+  /* ── 설정 ── */
+  const pct = v => (v * 100).toFixed(1);
+  $('#planCommon').innerHTML = [
+    ['infl', '물가상승률', '%', pct(P.infl), 0.1],
+    ['targetRE', '은퇴후 부동산가', '만원', P.targetRE, 1000],
+    ['re26', '26년말 부동산가', '만원', P.re26, 1000],
+    ['loanRate', '대출 금리', '%', pct(P.loanRate), 0.1],
+    ['save', '연 저축액', '만원', P.save, 100],
+    ['dcAdd', 'DC 연 불입액', '만원', P.dcAdd, 50],
+    ['kidTarget', '자녀 목표액', '만원', P.kidTarget, 1000],
+    ['retireYear', '은퇴 연도', '년', P.retireYear, 1]
+  ].map(([k, l, u, v, st]) =>
+    `<div class="erow"><label>${l} <span class="u">${u}</span></label>
+     <input class="num" type="number" step="${st}" data-pc="${k}" value="${v}"></div>`).join('');
+
+  $('#planSc').innerHTML = SCN.map(n => {
+    const s = P.sc[n];
+    return `<div class="grp-h" style="padding-left:15px">${n}</div>`
+      + [['fin', '금융 수익률'], ['dc', 'DC 수익률'], ['ret', '은퇴 후 수익률']].map(([k, l]) =>
+        `<div class="erow"><label>${l} <span class="u">%</span></label>
+         <input class="num" type="number" step="0.1" data-ps="${n}|${k}" value="${pct(s[k])}"></div>`).join('')
+      + `<div class="erow"><label>국민연금 <span class="u">만원/월</span></label>
+         <input class="num" type="number" step="5" data-ps="${n}|pen" value="${s.pen}"></div>`;
+  }).join('');
+
+  const S = startAssets();
+  $('#planABC').innerHTML =
+    `<div class="erow"><label>앱의 현재 값을 그대로 사용</label>
+      <input type="checkbox" id="useLive" style="width:18px;height:18px;flex:none;accent-color:var(--brass)" ${P.useLive ? 'checked' : ''}></div>`
+    + [['a', '금융자산 (무매·VR·레버리지·예수금)'], ['b', '자녀자산'], ['c', 'DC']].map(([k, l]) =>
+      `<div class="erow"><label>${l} <span class="u">만원</span></label>
+       <input class="num" type="number" step="100" data-abc="${k}" value="${Math.round(S[k])}" ${P.useLive ? 'disabled style="opacity:.5"' : ''}></div>`).join('');
+
+  /* ── 연도별 자산 그래프 ── */
   if (!SEED.years.length && isEmptyLedger()) {
-    $('#cumVal').textContent = '—'; $('#cum3').innerHTML = '';
-    $('#cumSub').textContent = '서버에 연결하면 과거 기록이 채워집니다.';
-    $('#ch-plan').innerHTML = ''; $('#lg-plan').innerHTML = ''; $('#yrTbl').innerHTML = '';
-    return;
+    $('#ch-plan').innerHTML = ''; $('#lg-plan').innerHTML = ''; return;
   }
   const yr = {};
   SEED.years.forEach(y => yr[y.y] = { re: y.re, stock: y.stock + y.sav, db: y.db, tot: y.tot, net: y.net });
   dayKeys().forEach(k => {
     const y = +k.slice(0, 4), c = calc(state.days[k]);
-    yr[y] = { re: c.reT, stock: c.isaV + c.cashK + c.usK + c.krw + c.savT, db: c.dcv + c.kidV, tot: c.total, net: c.asset, real: true };
+    yr[y] = { re: c.reT, stock: c.stockAcct, db: c.dcv + c.kidV, tot: c.total, net: c.asset, real: true };
   });
-  const ys = Object.keys(yr).map(Number).sort();
+  const ys = Object.keys(yr).map(Number).sort((a, b) => a - b);
+  if (!ys.length) return;
   const sName = useTotal ? '주식+DC+자녀' : '주식';
-  const s1 = ys.map(y => ({ t: new Date(y, 11, 31), label: y + '', v: yr[y].stock + (useTotal ? yr[y].db : 0), est: false }));
-  const s2 = ys.map(y => ({ t: new Date(y, 11, 31), label: y + '', v: yr[y].re, est: false }));
-  const s3 = ys.map(y => ({ t: new Date(y, 11, 31), label: y + '', v: useTotal ? yr[y].tot : yr[y].net, est: false }));
+  const mk = f => ys.map(y => ({ t: new Date(y, 11, 31), label: y + '', v: f(yr[y]), est: false }));
   const series = [
-    { name: sName, color: '--c1', pts: s1 },
-    { name: '부동산', color: '--c2', pts: s2, dash: '7 3' },
-    { name: useTotal ? '전체' : '자산', color: '--c3', pts: s3, dash: '2 2' }
+    { name: sName, color: '--c1', pts: mk(o => o.stock + (useTotal ? o.db : 0)) },
+    { name: '부동산', color: '--c2', pts: mk(o => o.re), dash: '7 3' },
+    { name: useTotal ? '전체' : '자산', color: '--c3', pts: mk(o => useTotal ? o.tot : o.net), dash: '2 2' }
   ];
   drawChart($('#ch-plan'), $('#tip-plan'), series, { scale: 'y' });
   $('#lg-plan').innerHTML = series.map(s =>
     `<span><i class="swatch" style="background:${cssv(s.color)}"></i>${s.name}</span>`).join('');
-
-  const first = ys[0], last = ys[ys.length - 1];
-  const past = SEED.past || {}; const B = {}; BKEYS.forEach(k => B[k] = (SEED.basis && SEED.basis[k]) || { cost: 0 });
-  const man = w => w / 1e4;
-  const c = calc(latest());
-  const gStock = c.stockAcct - num(state.principal);                          // 주식 반영수익
-  const gRe = (c.reT - num(B['부동산'].cost)) + num(past['부동산']);           // 부동산 (과거 실현 포함)
-  const gDcKid = (c.dcv - man(num(B['DC'].cost))) + (c.kidV - man(num(B['자녀 QLD'].cost)));
-  const g1 = useTotal ? gStock + gDcKid : gStock;
-  const gAll = g1 + gRe;
-  $('#cumVal').textContent = eok(gAll);
-  if (!ys.length) { $('#cumVal').textContent = '—'; return; }
-  $('#cumSub').innerHTML = `${first}년 ${eok(s3[0].v)} → ${last}년 ${eok(s3[s3.length - 1].v)}만원 (자산 증가 ${eok(s3[s3.length - 1].v - s3[0].v)})`;
-  const cells = [[sName, g1], ['부동산', gRe], [useTotal ? '전체' : '자산', gAll]];
-  $('#cum3').innerHTML = cells.map(([k, v]) =>
-    `<div><div class="k">${k}</div><div class="n ${v > 0 ? 'up' : v < 0 ? 'dn' : ''}">${v >= 0 ? '+' : '−'}${fmt(Math.abs(v), 0)}</div></div>`).join('');
-
-  $('#tgtRate').value = state.tgt.rate; $('#tgtYears').value = state.tgt.years;
-  const base = s3[s3.length - 1].v, r = num(state.tgt.rate) / 100, ny = Math.max(1, num(state.tgt.years));
-  $('#yrTbl').innerHTML = `<tr><th>연도</th><th>${sName}</th><th>부동산</th><th>${useTotal ? '전체' : '자산'}</th></tr>`
-    + ys.slice().reverse().map((y, i) => {
-      const idx = ys.indexOf(y);
-      return `<tr><td>${y}${yr[y].real ? '' : ''}</td><td>${fmt(s1[idx].v, 0)}</td><td>${fmt(s2[idx].v, 0)}</td><td>${fmt(s3[idx].v, 0)}</td></tr>`;
-    }).join('')
-    + `<tr><td style="color:var(--brass);font-weight:600">${last + ny} 목표</td><td colspan="2" style="color:var(--muted)">연 ${state.tgt.rate}% 복리</td>`
-    + `<td style="color:var(--brass);font-weight:600">${fmt(base * Math.pow(1 + r, ny), 0)}</td></tr>`;
 }
 
 /* ===================== 렌더 & 이벤트 ===================== */
 function renderAll() {
-  renderSummary(); renderAnalysis(); renderInput(); renderPlan();
+  renderSummary(); renderAnalysis(); renderInput(); renderPlan(); renderFlows();
   const b = $('#emptyBanner');
   if (b) b.innerHTML = isEmptyLedger()
     ? `<div class="warn"><span>◔</span><div>아직 기록이 없습니다. <b>입력 › 서버 연결</b> 에서 Supabase에 연결하면 지금까지의 기록을 받아옵니다.</div></div>` : '';
@@ -1171,6 +1449,14 @@ $('#fx0').addEventListener('change', e => { state.fx0 = +e.target.value; schedul
 $('#principal').addEventListener('change', e => { state.principal = +e.target.value; schedulePush(); saveLocal(); renderAnalysis(); renderPlan(); });
 $('#apiKey').addEventListener('change', e => { state.api = state.api || {}; state.api.key = e.target.value.trim(); schedulePush(); saveLocal(); refreshQuotes(true); });
 $('#refreshBtn').addEventListener('click', () => refreshQuotes(true));
+const flowGo = sign => {
+  const el = $('#flowAmt'); applyFlow(+el.value, $('#flowTgt').value, sign); el.value = '';
+};
+$('#flowIn').addEventListener('click', () => flowGo(1));
+$('#flowOut').addEventListener('click', () => flowGo(-1));
+$('#flowList').addEventListener('click', e => {
+  const b = e.target.closest('[data-undo]'); if (b) undoFlow(+b.dataset.undo);
+});
 const sbEl = id => document.getElementById(id);
 if (sbEl('sbSave')) {
   const c = sbCfg() || {};
@@ -1189,8 +1475,27 @@ if (sbEl('sbSave')) {
   });
 }
 $('#fxNow').addEventListener('change', e => { latest().px.FX = +e.target.value; markDirty(latestKey()); saveLocal(); renderAll(); });
-$('#tgtRate').addEventListener('change', e => { state.tgt.rate = +e.target.value; schedulePush(); saveLocal(); renderPlan(); });
-$('#tgtYears').addEventListener('change', e => { state.tgt.years = +e.target.value; schedulePush(); saveLocal(); renderPlan(); });
+const planSave = () => { schedulePush(); saveLocal(); renderPlan(); renderAnalysis(); };
+document.getElementById('p-plan').addEventListener('change', e => {
+  const t = e.target, P = state.plan;
+  if (t.dataset.plan) { state[t.dataset.plan] = +t.value; planSave(); toast('반영했습니다'); return; }
+  if (t.dataset.pc) {
+    const k = t.dataset.pc;
+    P[k] = (k === 'infl' || k === 'loanRate') ? +t.value / 100 : +t.value;
+    planSave(); return;
+  }
+  if (t.dataset.ps) {
+    const [n, k] = t.dataset.ps.split('|');
+    P.sc[n][k] = (k === 'pen') ? +t.value : +t.value / 100;
+    planSave(); return;
+  }
+  if (t.dataset.abc) { P[t.dataset.abc] = +t.value; planSave(); return; }
+  if (t.id === 'useLive') {
+    P.useLive = t.checked;
+    if (!P.useLive) { const S = startAssets(); P.a = Math.round(S.a); P.b = Math.round(S.b); P.c = Math.round(S.c); }
+    planSave(); return;
+  }
+});
 $('#newDayBtn').addEventListener('click', () => {
   const lk = latestKey(), today = iso(new Date());
   if (today <= lk) { toast('이미 ' + lk + ' 기록이 있습니다'); return; }
@@ -1282,7 +1587,8 @@ async function sbPushDays(keys) {
 async function sbPushMeta() {
   const body = [
     { k: 'fx0', v: num(state.fx0) }, { k: 'principal', v: num(state.principal) },
-    { k: 'tgt', v: state.tgt }, { k: 'ts', v: state.ts }
+    { k: 'plan', v: state.plan }, { k: 'ts', v: state.ts },
+    { k: 'reCost', v: num(state.reCost) }, { k: 'rePast', v: num(state.rePast) }, { k: 'stPast', v: num(state.stPast) }, { k: 'flows', v: state.flows || [] }
   ];
   await sbReq('/rest/v1/meta', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(body) });
 }
@@ -1326,13 +1632,13 @@ async function initSupabase() {
   if (!sbTok) return false;
   try {
     const { days, meta } = await sbPull();
-    if (meta.seed && meta.seed.months) { SEED = Object.assign({ days: [], labels: {} }, meta.seed); }
+    if (meta.seed && meta.seed.months) { SEED = Object.assign({ days: [], labels: {}, plan: {} }, meta.seed); ensurePlan(); }
     if (Object.keys(days).length && ((meta.ts || 0) > (state.ts || 0) || isEmptyLedger())) {
       state.days = days;
       if (meta.fx0) state.fx0 = meta.fx0;
       if (meta.principal != null) state.principal = meta.principal;
       if (meta.tgt) state.tgt = meta.tgt;
-      state.ts = meta.ts; ensureMeta(); saveLocal(); renderAll();
+      state.ts = meta.ts; ensureMeta(); ensurePlan(); saveLocal(); renderAll();
       toast('서버에서 최신 기록을 불러왔습니다');
     } else if (!isEmptyLedger()) {
       await sbPushDays(Object.keys(state.days)); await sbPushMeta();
@@ -1368,7 +1674,7 @@ PROVIDERS.unshift({
   state = (loc && loc.days && Object.keys(loc.days).length) ? loc : defaultState();
   if (!state.tgt) state.tgt = { rate: 8, years: 10 };
   if (!state.fx0) state.fx0 = 1429.26;
-  ensureMeta(); fillToToday();
+  ensureMeta(); ensurePlan(); fillToToday();
   if (window.claude && typeof window.claude.use === 'function') {   // Artifact 환경: 서버 설정 숨김
     ['sbHead', 'sbCard', 'sbNote'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
   }
