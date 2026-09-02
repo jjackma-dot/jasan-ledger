@@ -1,6 +1,10 @@
-# ── 개인 금융정보. 절대 커밋하지 말 것 ───────────────────
+# ── 이 저장소는 공개(Public)다. 배포 전용이다 ─────────────────
+# 작업은 비공개 저장소 jasan-ledger-private 에서 한다. 여기로는 web/ 만 온다.
+# 아래 항목에는 부동산·자녀 실명과 실제 자산 금액이 들어 있다. 절대 커밋하지 말 것.
 private/
-src/seed.json
+src/
+docs/
+CLAUDE.md
 
 # Android
 android/.gradle/
@@ -12,3 +16,4 @@ android/local.properties
 
 # OS
 .DS_Store
+Thumbs.db
