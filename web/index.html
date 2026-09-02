@@ -1126,14 +1126,9 @@ async function jget(url, ms = 7000) {
 }
 /* 공급자들 — 앞에서부터 시도하고, 얻은 값만 채택한다 */
 const PROVIDERS = [
-  { name: '수집앱', fn: async () => {                       // 알림수집 앱이 써둔 값
-      if (!dbRef) return {};
-      const s = await dbRef.doc('quotes/latest').get();
-      if (!s.exists) return {};
-      const d = s.data() || {};
-      if (Date.now() - (d.at || 0) > 6 * 3600e3) return {};   // 6시간 넘으면 무시
-      const o = {}; Object.keys(SYM).forEach(k => { if (d[k] > 0) o[k] = +d[k]; }); return o;
-    } },
+  /* Yahoo 는 브라우저에서 CORS 로 막힌다. 실측했다 — 여기서 성공하는 일은 없다.
+     그래도 남겨 둔 이유는 이 파일이 파일 프로토콜이나 확장 환경에서 열릴 수도 있어서다.
+     실제 경로는 위쪽 '시세 프록시'다. */
   { name: 'Yahoo', fn: async () => {
       const o = {};
       await Promise.all(Object.entries(SYM).map(async ([k, sym]) => {
@@ -2015,8 +2010,33 @@ async function recoverServer() {
   if (ok) renderAll();
   return ok;
 }
-/* 시세 공급자에 Supabase quotes 테이블 추가 */
+/* 시세 프록시 — 브라우저가 CORS 때문에 못 닿는 곳을 서버가 대신 받아 준다.
+   국내 ETF 는 네이버, 해외·환율은 Yahoo. 코드는 supabase/functions/quotes 에 있다.
+
+   이게 주력이다. 수집 앱은 15분 주기라 장중에 뒤처지고, 폰이 꺼져 있으면 아예 멈춘다.
+   프록시는 웹앱을 열 때마다 즉시 받아오므로 훨씬 최신이다.
+   함수가 아직 배포되지 않았으면 조용히 빠지고 아래 공급자들이 받는다. */
+let proxyDead = false;                                   // 없는 함수를 매번 두드리지 않는다
 PROVIDERS.unshift({
+  name: '시세 프록시', fn: async () => {
+    if (proxyDead || !SB || !sbTok) return {};
+    try {
+      const syms = Object.values(SYM).join(',');
+      const j = await sbReq('/functions/v1/quotes?syms=' + encodeURIComponent(syms));
+      const o = {}, inv = Object.fromEntries(Object.entries(SYM).map(([k, v]) => [v, k]));
+      Object.entries(j || {}).forEach(([sym, v]) => {
+        const k = inv[sym]; if (k && +v > 0) o[k] = +v;
+      });
+      return o;
+    } catch (e) {
+      if (String(e.message).includes('404')) proxyDead = true;   // 배포 전이면 한 번만 확인한다
+      return {};
+    }
+  }
+});
+
+/* 시세 공급자에 Supabase quotes 테이블 추가 */
+PROVIDERS.splice(1, 0, {
   name: '수집앱', fn: async () => {
     if (!SB || !sbTok) return {};
     try {
