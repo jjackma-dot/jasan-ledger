@@ -1489,29 +1489,21 @@ document.getElementById('p-in')?.addEventListener('click', async e => {
 const PLAN_BASE = {
   infl: 0.023, loanRate: 0.05,
   baseYear: 2026, retireYear: 2042, pensionYear: 2046, crevasseMonths: 53,
-  targetRE: 0, re26: 0, save: 0, dcAdd: 0, kidTarget: 0, salary: 0,
+  targetRE: 0, re26: 0, save: 0, dcAdd: 0, kidTarget: 0,
   useLive: true, a: 0, b: 0, c: 0,
   sc: {
-    예상: { fin: 0.023, dc: 0.023, ret: 0.040, pen: 0, wage: 0.023 },
-    현재: { fin: 0.080, dc: 0.050, ret: 0.060, pen: 0, wage: 0.040 },
-    목표: { fin: 0.120, dc: 0.080, ret: 0.080, pen: 0, wage: 0.060 }
+    예상: { fin: 0.023, dc: 0.023, ret: 0.040, pen: 0 },
+    현재: { fin: 0.080, dc: 0.050, ret: 0.060, pen: 0 },
+    목표: { fin: 0.120, dc: 0.080, ret: 0.080, pen: 0 }
   }
 };
-const PLAN_KEYS = ['targetRE', 're26', 'save', 'dcAdd', 'kidTarget', 'salary'];
-/* salary(연봉)는 선택 입력이다 — 비워 두면 dcAdd 고정값으로 대신한다(dcContrib 참고).
-   그래서 "비었으니 못 믿는다" 경고·재동기화 판정에서는 뺀다. 나머지는 대신할 값이
-   없어 비어 있으면 계산 전체가 흔들린다. */
-const PLAN_REQUIRED = PLAN_KEYS.filter(k => k !== 'salary');
+const PLAN_KEYS = ['targetRE', 're26', 'save', 'dcAdd', 'kidTarget'];
 
-/* DC 연 불입액 — 연봉을 입력했으면 법정 최소(연봉 ÷ 12)로 매년 계산해 넣는다.
-   연봉이 아직 없으면(0) 기존처럼 dcAdd 고정값을 그대로 쓴다 — 이미 실제 값을
-   넣어 쓰던 사람이 연봉을 안 넣었다고 DC 적립이 갑자기 0 이 되면 안 된다. */
-function dcContrib(P, s, y) {
-  if (!(P.salary > 0)) return num(P.dcAdd);
-  const wr = s.wage - P.infl;                              // 실질 연봉상승률
-  const salary = P.salary * Math.pow(1 + wr, y - P.baseYear);
-  return salary / 12;
-}
+/* DC 연 불입액은 **현재가치**로 입력한다. 매년 같은 금액을 더하는 것은
+   명목으로 물가상승률만큼 매년 늘어나는 것과 같다 — 이 모델이 전부 현재가치로
+   돌기 때문이다. 연봉·연봉상승률로 계산하는 방식을 잠깐 넣었다가 걷어냈다:
+   같은 결과를 내면서 입력할 것만 늘어나고, 회사 적립률이 법정 최소인지
+   아닌지까지 사용자가 신경 써야 했다. */
 const planDefaults = () => {
   const d = clone(PLAN_BASE), sp = SEED.plan || {};
   for (const k in sp) {
@@ -1538,16 +1530,26 @@ function simulate(name) {
   const P = state.plan, s = P.sc[name], S = startAssets(name);
   const fr = s.fin - P.infl, dr = s.dc - P.infl, rr = s.ret - P.infl;
   const nYears = P.retireYear - P.baseYear;                  // 2026 → 2042
-  const B = [0], C = [0], D = [P.save], E = [S.a], F = [S.c], G = [S.b];
-  const rows = [{ y: P.baseYear, B: 0, C: 0, D: P.save, E: S.a, F: S.c, G: S.b }];
 
-  // 27년: 부동산 잔금에서 대출 발생
+  /* 26년말 부동산가로 무엇을 넣든 총자산이 부풀지 않게 한다.
+     예전에는 이 값을 '대출 뺀 순자산' 으로만 보고 대출을 아예 안 잡아서,
+     총 집값(96,828)을 넣으면 실제 순자산(84,155)과의 차이인 12,673 만큼
+     없던 재산이 생겼다. 집값을 올려 적을수록 자산이 늘어나는 셈이었다.
+     넣은 값이 실제 부동산 순자산보다 크면 그 차이는 갚아야 할 빚으로 잡는다.
+     장부에 부동산이 없으면(reNet0 = 0) 대조할 기준이 없으니 그대로 둔다. */
+  const reNet0 = calc(latest()).reT;
+  const carried = reNet0 > 0 ? Math.max(0, num(P.re26) - reNet0) : 0;
+
+  const B = [carried], C = [0], D = [P.save], E = [S.a], F = [S.c], G = [S.b];
+  const rows = [{ y: P.baseYear, B: carried, C: 0, D: P.save, E: S.a, F: S.c, G: S.b }];
+
+  // 27년: 부동산 잔금에서 대출 발생 (기존 대출에 얹는다)
   const gap = P.targetRE - P.re26;
   const pool = E[0] * (1 + fr) + P.save;
-  B.push(Math.max(0, gap - pool));
+  B.push(carried + Math.max(0, gap - pool));
   C.push(0); D.push(0);
-  E.push(B[1] > 0 ? 0 : pool - gap);
-  F.push(F[0] * (1 + dr) + dcContrib(P, s, P.baseYear + 1));
+  E.push(Math.max(0, pool - gap));
+  F.push(F[0] * (1 + dr) + num(P.dcAdd));
   G.push(G[0] * (1 + fr));
   rows.push({ y: P.baseYear + 1, B: B[1], C: C[1], D: D[1], E: E[1], F: F[1], G: G[1] });
 
@@ -1559,7 +1561,7 @@ function simulate(name) {
     B.push(Math.max(0, pb * (1 + P.loanRate) - c));
     C.push(c); D.push(P.save - c);
     E.push(E[i - 1] * (1 + fr) + (P.save - c));
-    F.push(F[i - 1] * (1 + dr) + dcContrib(P, s, P.baseYear + i));
+    F.push(F[i - 1] * (1 + dr) + num(P.dcAdd));
     G.push(G[i - 1] * (1 + fr));
     rows.push({ y: P.baseYear + i, B: B[i], C: C[i], D: D[i], E: E[i], F: F[i], G: G[i] });
   }
@@ -1567,7 +1569,7 @@ function simulate(name) {
   const i = nYears;
   const loanLeft = B[i - 1] * (1 + P.loanRate);
   const g = G[i - 1] * (1 + fr);
-  const f = F[i - 1] * (1 + dr) + dcContrib(P, s, P.retireYear);
+  const f = F[i - 1] * (1 + dr) + num(P.dcAdd);
   const kidSettle = g - P.kidTarget;
   const e = E[i - 1] * (1 + fr) + P.save - loanLeft + kidSettle;
   rows.push({ y: P.retireYear, B: 0, C: 0, D: P.save, E: e, F: f, G: g });
@@ -1654,7 +1656,7 @@ function renderPlan() {
      (ensurePlan 이 0 인 항목을 SEED.plan 으로 채운다). 로그인 전이거나 실패하면
      0 인 채로 계산이 돌아 은퇴 요약이 통째로 엉뚱한 값이 된다. 예전에는 그걸
      아무 표시 없이 보여줬다 — 화면만 봐서는 진짜 값인지 알 수 없었다. */
-  const missPlan = PLAN_REQUIRED.filter(k => !num(P[k]));
+  const missPlan = PLAN_KEYS.filter(k => !num(P[k]));
   const canRecover = !!(sbCfg().url && localStorage.getItem('jasan_sb_tok'));
   $('#planWarn').innerHTML = missPlan.length
     ? `<div class="warn"><span>◔</span><div>계획 수치 <b>${missPlan.join(', ')}</b> 가 비어 있어 아래 값은 신뢰할 수 없습니다.
@@ -1696,20 +1698,22 @@ function renderPlan() {
     ['re26', '26년말 부동산가', '만원', P.re26, 1000],
     ['loanRate', '대출 금리', '%', pct(P.loanRate), 0.1],
     ['save', '연 저축액', '만원', P.save, 100],
-    ['salary', '현재 연봉', '만원', P.salary, 100],
     ['dcAdd', 'DC 연 불입액', '만원', P.dcAdd, 50],
     ['kidTarget', '자녀증여', '만원', P.kidTarget, 1000],
-    ['retireYear', '은퇴 연도', '년', P.retireYear, 1]
+    ['retireYear', '은퇴 연도', '년', P.retireYear, 1],
+    ['crevasseMonths', '연금 공백', '개월', P.crevasseMonths, 1]
   ].map(([k, l, u, v, st]) =>
     `<div class="erow"><label>${l} <span class="u">${u}</span></label>
      <input class="num" type="number" step="${st}" data-pc="${k}" value="${v}"></div>`).join('')
-    + `<p class="note" style="padding:4px 15px 0">현재 연봉을 넣으면 아래 <b>DC 연 불입액</b> 대신
-       연봉 ÷ 12(법정 최소)로 매년 계산해 씁니다. 연봉이 비어 있으면 DC 연 불입액을 그대로 씁니다.</p>`;
+    + `<p class="note" style="padding:4px 15px 0">금액은 모두 <b>현재가치</b>입니다.
+       연 저축액·DC 연 불입액은 매년 같은 값을 넣는데, 이는 명목으로 물가상승률만큼
+       매년 늘어난다는 뜻입니다. <b>연금 공백</b>은 은퇴 후 국민연금을 받기 전까지의
+       기간으로, 그만큼을 미리 떼어 두고 인출액을 계산합니다.</p>`;
 
   $('#planSc').innerHTML = SCN.map(n => {
     const s = P.sc[n];
     return `<div class="grp-h" style="padding-left:15px">${n}</div>`
-      + [['fin', '금융 수익률'], ['dc', 'DC 수익률'], ['wage', '연봉상승률'], ['ret', '은퇴 후 수익률']].map(([k, l]) =>
+      + [['fin', '금융 수익률'], ['dc', 'DC 수익률'], ['ret', '은퇴 후 수익률']].map(([k, l]) =>
         `<div class="erow"><label>${l} <span class="u">%</span></label>
          <input class="num" type="number" step="0.1" data-ps="${n}|${k}" value="${pct(s[k])}"></div>`).join('')
       + `<div class="erow"><label>국민연금 <span class="u">만원/월</span></label>
@@ -2215,7 +2219,7 @@ let recovering = false;
 async function recoverServer() {
   if (recovering) return false;
   const needs = !remoteOn || !SEED.months || !SEED.months.length
-    || PLAN_REQUIRED.some(k => !num(state.plan && state.plan[k]));
+    || PLAN_KEYS.some(k => !num(state.plan && state.plan[k]));
   if (!needs) return true;
   const c = sbCfg();
   if (!c.url || !c.key || !localStorage.getItem('jasan_sb_tok')) return false;   // 로그인이 없으면 못 고친다
