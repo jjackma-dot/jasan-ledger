@@ -1762,6 +1762,27 @@ function ibMatch(p) {
   if (p.qty > totQty) return { ok: false, why: `계획 수량 ${fmt(totQty, 0)}주를 넘습니다` };
   return { ok: true, why: hit ? `계획 ${hit.typ} $${fmt(hit.px, 2)} 와 일치` : '계획 범위 안' };
 }
+/* 오늘의 주문표를 수집 앱이 읽을 수 있게 서버에 올린다.
+   앱에서 다시 계산하지 않는다 — 같은 식을 두 곳에 두면 언젠가 갈라진다.
+   앱은 이걸 그대로 표로 그리고, 한 줄을 누르면 메리츠 MTS 주문칸에 채운다. */
+function ibPlanPayload() {
+  const out = { d: latestKey(), at: Date.now(), slots: [] };
+  IB_SLOTS.forEach(sl => {
+    const r = ibRun(sl.k);
+    if (!r || !r.orders || r.orders.done) return;
+    const o = r.orders, rows = [];
+    const add = (side, l) => {
+      if (!l || num(l.qty) <= 0) return;
+      rows.push({ side, typ: l.typ, px: +num(l.px).toFixed(2), qty: Math.round(num(l.qty)), tag: l.tag || '' });
+    };
+    ((o.buy && o.buy.legs) || []).forEach(l => add('B', l));
+    ((o.buy && o.buy.tiers) || []).forEach(l => add('B', l));
+    add('S', o.sell1); add('S', o.sell2);
+    if (rows.length) out.slots.push({ k: sl.k, n: sl.n, tick: SYM[sl.px] || sl.px, rows });
+  });
+  return out;
+}
+
 function ibNote(p, m) {
   state.ibLog = (state.ibLog || []).slice(-29);
   state.ibLog.push({
@@ -2493,7 +2514,8 @@ async function sbPushMeta() {
     { k: 'fx0', v: num(state.fx0) }, { k: 'principal', v: num(state.principal) },
     { k: 'plan', v: state.plan }, { k: 'ts', v: state.ts },
     { k: 'reCost', v: num(state.reCost) }, { k: 'rePast', v: num(state.rePast) }, { k: 'stPast', v: num(state.stPast) }, { k: 'flows', v: state.flows || [] },
-    { k: 'ib', v: state.ib || {} }, { k: 'ibLog', v: state.ibLog || [] }
+    { k: 'ib', v: state.ib || {} }, { k: 'ibLog', v: state.ibLog || [] },
+    { k: 'ibPlan', v: ibPlanPayload() }
   ];
   await sbReq('/rest/v1/meta', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(body) });
 }
