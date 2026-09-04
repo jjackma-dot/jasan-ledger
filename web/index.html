@@ -476,7 +476,7 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
     <div class="nav-in">
       <button data-t="sum" aria-pressed="true"><svg viewBox="0 0 24 24"><path d="M3 17l5.5-6 4 3.5L21 6"/><path d="M3 21h18"/></svg>종합</button>
       <button data-t="ana" aria-pressed="false"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v8.5l6 3.5"/></svg>분석</button>
-      <button data-t="ib" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 20h18"/><path d="M6 20V9M11 20V4M16 20v-7M21 20v-4"/></svg>무매</button>
+      <button data-t="ib" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M3 20h18"/><path d="M6 20V9M11 20V4M16 20v-7M21 20v-4"/></svg>무매/VR</button>
       <button data-t="in" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>입력<span class="nav-badge" id="inBadge" hidden></span></button>
       <button data-t="plan" aria-pressed="false"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16"/><path d="M8 15l4-6 3 3 5-8"/></svg>실적/계획</button>
     </div>
@@ -1834,9 +1834,27 @@ function ibPlanPayload() {
     ((o.buy && o.buy.legs) || []).forEach(l => add('B', l));
     ((o.buy && o.buy.tiers) || []).forEach(l => add('B', l));
     add('S', o.sell1); add('S', o.sell2);
-    if (rows.length) out.slots.push({ k: sl.k, n: sl.n, tick: SYM[sl.px] || sl.px, rows });
+    if (rows.length) out.slots.push({ k: sl.k, n: sl.n, tick: SYM[sl.px] || sl.px, rows: near(rows, sl) });
+  });
+  /* VR 은 가격대별 사다리라 줄이 많다. 같은 규칙으로 추려 올린다. */
+  IB_SLOTS.filter(sl => sl.vr).forEach(sl => {
+    const r = vrRun(sl.k);
+    if (!r || !r.orders.rows.length) return;
+    const rows = r.orders.rows.map(l => ({
+      side: l.side, typ: l.typ, px: +num(l.px).toFixed(2),
+      qty: Math.round(num(l.qty)), tag: l.tag || ''
+    }));
+    out.slots.push({ k: sl.k, n: sl.n, tick: SYM[sl.px] || sl.px, rows: near(rows, sl) });
   });
   return out;
+}
+
+/* 오버레이는 현재가 기준 ±20% 안만 보여 준다. 그보다 먼 가격의 주문은 오늘 걸어 둘
+   일이 없고, 좁은 창에 줄만 늘린다. */
+function near(rows, sl) {
+  const close = num(latest().px[sl.px]);
+  if (!(close > 0)) return rows;
+  return rows.filter(r => Math.abs(num(r.px) / close - 1) <= 0.2001);
 }
 
 function ibNote(p, m) {
@@ -1878,15 +1896,7 @@ function renderIB() {
   const run = ibRun(sl.k);
   let out = '';
 
-  if (sl.vr) {
-    out += `<div class="warn" style="margin-top:12px"><span>◔</span><div>
-      <b>${sl.n}</b> 은 <b>VR 5.0(밸류 리밸런싱)</b> 이라 무한매수법과 계산이 다릅니다.
-      분할수 같은 개념이 없어 이 자리에는 무한매수법을 씌우지 않습니다.
-      지금 보유 <b>${fmt(curQ, 0)}주</b>, 현재가 <b>${ibU(close)}</b>.
-      <br>VR 5.0 은 다음 배포에 들어갑니다.</div></div>`;
-    body.innerHTML = out;
-    return;
-  }
+  if (sl.vr) { body.innerHTML = vrPanel(sl); return; }   // VR 은 방법론이 달라 화면도 따로다
 
   if (!run) {
     /* 왜 안 나오는지 정확히 말한다. 예전에는 켠 뒤에도 "아직 켜져 있지 않습니다" 라고만
@@ -2045,6 +2055,316 @@ function ibAnchor() {
   cfg.q0 = num(t.q);
   cfg.a0 = num(t.q) > 0 ? +(num(t.c) / num(t.q)).toFixed(4) : 0;
 }
+
+/* ===================== VR 5.0 (밸류 리밸런싱) =====================
+   라오어 밸류 리밸런싱 5.0.
+
+   ── 무한매수법과 무엇이 다른가 ──────────────────────────────────
+   무매는 '얼마에 샀나(평단)' 로 판단한다. VR 은 **'있어야 할 평가금(V)'** 하나로
+   판단한다. 매입 이력이 개입하지 않으므로 평단보다 싸게 파는 것도 정상이다.
+   그래서 이 엔진은 평단가를 아예 쓰지 않는다 — 무매에서 애를 먹인 차감법 문제가
+   여기서는 생기지 않는다.
+
+   ── 규칙 ────────────────────────────────────────────────────────
+   V (Value)    주식 평가금의 기준선. 2주마다 갱신한다
+   P (Pool)     현금
+   G (Gradient) V 가 오르는 속도. 분모가 클수록 천천히 오르고 현금을 더 들고 간다
+   밴드         V 의 85~115% (기본 ±15%)
+
+       다음 V = 현재 V + P/G ± 적립금(또는 인출금)
+
+   평가금이 상단(1.15V)을 넘으면 **V 로 돌아올 만큼 판다.**
+   평가금이 하단(0.85V) 밑이면 **V 에 닿을 만큼 산다.** 단 Pool 한도 안에서.
+   밴드 안이면 아무것도 하지 않는다.
+
+   1사이클 Pool 사용 한도 — 적립식 75% · 거치식 50% · 인출식 25%
+
+   ── 출처와 한계 (중요) ─────────────────────────────────────────
+   무매는 언이 시트 원본 스크립트를 그대로 옮기고 차분 테스트 17,773건으로
+   대조했다. **VR 은 그러지 못했다.**
+
+   사용자가 준 VR 구글시트 파일(private/VR시트-스크립트.txt)에는 계산식이 없다.
+   메뉴·사이드바·메일 배선뿐이고, VR 수식은 시트의 셀 수식에 들어 있어 스크립트
+   내보내기에 딸려 오지 않았다. 카페 원본 글은 로그인이 막혀 열지 못했다.
+
+   그래서 아래는 두 곳을 합친 것이다.
+     · 규칙(V·G·밴드·Pool 한도) — 공개 정리 quantstack.app/vr.
+       공식 예시(V=9000, P=1000, G=10, 적립 250 → 다음 V=9350)로 식을 확인했다
+     · 인출식 인출액 — 시트 스크립트 autoCheck() 에서 그대로 건졌다:
+       floor((평가금 + Pool) × 0.005 / 100) × 100. 즉 0.5% 를 100 단위로 절사
+     · 주문표가 (수량·가격·Pool) 세 칸이라는 것, 평가금이 밴드를 벗어나면 알림을
+       보낸다는 것도 스크립트에서 확인했다 — 화면 구성을 여기에 맞췄다
+
+   **원본 시트와 숫자가 다르면 시트가 맞다.** 시트의 셀 수식을 주시면 무매처럼
+   그대로 옮기고 대조하겠다. 그때까지는 V·G·밴드·Pool 을 화면에서 고칠 수 있게
+   해 두고, 사이클 기록을 그대로 보여 준다 — 시트와 한 줄씩 맞춰 볼 수 있어야 한다.
+           */
+
+const VR_BASE = { on: false, V: 0, G: 10, band: 15, mode: '거치', flow: 0, pool: 0, d0: '', days: 14 };
+const VR_CAP = { '적립': 0.75, '거치': 0.50, '인출': 0.25 };
+const VR_MODES = ['적립', '거치', '인출'];
+
+function vrCfg(k) {
+  if (!state.vr) state.vr = {};
+  if (!state.vr[k]) state.vr[k] = { ...VR_BASE };
+  const c = state.vr[k];
+  Object.keys(VR_BASE).forEach(f => { if (c[f] === undefined) c[f] = VR_BASE[f]; });
+  return c;
+}
+const addDays = (s, n) => { const d = parseISO(s); d.setDate(d.getDate() + n); return iso(d); };
+
+/* 시작일부터 오늘까지 다시 계산한다. 무매와 같은 방식이다 —
+   상태를 따로 들고 있지 않으므로 두 번 세거나 하루를 건너뛰어 어긋나지 않는다.
+   Pool 은 원장의 매입금액 증감으로 굴린다. 매수하면 낸 만큼 줄고 매도하면 받은
+   만큼 는다. 절대값이 아니라 하루 사이의 차이만 쓰므로 차감법이어도 정확하다. */
+function vrRun(key) {
+  const sl = IB_SLOTS.find(s => s.k === key);
+  if (!sl || !sl.vr) return null;
+  const cfg = vrCfg(key);
+  if (!cfg.on || num(cfg.V) <= 0 || num(cfg.G) <= 0) return null;
+  const ks = dayKeys(), i0 = cfg.d0 ? ks.indexOf(cfg.d0) : -1;
+  if (i0 < 0) return null;
+
+  const G = num(cfg.G), days = Math.max(1, num(cfg.days));
+  /* 사이클마다 오갈 현금.
+     적립식은 정해 둔 금액을 넣고, 거치식은 0, 인출식은 (평가금 + Pool) 의 0.5% 를
+     100 단위로 절사해 뺀다 — 이 규칙은 시트 스크립트 autoCheck() 에서 그대로 옮겼다. */
+  const flowAt = (val, pl) => cfg.mode === '적립' ? num(cfg.flow)
+    : cfg.mode === '인출' ? -Math.floor((val + pl) * 0.005 / 100) * 100
+    : 0;
+
+  const rec0 = state.days[ks[i0]];
+  let V = num(cfg.V), pool = num(cfg.pool);
+  let q = num(rec0[sl.g][sl.s].q), prevC = num(rec0[sl.g][sl.s].c);
+  let invested = q * num(rec0.px[sl.px]) + pool;      // 총 투입 — 수익률 분모
+  let next = addDays(cfg.d0, days);
+  const cycles = [{ d: cfg.d0, V, pool, kind: '시작' }];
+
+  for (let i = i0 + 1; i < ks.length; i++) {
+    const d = ks[i], r = state.days[d];
+    const nq = num(r[sl.g][sl.s].q), c = num(r[sl.g][sl.s].c);
+    const dc = c - prevC;
+    if (nq > q) pool -= dc;                            // 매수 — 낸 돈만큼 줄고
+    else if (nq < q) pool += -dc;                      // 매도 — 받은 돈만큼 는다
+    q = nq; prevC = c;
+
+    /* 사이클 경계. 공식 예시가 P/G 에 적립 전 Pool 을 쓰므로 순서를 그대로 지킨다.
+       (V=9000, P=1000, G=10, 적립 250 → 9000 + 100 + 250 = 9350) */
+    while (d >= next) {
+      const flow = flowAt(q * num(r.px[sl.px]), pool);
+      V = V + pool / G + flow;
+      pool += flow;
+      invested += flow;
+      cycles.push({ d: next, V, pool, flow, kind: cfg.mode });
+      next = addDays(next, days);
+    }
+  }
+  const close = num(latest().px[sl.px]);
+  return { cfg, sl, V, pool, q, close, invested, cycles, nextCycle: next,
+    orders: vrLadder(cfg, V, pool, q, close) };
+}
+
+/* 오늘 걸어 둘 주문표.
+   목표는 늘 하나다 — 어떤 가격 p 에서든 평가금이 V 가 되게, 즉 V/p 주를 들고 있게.
+   그래서 가격대별 목표수량 V/p 를 구하고 이웃한 단계와의 차이를 주문으로 낸다.
+   이렇게 해야 여러 줄을 한꺼번에 걸어 둬도 겹쳐서 과매매가 되지 않는다.
+
+   밴드 안에서는 아무것도 하지 않으므로, 매도는 평가금이 상단을 넘는 가격부터,
+   매수는 하단 밑으로 내려가는 가격부터 시작한다.
+   현재가 ±20% 를 2% 간격으로 훑는다 — 오버레이가 그만큼만 보여 준다. */
+function vrLadder(cfg, V, pool, q, close) {
+  const band = num(cfg.band) / 100;
+  const up = V * (1 + band), dn = V * (1 - band);
+  const cap = (VR_CAP[cfg.mode] != null ? VR_CAP[cfg.mode] : 0.5) * Math.max(0, pool);
+  const rows = [];
+  if (!(close > 0) || !(V > 0)) return { rows, up, dn, cap, used: 0 };
+
+  const grid = [];
+  for (let k = -20; k <= 20; k += 2) grid.push(+(close * (1 + k / 100)).toFixed(2));
+
+  // 매도 — 낮은 가격부터 올라가며 목표수량까지 덜어 낸다
+  let held = q;
+  grid.filter(p => q * p > up).sort((a, b) => a - b).forEach(p => {
+    const target = Math.floor(V / p);
+    const sell = held - target;
+    if (sell > 0) { rows.push({ side: 'S', typ: '지정가', px: p, qty: sell, tag: '밴드 상단' }); held = target; }
+  });
+
+  // 매수 — 높은 가격부터 내려가며 채운다. Pool 한도까지만
+  held = q; let used = 0;
+  grid.filter(p => q * p < dn).sort((a, b) => b - a).forEach(p => {
+    const target = Math.floor(V / p);
+    let buy = target - held;
+    if (buy <= 0) return;
+    if (used + buy * p > cap) buy = Math.floor(Math.max(0, cap - used) / p);
+    if (buy <= 0) return;
+    used += buy * p; held += buy;
+    rows.push({ side: 'B', typ: '지정가', px: p, qty: buy, tag: '밴드 하단' });
+  });
+  return { rows, up, dn, cap, used };
+}
+
+/* ── VR 화면 ─────────────────────────────────────────────────── */
+const VR_FIELDS = [
+  ['V', '기준선 V', 'USD', 1],
+  ['pool', 'Pool', 'USD', 1],
+  ['G', '그라디언트 G', '분모', 1],
+  ['band', '밴드', '±%', 0.5],
+  ['flow', '사이클당 적립액', 'USD · 적립식만', 1],
+  ['days', '사이클 길이', '일', 1]
+];
+
+function vrPanel(sl) {
+  const cfg = vrCfg(sl.k), x = latest();
+  const close = num(x.px[sl.px]), curQ = num(x[sl.g][sl.s].q);
+  const run = vrRun(sl.k);
+  let out = '';
+
+  if (!run) {
+    const why = !cfg.on ? '아직 <b>켬</b> 으로 두지 않았습니다'
+      : num(cfg.V) <= 0 ? '<b>기준선 V</b> 가 비어 있습니다 — 지금 평가금 근처로 잡으면 됩니다'
+      : num(cfg.G) <= 0 ? '<b>그라디언트 G</b> 가 0 입니다'
+      : !cfg.d0 ? '<b>시작일</b> 이 비어 있습니다 — 아래 <b>맞추기</b> 를 눌러 주세요'
+      : !dayKeys().includes(cfg.d0) ? `시작일 <b>${esc(cfg.d0)}</b> 에 해당하는 원장 기록이 없습니다`
+      : '설정을 확인해 주세요';
+    out += `<div class="warn" style="margin-top:12px"><span>◔</span><div>
+      <b>${sl.n}</b> — ${why}.<br>지금 보유 <b>${fmt(curQ, 0)}주</b> · 평가금
+      <b>${ibU(curQ * close, 0)}</b> · 현재가 <b>${ibU(close)}</b>.</div></div>`;
+  } else {
+    const { V, pool, q, invested, orders: o } = run;
+    const val = q * close;
+    const pct = V > 0 ? val / V * 100 : 0;
+    const inBand = val >= o.dn && val <= o.up;
+    const zone = val > o.up ? '상단 초과 — 매도' : val < o.dn ? '하단 미만 — 매수' : '밴드 안 — 대기';
+    const zc = inBand ? 'var(--brass)' : val > o.up ? 'var(--down)' : 'var(--up)';
+    const acct = val + pool, gain = acct - invested;
+
+    out += `<div class="card hero" style="margin-top:12px">
+      <div class="lbl">${sl.n} · VR 5.0</div>
+      <div class="big num"><span>${fmt(pct, 1)}</span><span class="unit">% of V</span></div>
+      <div class="delta fl"><span style="color:${zc};font-weight:600">${zone}</span>
+        <span class="pill">${cfg.mode}식</span><span class="pill">G ${fmt(num(cfg.G), 0)}</span>
+        <span class="pill">±${fmt(num(cfg.band), 0)}%</span></div>
+      <div class="bar" style="width:100%;margin:9px 0 2px">
+        <i style="width:${Math.max(0, Math.min(100, pct / 1.5))}%;background:${zc}"></i></div>
+      <div class="note" style="margin-top:8px">평가금 <b>${ibU(val, 0)}</b> · 기준선 V <b>${ibU(V, 0)}</b>
+        <span class="u">밴드 ${ibU(o.dn, 0)} ~ ${ibU(o.up, 0)}</span></div>
+    </div>`;
+
+    out += `<h2 class="sec">주문</h2><div class="card pad">`;
+    if (!o.rows.length) {
+      out += `<p class="note">지금 가격에서 ±20% 안에는 낼 주문이 없습니다.
+        평가금이 밴드(${ibU(o.dn, 0)} ~ ${ibU(o.up, 0)}) 안에 있고, 그 범위를 벗어나는
+        가격대가 ±20% 밖이라는 뜻입니다.</p>`;
+    } else {
+      const sell = o.rows.filter(r => r.side === 'S'), buy = o.rows.filter(r => r.side === 'B');
+      const tbl = (title, rs) => rs.length ? `<div class="scroll" style="margin-top:10px"><table class="tbl">
+        <tr><th>${title}</th><th>수량</th></tr>` + rs.map(r =>
+          `<tr><td>${r.typ} <b class="mn">${ibU(r.px)}</b>
+            <span class="u">${fmt((r.px / close - 1) * 100, 0)}%</span></td>
+            <td>${fmt(r.qty, 0)}주</td></tr>`).join('') + `</table></div>` : '';
+      out += tbl('매도', sell) + tbl('매수', buy);
+      out += `<p class="note" style="margin-top:9px">현재가 ${ibU(close)} 기준 <b>±20%</b> 구간입니다.
+        모든 줄을 한꺼번에 걸어 두어도 겹치지 않습니다 — 각 줄은 그 가격에서 평가금이 V 가 되도록
+        <b>모자란 만큼만</b> 냅니다. 매수는 Pool 한도 <b>${ibU(o.cap, 0)}</b>
+        (${cfg.mode}식 ${Math.round((VR_CAP[cfg.mode] || 0.5) * 100)}%) 안에서만 냅니다
+        ${o.used > 0 ? `— 이 표가 다 체결되면 ${ibU(o.used, 0)} 를 씁니다` : ''}.</p>`;
+    }
+    out += `</div>`;
+
+    out += `<h2 class="sec">현황과 수익률</h2><div class="card pad"><div class="scroll"><table class="tbl">
+      <tr><th>${sl.n}</th><th>USD</th></tr>
+      <tr><td>보유수량</td><td>${fmt(q, 0)}주</td></tr>
+      <tr><td>현재가</td><td>${ibU(close)}</td></tr>
+      <tr><td>주식 평가금</td><td>${ibU(val, 0)}</td></tr>
+      <tr><td>기준선 V</td><td>${ibU(V, 0)}</td></tr>
+      <tr><td>평가금 ÷ V</td><td>${fmt(pct, 1)}%</td></tr>
+      <tr><td>Pool <span class="u">현금</span></td><td>${ibU(pool, 0)}</td></tr>
+      <tr><td>= 계좌 평가액</td><td>${ibU(acct, 0)}</td></tr>
+      <tr><td>총 투입 <span class="u">시작 + 적립 − 인출</span></td><td>${ibU(invested, 0)}</td></tr>
+      <tr><td style="color:var(--ink);font-weight:600">시드 기준 수익률</td>
+          <td style="font-weight:600;color:var(--${gain >= 0 ? 'up' : 'down'})">${gain >= 0 ? '+' : '−'}${fmt(Math.abs(invested > 0 ? gain / invested * 100 : 0), 2)}%</td></tr>
+      </table></div>
+      <p class="note" style="margin-top:9px">주식과 Pool 을 합한 계좌 전체를 총 투입액과 견줍니다.
+      VR 은 평단을 보지 않으므로 매입 이력이 수익률에 개입하지 않습니다. 달러 기준이라 환차손익은
+      섞이지 않습니다 — 그건 분석 탭에 따로 있습니다.</p></div>`;
+
+    const cs = run.cycles.slice(-8);
+    out += `<h2 class="sec">사이클 기록</h2><div class="card pad"><div class="scroll"><table class="tbl">
+      <tr><th>날짜</th><th>V</th><th>Pool</th></tr>`
+      + cs.map(c => `<tr><td>${c.d} <span class="u">${esc(c.kind)}${c.flow ? ' ' + ibSgn(c.flow) : ''}</span></td>
+          <td>${ibU(c.V, 0)}</td><td>${ibU(c.pool, 0)}</td></tr>`).join('')
+      + `</table></div>
+      <p class="note" style="margin-top:9px">다음 갱신 <b>${run.nextCycle}</b>.
+      갱신 때 <b>다음 V = 현재 V + Pool ÷ ${fmt(num(cfg.G), 0)}
+      ${cfg.mode === '적립' ? '+ ' + ibU(num(cfg.flow), 0) : cfg.mode === '인출' ? '− (평가금+Pool)×0.5%' : ''}</b> 로 오릅니다.
+      이 표를 원본 시트와 한 줄씩 맞춰 보실 수 있습니다.</p></div>`;
+  }
+
+  out += `<h2 class="sec">설정</h2><div class="card">
+    <div class="erow"><label>VR 5.0 적용</label>
+      <div class="seg mini" id="vrOn" style="width:118px;flex:none">
+        <button data-v="1" aria-pressed="${cfg.on ? 'true' : 'false'}">켬</button>
+        <button data-v="0" aria-pressed="${cfg.on ? 'false' : 'true'}">끔</button></div></div>
+    <div class="erow"><label>운용 유형 <span class="u">Pool 한도가 달라집니다</span></label>
+      <div class="seg mini" id="vrMode" style="width:150px;flex:none">`
+    + VR_MODES.map(m => `<button data-v="${m}" aria-pressed="${cfg.mode === m ? 'true' : 'false'}">${m}</button>`).join('')
+    + `</div></div>
+    <div class="erow"><label>시작일 <span class="u">이 날짜부터 다시 계산</span></label>
+      <input type="date" data-vr="d0" value="${cfg.d0 || ''}"></div>`
+    + VR_FIELDS.map(([k, lb, u, stp]) =>
+      `<div class="erow"><label>${lb} <span class="u">${u}</span></label>
+        <input class="num" type="number" step="${stp}" data-vr="${k}" value="${num(cfg[k])}"></div>`).join('')
+    + `<div class="erow"><label>지금 평가금으로 시작점 맞추기 <span class="u">V 와 Pool 을 채웁니다</span></label>
+        <button class="ghost" id="vrAnchor">맞추기</button></div></div>
+    <p class="note" style="margin:8px 3px 0">
+    <b>G</b> 는 V 가 오르는 속도입니다. 분모가 클수록 천천히 올라 현금을 더 들고 갑니다
+    (10 → 평균 현금 13%, 20 → 21%, 40 → 32%). 처음에는 10 으로 두고 해마다 11·12 로 올리는 것이
+    권장됩니다. <b>밴드</b> 폭은 성과에 미치는 영향이 작습니다 — G 가 훨씬 중요합니다.
+    <br><b>주의</b> — 이 계산은 공개 정리 자료로 옮긴 것입니다. 무한매수법처럼 원본과 대조하지
+    못했습니다(카페 글은 로그인이 막혀 있고 구글 시트는 권한이 없습니다).
+    <b>원본 시트와 숫자가 다르면 시트가 맞습니다.</b> 시트 내용을 주시면 그대로 옮기고 대조하겠습니다.</p>`;
+
+  return out;
+}
+
+function vrSeedGuess(sl) {
+  const x = latest(), t = x[sl.g][sl.s];
+  return {
+    V: Math.max(1, Math.round(num(t.q) * num(x.px[sl.px]))),
+    pool: Math.max(0, Math.round(num(x.usd) / 2))
+  };
+}
+function vrAnchor() {
+  const sl = IB_SLOTS.find(s => s.k === UI.ib) || IB_SLOTS[0];
+  const cfg = vrCfg(sl.k), g = vrSeedGuess(sl);
+  cfg.d0 = latestKey();
+  cfg.V = g.V;
+  if (num(cfg.pool) <= 0) cfg.pool = g.pool;
+}
+
+document.getElementById('p-ib')?.addEventListener('change', e => {
+  const el = e.target.closest('[data-vr]'); if (!el) return;
+  const cfg = vrCfg(UI.ib), f = el.dataset.vr;
+  cfg[f] = f === 'd0' ? el.value : +el.value || 0;
+  saveLocal(); schedulePush(); renderIB();
+});
+document.getElementById('p-ib')?.addEventListener('click', e => {
+  const on = e.target.closest('#vrOn button');
+  if (on) {
+    const cfg = vrCfg(UI.ib);
+    cfg.on = on.dataset.v === '1';
+    if (cfg.on && (!cfg.d0 || num(cfg.V) <= 0)) vrAnchor();
+    saveLocal(); schedulePush(); renderIB();
+    return;
+  }
+  const md = e.target.closest('#vrMode button');
+  if (md) { vrCfg(UI.ib).mode = md.dataset.v; saveLocal(); schedulePush(); renderIB(); return; }
+  if (e.target.closest('#vrAnchor')) {
+    vrAnchor(); saveLocal(); schedulePush(); renderIB();
+    toast('지금 평가금으로 기준선 V 를 잡았습니다. Pool 을 확인해 주세요');
+  }
+});
 
 /* ===================== 은퇴 시뮬레이션 =====================
    엑셀('설정'·'시계열'·'요약' 시트)을 그대로 옮긴 것. 모든 금액은 만원, 현재가치.
@@ -2602,6 +2922,7 @@ async function sbPushMeta() {
     { k: 'plan', v: state.plan }, { k: 'ts', v: state.ts },
     { k: 'reCost', v: num(state.reCost) }, { k: 'rePast', v: num(state.rePast) }, { k: 'stPast', v: num(state.stPast) }, { k: 'flows', v: state.flows || [] },
     { k: 'ib', v: state.ib || {} }, { k: 'ibLog', v: state.ibLog || [] },
+    { k: 'vr', v: state.vr || {} },
     { k: 'ibPlan', v: ibPlanPayload() }
   ];
   await sbReq('/rest/v1/meta', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(body) });
@@ -2770,6 +3091,7 @@ async function initSupabase() {
       if (meta.stPast != null) state.stPast = meta.stPast;
       if (meta.flows) state.flows = meta.flows;
       if (meta.ib) state.ib = meta.ib;
+      if (meta.vr) state.vr = meta.vr;
       if (meta.ibLog) state.ibLog = meta.ibLog;
       state.ts = meta.ts; ensureMeta(); ensurePlan(); saveLocal(); renderAll();
       toast('서버에서 최신 기록을 불러왔습니다');
