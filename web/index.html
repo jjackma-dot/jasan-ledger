@@ -1585,7 +1585,7 @@ const IB_SLOTS = [
      전까지는 이 자리에 엔진을 돌리지 않는다. */
   { k: 'vr.T', n: 'VR TQQQ', g: 'vr', s: 'T', px: 'T', vr: true }
 ];
-const IB_BASE = { on: false, n: 40, seed: 0, ty: 10, lp: 10, d0: '', q0: 0, a0: 0, r0: 0 };
+const IB_BASE = { on: false, n: 40, seed: 0, ty: 10, lp: 10, d0: '', q0: 0, a0: 0, r0: 0, t0: 0 };
 
 function ibCfg(k) {
   if (!state.ib) state.ib = {};
@@ -1730,10 +1730,17 @@ function ibRun(key) {
 
   const cycleP = num(cfg.seed) + num(cfg.r0), inv0 = num(cfg.q0) * num(cfg.a0);
   let T0 = 0, mode0 = 'NORMAL';
-  if (inv0 > 0 && cycleP > 0) {                       // 중간 진입 — 시트의 startCycle
-    T0 = inv0 / cycleP * num(cfg.n);
-    if (T0 > num(cfg.n) - 1) mode0 = 'REVERSE';
-  }
+  /* T 는 매수할 때마다 +0.5 나 +1.0 씩 쌓이는 **경로 의존** 값이다.
+     시트의 startCycle 은 중간 진입 때 `매입금액 ÷ 원금 × n` 으로 근사하는데,
+     이건 어디까지나 근사다 — 실제 누적값과 벌어진다.
+     사용자의 무매 앱과 대조해 보니 T 14.577713 인데 근사값은 14.291539 였고,
+     그 차이가 Star 값(4.07 vs 4.28)과 1회 투자금($1,847 vs $1,826)을 거쳐
+     주문 가격까지 밀었다.
+     그래서 **직접 넣은 T 가 있으면 그걸 쓴다.** 쓰던 앱·시트가 있으면 거기 T 를
+     그대로 옮기면 숫자가 정확히 맞는다. 비워 두면 예전처럼 근사한다. */
+  if (num(cfg.t0) > 0) T0 = num(cfg.t0);
+  else if (inv0 > 0 && cycleP > 0) T0 = inv0 / cycleP * num(cfg.n);
+  if (T0 > num(cfg.n) - 1) mode0 = 'REVERSE';
   /* 5일평균이 없으면 종가로 떨어뜨린다 — 원본 151행 `D8 || closePrice` 와 같다.
      ibStep 안에는 이 폴백이 있지만 초기 상태는 ibStep 을 거치지 않는다.
      '시작점 맞추기' 가 시작일을 오늘로 잡으므로 replay 루프가 한 번도 돌지 않고
@@ -1873,7 +1880,8 @@ const IB_FIELDS = [
   ['lp', '큰수 기준', '%', 0.1],
   ['q0', '시작 보유수량', '주', 1],
   ['a0', '시작 평단가', 'USD', 0.01],
-  ['r0', '시작 시점 누적 실현손익', 'USD', 1]
+  ['r0', '시작 시점 누적 실현손익', 'USD', 1],
+  ['t0', '시작 T값', '비우면 자동 근사', 0.000001]
 ];
 const ibU = (v, d = 2) => '$' + fmt(num(v), d);
 const ibSgn = (v, d = 0) => (num(v) >= 0 ? '+' : '−') + '$' + fmt(Math.abs(num(v)), d);
@@ -1925,18 +1933,27 @@ function renderIB() {
       <br>지금 보유 <b>${fmt(curQ, 0)}주</b>, 현재가 <b>${ibU(close)}</b>.</div></div>`;
   } else {
     const st = run.st, o = run.orders, n = num(cfg.n);
-    const pct = Math.max(0, Math.min(100, st.T / n * 100));
+    /* 진행도는 **사용한 시드 ÷ 시드** 다. T/n 이 아니다.
+       사용자가 쓰는 무매 앱(Ver 4.0)이 그렇게 보여 주고, 실제로 그게 더 맞다 —
+       T 는 매수 횟수의 가중합이라 한 회차에 여러 번 체결되면 돈이 나간 만큼을
+       그대로 못 따라간다. 앱 화면과 대조해 확인했다 (TQQQ 34.4% · SOXL 81.7%).
+       사용한 시드 = 매입금액 − 누적 실현손익 = 시드 − 잔금 */
+    const used = num(cfg.seed) - st.balance;
+    const pct = num(cfg.seed) > 0 ? Math.max(0, Math.min(100, used / num(cfg.seed) * 100)) : 0;
+    const tPct = n > 0 ? st.T / n * 100 : 0;
     const modeL = { NORMAL: st.T < n / 2 ? '전반전' : '후반전', REVERSE: '리버스', CYCLE_END: '사이클 종료' }[st.mode];
     const modeC = st.mode === 'REVERSE' ? 'var(--up)' : st.mode === 'CYCLE_END' ? 'var(--c2)' : 'var(--brass)';
 
     out += `<div class="card hero" style="margin-top:12px">
       <div class="lbl">${sl.n} · 오늘의 주문서</div>
-      <div class="big num"><span>${st.T.toFixed(2)}</span><span class="unit">/ ${fmt(n, 0)} T</span></div>
+      <div class="big num"><span>${fmt(pct, 1)}</span><span class="unit">% 진행도</span></div>
       <div class="delta fl"><span style="color:${modeC};font-weight:600">${modeL}</span>
-        <span class="pill">진행 ${fmt(pct, 0)}%</span>
+        <span class="pill">T ${st.T.toFixed(4)} / ${fmt(n, 0)}</span>
+        <span class="pill">${fmt(tPct, 1)}%</span>
         ${st.mode === 'NORMAL' ? `<span class="pill">별 ${fmt(st.P, 2)}%</span>` : ''}</div>
       <div class="bar" style="width:100%;margin:9px 0 2px"><i style="width:${pct}%;background:${modeC}"></i></div>
-      <div class="note" style="margin-top:8px">1회 매수금 <b>${ibU(o.amt, 0)}</b> · 큰수 <b>${ibU(o.large)}</b>
+      <div class="note" style="margin-top:8px">1회 투자금 <b>${ibU(o.amt, 2)}</b> ·
+        사용한 시드 <b>${ibU(used, 0)}</b> / ${ibU(num(cfg.seed), 0)} · 큰수 <b>${ibU(o.large)}</b>
         <span class="u">종가 ${ibU(close)} +${fmt(num(cfg.lp), 0)}%</span></div>
     </div>`;
 
@@ -1968,6 +1985,10 @@ function renderIB() {
       <tr><td>평단가 <span class="u">이동평균</span></td><td>${ibU(st.avg, 4)}</td></tr>
       <tr><td>현재가</td><td>${ibU(close)}</td></tr>
       <tr><td>주식 평가액</td><td>${ibU(val, 0)}</td></tr>
+      <tr><td>매입금액 <span class="u">평단 × 수량</span></td><td>${ibU(st.q * st.avg, 2)}</td></tr>
+      <tr><td>사용한 시드 <span class="u">매입금액 − 누적실현</span></td><td>${ibU(used, 2)}</td></tr>
+      <tr><td>1회 투자금</td><td>${ibU(o.amt, 2)}</td></tr>
+      <tr><td>Star 값 <span class="u">별%</span></td><td>${fmt(st.P, 2)}%</td></tr>
       <tr><td>잔금 <span class="u">Pool</span></td><td>${ibU(st.balance, 0)}</td></tr>
       <tr><td>= 계좌 평가액</td><td>${ibU(acct, 0)}</td></tr>
       <tr><td>시드</td><td>${ibU(seed, 0)}</td></tr>
@@ -2022,7 +2043,15 @@ function renderIB() {
         <input class="num" type="number" step="${stp}" data-ib="${k}" value="${num(cfg[k])}"></div>`).join('')
     + `<div class="erow"><label>현재 보유로 시작점 맞추기 <span class="u">평단은 증권사 값으로 고칠 것</span></label>
         <button class="ghost" id="ibAnchor">맞추기</button></div></div>
-    <p class="note" style="margin:8px 3px 0">시작 평단가에는 <b>증권사 앱의 평단</b>을 넣으세요. 이 앱의 매입금액은 매도할 때
+    <p class="note" style="margin:8px 3px 0">
+    <b>무매 앱을 쓰고 계시면 그 화면 값을 그대로 옮기는 것이 가장 빠릅니다.</b>
+    분할수·시드·목표수익률은 앱의 <b>기본 정보</b>와 같게 두고, 시작일을 오늘로 맞춘 뒤
+    <b>보유 수량</b>·<b>평단가</b>를 앱의 <b>매입 정보</b>에서 옮기세요.
+    <b>시작 시점 누적 실현손익</b>은 앱의 <b>매입 금액 − 사용한 시드</b> 이고,
+    <b>시작 T값</b>에는 앱의 <b>무매 공식 T</b> 를 소수점까지 그대로 넣으세요.
+    T 는 매수마다 +0.5·+1.0 씩 쌓이는 값이라 보유수량만으로는 정확히 되살릴 수
+    없습니다 — 비워 두면 근사하고, 넣으면 앱과 정확히 같아집니다.
+    <br><br>시작 평단가에는 <b>증권사 앱의 평단</b>을 넣으세요. 이 앱의 매입금액은 매도할 때
     체결금액만큼 빼는 방식이라 수량으로 나눠도 증권사 평단과 다릅니다. 시작점만 맞으면 그 뒤는 매매 내역으로 이동평균을 직접 굴립니다.
     ${cfg.d0 && dayKeys().includes(cfg.d0) ? `시작일 이후 <b>${dayKeys().filter(d => d >= cfg.d0).length}일</b>을 다시 계산했습니다.` : ''}</p>`;
 
@@ -2113,7 +2142,10 @@ function ibAnchor() {
    해 두고, 사이클 기록을 그대로 보여 준다 — 시트와 한 줄씩 맞춰 볼 수 있어야 한다.
            */
 
-const VR_BASE = { on: false, V: 0, G: 10, band: 15, mode: '거치', flow: 0, pool: 0, d0: '', days: 14 };
+/* days 는 **영업일**이다. 사용자의 VR 앱이 사이클을 08.31 ~ 09.11 로 잡는데,
+   그 사이 평일이 정확히 10일이다(주말만 건너뛴다 — 미국 휴장일은 세지 않는다).
+   달력 14일로 잡으면 사이클 경계가 조금씩 밀린다. */
+const VR_BASE = { on: false, V: 0, G: 10, band: 15, mode: '거치', flow: 0, pool: 0, d0: '', days: 10 };
 const VR_CAP = { '적립': 0.75, '거치': 0.50, '인출': 0.25 };
 const VR_MODES = ['적립', '거치', '인출'];
 
@@ -2125,6 +2157,12 @@ function vrCfg(k) {
   return c;
 }
 const addDays = (s, n) => { const d = parseISO(s); d.setDate(d.getDate() + n); return iso(d); };
+/* 주말을 건너뛰며 n 영업일 뒤 */
+const addBiz = (s, n) => {
+  const d = parseISO(s);
+  for (let k = 0; k < n;) { d.setDate(d.getDate() + 1); const w = d.getDay(); if (w !== 0 && w !== 6) k++; }
+  return iso(d);
+};
 
 /* 시작일부터 오늘까지 다시 계산한다. 무매와 같은 방식이다 —
    상태를 따로 들고 있지 않으므로 두 번 세거나 하루를 건너뛰어 어긋나지 않는다.
@@ -2150,7 +2188,8 @@ function vrRun(key) {
   let V = num(cfg.V), pool = num(cfg.pool);
   let q = num(rec0[sl.g][sl.s].q), prevC = num(rec0[sl.g][sl.s].c);
   let invested = q * num(rec0.px[sl.px]) + pool;      // 총 투입 — 수익률 분모
-  let next = addDays(cfg.d0, days);
+  let next = addBiz(cfg.d0, days);
+  let cycPool = pool;                                  // 이번 사이클 운용 Pool
   const cycles = [{ d: cfg.d0, V, pool, kind: '시작' }];
 
   for (let i = i0 + 1; i < ks.length; i++) {
@@ -2168,13 +2207,15 @@ function vrRun(key) {
       V = V + pool / G + flow;
       pool += flow;
       invested += flow;
+      cycPool = pool;                                  // 한도는 사이클 시작 시점 Pool 기준
       cycles.push({ d: next, V, pool, flow, kind: cfg.mode });
-      next = addDays(next, days);
+      next = addBiz(next, days);
     }
   }
   const close = num(latest().px[sl.px]);
-  return { cfg, sl, V, pool, q, close, invested, cycles, nextCycle: next,
-    orders: vrLadder(cfg, V, pool, q, close) };
+  return { cfg, sl, V, pool, q, close, invested, cycles, nextCycle: next, cycPool,
+    cycFrom: cycles[cycles.length - 1].d,
+    orders: vrLadder(cfg, V, cycPool, q, close) };
 }
 
 /* 오늘 걸어 둘 주문표.
@@ -2185,10 +2226,13 @@ function vrRun(key) {
    밴드 안에서는 아무것도 하지 않으므로, 매도는 평가금이 상단을 넘는 가격부터,
    매수는 하단 밑으로 내려가는 가격부터 시작한다.
    현재가 ±20% 를 2% 간격으로 훑는다 — 오버레이가 그만큼만 보여 준다. */
-function vrLadder(cfg, V, pool, q, close) {
+function vrLadder(cfg, V, cycPool, q, close) {
   const band = num(cfg.band) / 100;
   const up = V * (1 + band), dn = V * (1 - band);
-  const cap = (VR_CAP[cfg.mode] != null ? VR_CAP[cfg.mode] : 0.5) * Math.max(0, pool);
+  /* 한도는 **이번 사이클이 시작할 때의 Pool** 기준이다. 쓰는 동안 Pool 이 줄어도
+     한도는 그대로여야 사이클 안에서 계획이 흔들리지 않는다. 사용자의 VR 앱이
+     "이번 사이클 운용 Pool $11,842.67 / 사용 한도 50%인 $5,921.34" 로 그렇게 쓴다. */
+  const cap = (VR_CAP[cfg.mode] != null ? VR_CAP[cfg.mode] : 0.5) * Math.max(0, cycPool);
   const rows = [];
   if (!(close > 0) || !(V > 0)) return { rows, up, dn, cap, used: 0 };
 
@@ -2305,7 +2349,9 @@ function vrPanel(sl) {
       <tr><td>주식 평가금</td><td>${ibU(val, 0)}</td></tr>
       <tr><td>기준선 V</td><td>${ibU(V, 0)}</td></tr>
       <tr><td>평가금 ÷ V</td><td>${fmt(pct, 1)}%</td></tr>
-      <tr><td>Pool <span class="u">현금</span></td><td>${ibU(pool, 0)}</td></tr>
+      <tr><td>Pool <span class="u">현재 잔액</span></td><td>${ibU(pool, 2)}</td></tr>
+      <tr><td>이번 사이클 운용 Pool</td><td>${ibU(run.cycPool, 2)}</td></tr>
+      <tr><td>사용 한도 <span class="u">${cfg.mode}식 ${Math.round((VR_CAP[cfg.mode] || 0.5) * 100)}%</span></td><td>${ibU(o.cap, 2)}</td></tr>
       <tr><td>= 계좌 평가액</td><td>${ibU(acct, 0)}</td></tr>
       <tr><td>총 투입 <span class="u">시작 + 적립 − 인출</span></td><td>${ibU(invested, 0)}</td></tr>
       <tr><td style="color:var(--ink);font-weight:600">시드 기준 수익률</td>
@@ -2321,7 +2367,8 @@ function vrPanel(sl) {
       + cs.map(c => `<tr><td>${c.d} <span class="u">${esc(c.kind)}${c.flow ? ' ' + ibSgn(c.flow) : ''}</span></td>
           <td>${ibU(c.V, 0)}</td><td>${ibU(c.pool, 0)}</td></tr>`).join('')
       + `</table></div>
-      <p class="note" style="margin-top:9px">다음 갱신 <b>${run.nextCycle}</b>.
+      <p class="note" style="margin-top:9px">이번 사이클 <b>${run.cycFrom} ~ ${addDays(run.nextCycle, -1)}</b>
+      · 다음 갱신 <b>${run.nextCycle}</b> (${fmt(num(cfg.days), 0)} 영업일).
       갱신 때 <b>다음 V = 현재 V + Pool ÷ ${fmt(num(cfg.G), 0)}
       ${cfg.mode === '적립' ? '+ ' + ibU(num(cfg.flow), 0) : cfg.mode === '인출' ? '− (평가금+Pool)×0.5%' : ''}</b> 로 오릅니다.
       이 표를 원본 시트와 한 줄씩 맞춰 보실 수 있습니다.</p></div>`;
