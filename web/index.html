@@ -431,6 +431,8 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
           <button class="ghost" id="expBtn">CSV 내보내기</button>
           <button class="ghost" id="impBtn">JSON 복원</button>
         </div>
+        <p class="note" id="buildNote" style="margin-top:10px">—</p>
+        
         <div class="note" style="margin-top:9px" id="storeNote">—</div>
       </div>
       <div style="height:8px"></div>
@@ -526,6 +528,10 @@ function toast(msg) {
 
 /* ===================== 상태 ===================== */
 const LS = 'jasan_ledger_v1';
+/* 빌드 시각. build.py 가 채워 넣는다.
+   "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
+   설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
+const BUILD = '2026-09-05 03:36';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1382,6 +1388,10 @@ const getPath = (o, p) => p.split('.').reduce((a, k) => a == null ? a : a[k], o)
 const setPath = (o, p, v) => { const ks = p.split('.'); const last = ks.pop(); ks.reduce((a, k) => a[k], o)[last] = v; };
 
 function renderInput() {
+  const bn = $('#buildNote');
+  if (bn) bn.innerHTML = `웹앱 빌드 <b>${esc(BUILD)}</b>`
+    + ` · 기록 ${dayKeys().length}일 (${dayKeys()[0]} ~ ${latestKey()})`
+    + ` · 서버 ${SB && sbTok ? '연결됨' : '연결 안 됨'}`;
   const x = latest();
   $('#pxEdit').innerHTML = PX_FIELDS.map(([k, l, u, st]) => {
     const src = (x.pxs && x.pxs[k]) || 'manual';
@@ -2093,19 +2103,59 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
    안드로이드의 intent:// 링크로 수집기 앱의 OverlayLauncherActivity 를 부른다.
    그쪽이 오버레이만 띄우고 즉시 사라지므로 화면이 튀지 않는다.
    앱이 없거나 안드로이드가 아니면 아무 일도 일어나지 않으므로 안내를 함께 띄운다. */
-document.getElementById('ibOverlay')?.addEventListener('click', () => {
+document.getElementById('ibOverlay')?.addEventListener('click', async () => {
   const note = $('#ibOverlayNote');
-  if (!/Android/i.test(navigator.userAgent)) {
-    if (note) note.innerHTML = '<b>안드로이드 폰에서만 됩니다.</b> 웹 페이지는 다른 앱 위에 그릴 수 없어서, '
-      + '폰에 깔린 수집기 앱을 대신 부르는 방식입니다. 폰에서 이 화면을 열고 눌러 주세요.';
+  const say = h => { if (note) note.innerHTML = h; };
+
+  /* 반드시 **먼저 서버에 올린다.**
+     예전에는 곧바로 앱을 불렀는데, 웹은 상태가 바뀔 때만 올리므로 설정만 해 두고
+     아무것도 안 바꾸면 서버에 주문표가 없었다. 폰에서는 "주문표를 받지 못했습니다"
+     라고만 뜨고 왜 그런지 알 수 없었다. 이제 누를 때마다 새로 만들어 올린다. */
+  if (!(SB && sbTok)) {
+    say('서버에 연결되어 있지 않습니다. <b>입력 › 서버 연결</b> 에서 로그인해 주세요 — '
+      + '주문표는 서버를 거쳐 폰으로 갑니다.');
     return;
   }
-  location.href = 'intent://orders#Intent;scheme=jasan;package=kr.jasan.collector;end';
-  setTimeout(() => {
-    if (note) note.innerHTML = '아무 일도 없으면 수집기 앱이 최신(1.3)이 아니거나 '
-      + "<b>'다른 앱 위에 표시'</b> 권한이 꺼진 것입니다. 수집기 앱을 열어 ③ 버튼으로 켜 주세요.";
-  }, 2500);
+  let plan;
+  try { plan = ibPlanPayload(); } catch (e) { say('주문표를 만들지 못했습니다: ' + esc(e.message)); return; }
+  if (!plan.slots.length) {
+    say('올릴 주문표가 없습니다. 아래에서 <b>무매</b> 또는 <b>VR</b> 을 켜고 '
+      + '시드·시작일을 넣으면 그날 낼 주문이 여기 생깁니다.');
+    return;
+  }
+  say('주문표를 서버에 올리는 중…');
+  try { await sbPushMeta(); }
+  catch (e) { say('올리지 못했습니다: ' + esc(e.message) + ' — 잠시 뒤 다시 눌러 주세요'); return; }
+
+  const n = plan.slots.reduce((a, s2) => a + s2.rows.length, 0);
+  say(`<b>${plan.slots.map(s2 => esc(s2.n)).join(' · ')}</b> 주문 ${n}줄을 올렸습니다.`
+    + (/Android/i.test(navigator.userAgent)
+      ? ' 폰에서 띄웁니다…'
+      : ' <b>이제 폰에서</b> 빠른설정의 <b>무매 주문표</b> 타일이나 홈 화면 아이콘으로 띄우세요 '
+        + '(이 버튼으로 바로 띄우는 것은 안드로이드에서만 됩니다).'));
+  if (/Android/i.test(navigator.userAgent)) {
+    location.href = 'intent://orders#Intent;scheme=jasan;package=kr.jasan.collector;end';
+  }
 });
+
+/* 서버에 주문표가 실제로 올라가 있는지 화면에 보여 준다.
+   폰에서 "받지 못했습니다" 가 뜨면 여기가 비어 있는지부터 보면 된다. */
+async function ibPlanStatus() {
+  const note = $('#ibOverlayNote'); if (!note) return;
+  if (!(SB && sbTok)) return;
+  try {
+    const rows = await sbReq('/rest/v1/meta?k=eq.ibPlan&select=v');
+    const v = rows && rows[0] && rows[0].v;
+    if (!v || !v.slots || !v.slots.length) {
+      note.innerHTML = '<b>서버에 올라간 주문표가 없습니다.</b> 위 버튼을 누르면 지금 만들어 올립니다.';
+      return;
+    }
+    const n = v.slots.reduce((a, s2) => a + (s2.rows || []).length, 0);
+    const when = v.at ? new Date(v.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '?';
+    note.innerHTML = `서버에 <b>${v.slots.map(s2 => esc(s2.n)).join(' · ')}</b> 주문 ${n}줄이 올라가 있습니다 `
+      + `<span class="u">${when} 기준</span>. 폰에서 빠른설정 <b>무매 주문표</b> 타일이나 위 버튼으로 띄우세요.`;
+  } catch (e) { /* 조회 실패는 조용히 — 버튼은 그대로 쓸 수 있다 */ }
+}
 
 function ibSeedGuess() {
   const sl = IB_SLOTS.find(s => s.k === UI.ib) || IB_SLOTS[0];
@@ -2823,7 +2873,7 @@ $$('nav button').forEach(b => b.addEventListener('click', () => {
   $$('nav button').forEach(o => o.setAttribute('aria-pressed', o === b));
   $$('.pane').forEach(p => p.classList.toggle('on', p.id === 'p-' + UI.tab));
   window.scrollTo({ top: 0, behavior: 'instant' });
-  if (UI.tab === 'sum') renderSummary(); if (UI.tab === 'plan') renderPlan(); if (UI.tab === 'ib') renderIB();
+  if (UI.tab === 'sum') renderSummary(); if (UI.tab === 'plan') renderPlan(); if (UI.tab === 'ib') { renderIB(); ibPlanStatus(); }
   if (UI.tab === 'in') { renderReviewList(); renderRecentApplied(); }
 }));
 $('#themeBtn').addEventListener('click', () => {
@@ -3020,7 +3070,10 @@ async function sbPushMeta() {
     { k: 'reCost', v: num(state.reCost) }, { k: 'rePast', v: num(state.rePast) }, { k: 'stPast', v: num(state.stPast) }, { k: 'flows', v: state.flows || [] },
     { k: 'ib', v: state.ib || {} }, { k: 'ibLog', v: state.ibLog || [] },
     { k: 'vr', v: state.vr || {} },
-    { k: 'ibPlan', v: ibPlanPayload() }
+    /* 주문표를 만들다 터져도 나머지 동기화까지 막으면 안 된다.
+       예전에는 이게 sbPushMeta 안에서 그대로 던져서, 실패하면 그날 원장이
+       통째로 안 올라갔다. */
+    { k: 'ibPlan', v: (() => { try { return ibPlanPayload(); } catch (e) { return { d: latestKey(), at: Date.now(), slots: [] }; } })() }
   ];
   await sbReq('/rest/v1/meta', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(body) });
 }
