@@ -1580,7 +1580,10 @@ function ibRecord(x, p) {
 const IB_SLOTS = [
   { k: 'mm.T', n: '무매 TQQQ', g: 'mm', s: 'T', px: 'T' },
   { k: 'mm.S', n: '무매 SOXL', g: 'mm', s: 'S', px: 'S' },
-  { k: 'vr.T', n: 'VR TQQQ', g: 'vr', s: 'T', px: 'T' }
+  /* VR 은 밸류 리밸런싱이라 분할수(n)라는 개념 자체가 없다. 무한매수법 엔진을
+     그대로 씌우면 없는 값을 입력하라고 요구하게 된다. 별도 방법론이 들어오기
+     전까지는 이 자리에 엔진을 돌리지 않는다. */
+  { k: 'vr.T', n: 'VR TQQQ', g: 'vr', s: 'T', px: 'T', vr: true }
 ];
 const IB_BASE = { on: false, n: 40, seed: 0, ty: 10, lp: 10, d0: '', q0: 0, a0: 0, r0: 0 };
 
@@ -1719,6 +1722,7 @@ function ibOrders(cfg, st) {
 /* 시작일부터 오늘까지 하루씩 다시 계산한다 */
 function ibRun(key) {
   const sl = IB_SLOTS.find(s => s.k === key); if (!sl) return null;
+  if (sl.vr) return null;                        // VR 은 방법론이 다르다
   const cfg = ibCfg(key);
   if (!cfg.on || num(cfg.seed) <= 0 || num(cfg.n) <= 0) return null;
   const ks = dayKeys(), i0 = cfg.d0 ? ks.indexOf(cfg.d0) : -1;
@@ -1874,11 +1878,28 @@ function renderIB() {
   const run = ibRun(sl.k);
   let out = '';
 
-  if (!run) {
+  if (sl.vr) {
     out += `<div class="warn" style="margin-top:12px"><span>◔</span><div>
-      <b>${sl.n}</b> 에 무한매수법이 아직 켜져 있지 않습니다. 아래 설정에서 <b>시드</b>와
-      <b>시작일 · 시작 평단가</b>를 넣고 켜면 매일 낼 주문서가 여기 나옵니다.
-      지금 보유 <b>${fmt(curQ, 0)}주</b>, 현재가 <b>${ibU(close)}</b>.</div></div>`;
+      <b>${sl.n}</b> 은 <b>VR 5.0(밸류 리밸런싱)</b> 이라 무한매수법과 계산이 다릅니다.
+      분할수 같은 개념이 없어 이 자리에는 무한매수법을 씌우지 않습니다.
+      지금 보유 <b>${fmt(curQ, 0)}주</b>, 현재가 <b>${ibU(close)}</b>.
+      <br>VR 5.0 은 다음 배포에 들어갑니다.</div></div>`;
+    body.innerHTML = out;
+    return;
+  }
+
+  if (!run) {
+    /* 왜 안 나오는지 정확히 말한다. 예전에는 켠 뒤에도 "아직 켜져 있지 않습니다" 라고만
+       해서, 토글이 안 먹는 것처럼 보였다. 실제로는 시드가 0 이라 계산을 못 한 것이었다. */
+    const why = !cfg.on ? '아직 <b>켬</b> 으로 두지 않았습니다'
+      : num(cfg.seed) <= 0 ? '<b>시드</b>가 비어 있습니다 — 이 종목에 배정한 총 자금(USD)을 넣어 주세요'
+      : num(cfg.n) <= 0 ? '<b>분할수</b>가 0 입니다'
+      : !cfg.d0 ? '<b>시작일</b>이 비어 있습니다 — 아래 <b>맞추기</b> 를 눌러 주세요'
+      : !dayKeys().includes(cfg.d0) ? `시작일 <b>${esc(cfg.d0)}</b> 에 해당하는 원장 기록이 없습니다`
+      : '설정을 확인해 주세요';
+    out += `<div class="warn" style="margin-top:12px"><span>◔</span><div>
+      <b>${sl.n}</b> — ${why}.
+      <br>지금 보유 <b>${fmt(curQ, 0)}주</b>, 현재가 <b>${ibU(close)}</b>.</div></div>`;
   } else {
     const st = run.st, o = run.orders, n = num(cfg.n);
     const pct = Math.max(0, Math.min(100, st.T / n * 100));
@@ -1997,12 +2018,26 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
   if (on) {
     const cfg = ibCfg(UI.ib);
     cfg.on = on.dataset.v === '1';
-    if (cfg.on && !cfg.d0) ibAnchor();               // 처음 켜면 오늘로 시작점을 잡아 준다
+    if (cfg.on) {
+      if (!cfg.d0) ibAnchor();                       // 처음 켜면 오늘로 시작점을 잡아 준다
+      if (num(cfg.seed) <= 0) cfg.seed = ibSeedGuess();
+    }
     saveLocal(); schedulePush(); renderIB();
     return;
   }
   if (e.target.closest('#ibAnchor')) { ibAnchor(); saveLocal(); schedulePush(); renderIB(); toast('오늘 보유수량으로 시작점을 맞췄습니다. 평단가를 증권사 값으로 고치세요'); }
 });
+/* 시드 어림값 = 그 종목의 매입금액 + 예수금을 켠 자리 수로 나눈 몫.
+   예수금은 계좌 하나로만 들고 있어 자리별로 가를 수가 없다. 그래서 어림값을 넣어 두고
+   사용자가 고치게 한다. 0 으로 두면 주문표가 아예 안 나와서 켠 티가 나지 않는다 —
+   실제로 "켬을 눌러도 켜지지 않는다" 로 보고됐던 것이 이 때문이다. */
+function ibSeedGuess() {
+  const sl = IB_SLOTS.find(s => s.k === UI.ib) || IB_SLOTS[0];
+  const x = latest(), t = x[sl.g][sl.s];
+  const onCount = Math.max(1, IB_SLOTS.filter(s => !s.vr && ibCfg(s.k).on).length);
+  return Math.max(1, Math.round(num(t.c) + num(x.usd) / onCount));
+}
+
 function ibAnchor() {
   const sl = IB_SLOTS.find(s => s.k === UI.ib) || IB_SLOTS[0];
   const cfg = ibCfg(sl.k), x = latest(), t = x[sl.g][sl.s];
@@ -2744,11 +2779,24 @@ async function initSupabase() {
     remoteOn = true;
     await sbDrainInbox();
     // 재시도로 여러 번 들어올 수 있다. 타이머를 매번 새로 걸면 쌓인다
-    if (!drainTimer) drainTimer = setInterval(sbDrainInbox, 60e3);
+    startDraining();
     return true;
   } catch (e) { $('#storeNote').textContent = '서버 연결 실패: ' + e.message; return false; }
 }
 let drainTimer = null;
+
+/* 알림을 원장에 반영하는 주기.
+
+   열자마자 한 번 돌고(initSupabase 에서), 4초 뒤에 한 번 더 돈다. 수집 앱이 방금
+   올린 알림이 서버에 닿는 데 잠깐 걸리므로 첫 조회에서 놓칠 수 있어서다.
+   그 뒤로는 30초마다. 화면이 가려져 있으면 돌지 않고, 다시 보이는 순간 곧바로 돈다 —
+   폰에서는 웹앱을 뒤로 보냈다 다시 여는 일이 잦고, 그때가 확인하고 싶은 순간이다. */
+function startDraining() {
+  if (drainTimer) return;
+  setTimeout(sbDrainInbox, 4000);
+  drainTimer = setInterval(() => { if (!document.hidden) sbDrainInbox(); }, 30e3);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) sbDrainInbox(); });
+}
 
 /* 서버 데이터가 비어 있으면 스스로 다시 받아온다.
 
