@@ -531,7 +531,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-05 03:36';
+const BUILD = '2026-09-05 03:46';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -3031,7 +3031,19 @@ async function sbReq(path, opt = {}) {
     r = await fetch(c.url.replace(/\/$/, '') + path, { ...opt, headers: h, signal: withTimeout(12000) });
   }
   if (!r.ok) throw new Error(path + ' ' + r.status + ' ' + (await r.text()).slice(0, 160));
-  return r.status === 204 ? null : r.json();
+  /* 빈 본문을 JSON 으로 파싱하면 터진다.
+
+     PostgREST 는 `Prefer: return=minimal` 인 POST 에 **201 + 빈 본문**을 준다.
+     204 만 걸러 내고 있었더니 거기서 'Unexpected end of JSON input' 이 났다.
+
+     이게 오래 숨어 있었다. pushCloud() 는 sbPushDays() → sbPushMeta() 순서인데
+     첫 호출이 그 예외로 터지니 **메타가 한 번도 올라가지 못했다** — fx0·plan·
+     principal·reCost·rePast·stPast·flows·ib·vr·ibPlan 전부. 원장(ledger_days)은
+     서버에 실제로 저장됐는데 클라이언트만 실패로 알고 무한히 재시도했다.
+     폰에서 "주문표를 받지 못했습니다" 가 뜬 것도 결국 이것 때문이다. */
+  const txt = await r.text();
+  if (!txt) return null;
+  try { return JSON.parse(txt); } catch (e) { return null; }
 }
 async function sbRefresh() {
   const c = SB;
