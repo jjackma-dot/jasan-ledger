@@ -531,7 +531,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-05 03:46';
+const BUILD = '2026-09-05 04:01';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -3187,13 +3187,43 @@ function renderRecentApplied() {
   if (!wrap || !list) return;
   if (!recentApplied.length) { wrap.style.display = 'none'; return; }
   wrap.style.display = '';
-  list.innerHTML = recentApplied.map(r => r.parsed.map(p => {
-    const when = new Date(r.received_at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
-    return `<div class="row"><div><div class="nm"><span class="tag ${p.side === 'B' ? 'b' : 's'}" style="margin-right:6px">${p.side === 'B' ? '매수' : '매도'}</span>${ACCT_LABEL[p.grp]} · ${p.tick}<span class="sub">${when}</span></div></div>
-      <div class="vals"><div class="v num">${fmt(p.qty, 0)}주</div><div class="d num" style="color:var(--muted)">$${fmt(p.price, 2)}</div></div></div>`;
-  }).join('')).join('');
-}
 
+  /* 반영 직후 보유수량을 함께 보여 준다.
+
+     "어디서 원장이 증권사와 벌어졌나" 를 짚으려면 체결 시각과 수량만으로는 부족하다.
+     그 체결 뒤에 몇 주가 됐는지가 있어야 증권사 앱 화면과 한 줄씩 맞춰 볼 수 있다.
+
+     서버에는 그 값이 없으므로 **지금 보유수량에서 거꾸로 되짚어** 만든다 —
+     최신 것부터 제 수량을 빼 나가면 각 시점의 보유수량이 나온다.
+     중간에 놓친 체결이 있으면 여기 숫자가 증권사와 어긋나고, 어긋나기 시작하는
+     줄이 곧 놓친 지점이다. */
+  const x = latest(), run = {};
+  IB_SLOTS.forEach(sl => { run[sl.k] = num(x[sl.g][sl.s].q); });
+
+  const flat = [];
+  recentApplied.forEach(r => r.parsed.forEach(p => flat.push({ r, p })));
+  flat.forEach(e => {
+    const k = e.p.grp + '.' + e.p.slot;
+    if (run[k] == null) { e.after = null; return; }
+    e.after = run[k];
+    run[k] -= (e.p.side === 'B' ? 1 : -1) * num(e.p.qty);
+  });
+
+  const nowLine = IB_SLOTS
+    .map(sl => `${esc(sl.n)} <b>${fmt(num(x[sl.g][sl.s].q), 0)}</b>주`).join(' · ');
+
+  list.innerHTML = `<div class="grp-h" style="padding-left:15px">지금 보유 — ${nowLine}</div>`
+    + flat.map(e => {
+      const p = e.p;
+      const when = new Date(e.r.received_at).toLocaleString('ko-KR',
+        { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+      return `<div class="row"><div style="min-width:0">
+        <div class="nm"><span class="tag ${p.side === 'B' ? 'b' : 's'}" style="margin-right:6px">${p.side === 'B' ? '매수' : '매도'}</span>${ACCT_LABEL[p.grp]} · ${esc(p.tick)}<span class="sub">${when}</span></div></div>
+        <div class="vals">
+          <div class="v num">${p.side === 'B' ? '+' : '−'}${fmt(p.qty, 0)}주${e.after == null ? '' : ` → <b>${fmt(e.after, 0)}</b>주`}</div>
+          <div class="d num" style="color:var(--muted)">$${fmt(p.price, 2)}</div></div></div>`;
+    }).join('');
+}
 /* 자동 반영에 실패해 사람이 봐야 하는 알림. status='review' 인 것과, 이 기능이
    생기기 전 'failed' 로 끝나 조용히 묻혀 있던 것까지 함께 가져온다 — 예전 것도
    눈에 보여야 "알림이 사라진다"는 불신이 풀린다. */
