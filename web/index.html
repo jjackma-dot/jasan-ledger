@@ -1392,37 +1392,88 @@ function renderInput() {
 }
 
 /* --- 알림톡 파서 --- */
+/* 라벨이 없는 알림에서 값을 건져 낸다.
+   메리츠증권 앱 자체 알림은 "TQQQ 12주 매수 체결 $71.92" 처럼 라벨 없이 온다.
+   카카오 알림톡(라벨식)만 읽던 예전에는 이런 알림이 전부 검토 대기로 갔다 —
+   자동 반영이 한 번도 안 되니 사용자 입장에서는 "인식이 안 되는" 것이었다. */
+function looseFields(s) {
+  const n = m => m ? +String(m[1]).replace(/,/g, '') : 0;
+  return {
+    tick: (s.match(/\b(TQQQ|SOXL|QLD)\b/) || [, null])[1],
+    side: /매도/.test(s) ? 'S' : /매수/.test(s) ? 'B' : null,
+    qty: n(s.match(/([\d,]+(?:\.\d+)?)\s*주/)),
+    price: n(s.match(/(?:USD|\$)\s*([\d,]+(?:\.\d+)?)/))
+  };
+}
+
+/* 계좌번호가 없을 때 어느 자리인지 추론한다.
+   ① 그 종목을 쓰는 자리가 하나뿐이면 그 자리 (SOXL 은 무매뿐이다)
+   ② 여럿이면(TQQQ 는 무매·VR 둘) 오늘 계획한 주문과 대조해 **딱 하나만** 맞을 때만
+   둘 다 아니면 추론하지 않는다. 잘못 넣는 것보다 검토로 보내는 편이 낫다 —
+   틀린 반영은 원장을 오염시키고, 검토는 배지로 남아 눈에 띈다. */
+function inferSlot(p) {
+  const same = IB_SLOTS.filter(sl => SYM[sl.px] === p.tick);
+  if (same.length === 1) return same[0];
+  const hit = same.filter(sl => {
+    const m = ibMatch({ ...p, grp: sl.g, slot: sl.s });
+    return m && m.ok;
+  });
+  return hit.length === 1 ? hit[0] : null;
+}
+
 function parseKakao(text) {
-  const chunks = text.split(/(?=\[[^\]\n]{2,20}\])/g).filter(s => /체결/.test(s));
+  /* 한 알림에 체결이 여러 건 붙어 오므로 [머리말] 앞에서 자른다.
+     숫자가 없는 조각은 꼬리말(채널 추가·수신거부 같은 것)이라 버린다 —
+     남겨 두면 읽을 값이 없어 오류로 잡히고, 멀쩡한 알림까지 통째로 검토로 간다. */
+  const chunks = text.split(/(?=\[[^\]\n]{2,20}\])/g)
+    .filter(s => /체결/.test(s) && /\d/.test(s));
   const grab = (s, label) => { const m = s.match(new RegExp(label + '\\s*[:：]\\s*(.+)')); return m ? m[1].trim() : null; };
+  const numOf = v => { const m = String(v || '').match(/[\d,]+\.?\d*/); return m ? +m[0].replace(/,/g, '') : 0; };
+
   return chunks.map(s => {
+    const lo = looseFields(s);
     const acctRaw = grab(s, '계좌번호') || '';
     // 문서대로 "앞 4자리"만 본다. 마스킹(3020**68-01)이어도 앞자리는 항상 산다.
     // 시작에 고정하지 않으면, 언젠가 마스킹 방식이 바뀌어 뒷자리에 우연히 4연속
     // 숫자가 생겼을 때 엉뚱한 자리를 계좌번호로 잘못 읽을 수 있다.
     const acct = (acctRaw.match(/^\d{4}/) || [''])[0];
     const nameRaw = grab(s, '종목명') || '';
-    const tick = (nameRaw.match(/\(([A-Z]{2,6})\)/) || [, null])[1];
-    const side = /매도/.test(grab(s, '매매구분') || '') ? 'S' : 'B';
+    const tick = (nameRaw.match(/\(([A-Z]{2,6})\)/) || [, null])[1] || lo.tick;
+
+    /* 매매구분은 **읽히지 않으면 오류**다. 예전에는 /매도/ 가 아니면 무조건 'B' 라,
+       매도를 못 읽었을 때 조용히 매수로 반영됐다. 수량이 빠져야 할 자리에 더해져
+       보유수량이 두 배로 틀어지는데 아무 경고도 없었다. 방향은 추측하지 않는다. */
+    const sideRaw = grab(s, '매매구분') || '';
+    const side = /매도/.test(sideRaw) ? 'S' : /매수/.test(sideRaw) ? 'B' : lo.side;
+
     const pxs = grab(s, '체결단가') || '';
-    const price = parseFloat((pxs.match(/[\d,]+\.?\d*/) || [''])[0].replace(/,/g, ''));
-    const qty = parseFloat(((grab(s, '체결수량') || '').match(/[\d,]+\.?\d*/) || [''])[0].replace(/,/g, ''));
+    const price = numOf(pxs) || lo.price;
+    const qty = numOf(grab(s, '체결수량')) || lo.qty;
     const amtS = grab(s, '체결금액') || '';
-    const amt = parseFloat((amtS.match(/[\d,]+\.?\d*/) || [''])[0].replace(/,/g, ''));
+    const amt = numOf(amtS) || +(price * qty).toFixed(2);
     const date = grab(s, '체결일자') || '';
-    const cur = /USD/.test(pxs + amtS) ? 'USD' : 'KRW';
-    const grp = ACCTS[acct] || null;
-    const slot = grp && tick ? (tick === 'SOXL' ? 'S' : tick === 'TQQQ' ? 'T' : null) : null;
+    const cur = /USD|\$/.test(pxs + amtS + s) ? 'USD' : 'KRW';
+
+    let grp = ACCTS[acct] || null;
+    let slot = grp && tick ? (tick === 'SOXL' ? 'S' : tick === 'TQQQ' ? 'T' : null) : null;
+    let inferred = null;
+    if (!grp && tick && side && qty > 0 && price > 0) {
+      const g = inferSlot({ tick, side, price, qty });
+      if (g) { grp = g.g; slot = g.s; inferred = g.n; }
+    }
+
     const errs = [];
-    if (!acct) errs.push('계좌번호를 읽지 못했습니다');
-    else if (!grp) errs.push(`계좌 ${acct}은 등록되지 않았습니다`);
+    if (!side) errs.push('매수·매도를 읽지 못했습니다');
+    if (!acct && !inferred) errs.push('계좌번호를 읽지 못했습니다');
+    else if (acct && !grp) errs.push(`계좌 ${acct}은 등록되지 않았습니다`);
     if (!tick) errs.push('종목 코드를 읽지 못했습니다');
-    else if (!slot) errs.push(`${tick}은 아직 처리 대상이 아닙니다`);
+    else if (grp && !slot) errs.push(`${tick}은 아직 처리 대상이 아닙니다`);
     if (cur !== 'USD') errs.push('원화 체결은 아직 지원하지 않습니다');
     if (!(qty > 0) || !(amt > 0)) errs.push('수량 또는 금액을 읽지 못했습니다');
-    return { acct, grp, tick, slot, side, price, qty, amt, date, cur, errs, raw: s.trim() };
+    return { acct, grp, tick, slot, side, price, qty, amt, date, cur, errs, inferred, raw: s.trim() };
   });
 }
+
 let pending = [];
 function renderParsed(list) {
   pending = list;
@@ -1432,6 +1483,7 @@ function renderParsed(list) {
     return `<div class="pc ${ok ? '' : 'bad'}">
       <div class="pc-h"><span class="tag ${p.side === 'B' ? 'b' : 's'}">${p.side === 'B' ? '매수' : '매도'}</span>
       <span>${ok ? ACCT_LABEL[p.grp] + ' · ' + p.tick : '인식 실패'}</span>
+      ${p.inferred ? `<span class="pill" style="font-size:9.5px">계좌 추론 ${esc(p.inferred)}</span>` : ''}
       <span style="margin-left:auto;font-size:11px;color:var(--muted)">${p.date || ''} · ${p.acct || '????'}</span></div>
       <div class="pc-g">
         <div>수량<b>${fmt(p.qty, 0)}</b></div><div>단가<b>${fmt(p.price, 2)}</b></div>
