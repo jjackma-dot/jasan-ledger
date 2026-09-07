@@ -541,7 +541,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-07 14:13';
+const BUILD = '2026-09-07 14:41';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1144,27 +1144,27 @@ function plRows() {
   const realized = { n: '주식 반영수익', sub: '무매+VR+레버리지 − 원금', v: c.stockAcct - num(state.principal), cost: num(state.principal) };
   return { rows, realized, c, x };
 }
+/* 보유수량·매입금액을 **손으로 고친 시각**을 자리마다 남긴다.
+
+   사용자가 "지금 SOXL 은 60주다" 라고 못박은 순간, 그보다 **먼저 온** 체결 알림은
+   이미 그 60주 안에 반영되어 있다고 봐야 한다. 그걸 나중에 또 자동 반영하면
+   수량이 늘어난다 — 사용자가 겪은 "60주로 고쳤는데 95주로 나온다" 가 이것이다.
+
+   원장 대조(ledgerSigCounts)로는 못 막는다. 손으로 수량만 고치는 것은 tr 에
+   아무 흔적도 남기지 않기 때문이다. 그래서 시각을 따로 남기고, 그보다 오래된
+   알림은 자동 반영 대신 검토로 보낸다. 사람이 보고 판단하면 된다. */
+function markFixed(g, sl) {
+  state.fixed = state.fixed || {};
+  state.fixed[g + '.' + sl] = Date.now();
+}
+/* 자리 하나가 마지막으로 손질된 시각 */
+const fixedAt = (g, sl) => num((state.fixed || {})[g + '.' + sl]);
+
 /* 메리츠 계좌 — 무매 + VR + 예수금(외화·원화) + ISA 레버리지.
    DC 는 미래에셋, 자녀는 토스라 계좌가 다르다. 은행 예적금(하나·우리)도 여기 아니다.
    기준원금 16,000만원이 대응하는 것이 바로 이 계좌다. */
 const meritz = c => c.usK + c.cashK + c.krw + c.isaV;
 
-/* 1년 누적수익.
-
-   원칙은 '원금을 넘는 부분이 수익' 이다. 입출금이 있으면 applyFlow() 가 기준원금을
-   같은 금액만큼 움직여 주므로(위 FLOW_TGT 참고) 원금 대비 차액은 입출금에 오염되지 않는다.
-
-   1년 전 잔액과 비교하는 방법도 되지만, 25년 9월~현재 구간의 월별 기록이 계좌 단위로
-   명확하지 않다. 그래서 **기록이 없으면 현재 원금 입력값과 비교**한다.
-   원금은 실적·계획 탭에서 고칠 수 있다.
-
-   전체 범위는 여기에 DC·자녀 손익을 더한다. 그쪽은 계좌가 달라 원금도 따로다. */
-function yearProfit(anaScope, c, allRows) {
-  const base = meritz(c) - num(state.principal);
-  if (anaScope !== 'total') return { v: base, ref: '원금' };
-  const ex = allRows.filter(r => r.cat === 'ex').reduce((a, r) => a + r.v, 0);   // DC + 자녀
-  return { v: base + ex, ref: '원금 + DC·자녀 매입원가' };
-}
 function renderAnalysis() {
   const { rows: allRows, realized, c, x } = plRows();
   const rows = allRows.filter(r => inScope(r, UI.ana));      // 자산 = 주식계좌만, 전체 = DC·자녀까지
@@ -1172,12 +1172,21 @@ function renderAnalysis() {
   $('#plVal').textContent = eok(sum);
   $('#plLbl').textContent = UI.ana === 'total' ? '금융손익 · 전체' : '금융손익 · 자산';
 
-  const yp = yearProfit(UI.ana, c, allRows);
-  const y1 = yp.v, denom = num(state.principal);
+  /* 큰 숫자 밑줄에서 **기준원금을 걷어냈다** (2026-09-07, 사용자 요청).
+
+     예전에는 '1년 누적수익 = 메리츠 계좌 평가액 − 기준원금' 을 여기 띄웠다.
+     큰 숫자(항목별 손익 합)와 **기준이 다른 두 숫자**가 위아래로 붙어 있어,
+     어느 쪽이 내 수익인지 매번 헷갈렸다. 게다가 기준원금은 사람이 손으로 넣는
+     값이라 틀리면 여기가 조용히 틀린다.
+
+     이제 큰 숫자 자체가 실현 + 미실현을 더한 누적손익이므로 원금이 필요 없다.
+     밑줄에는 **그 손익의 수익률**(손익 ÷ 매입원가)만 적는다.
+     원금 대비 값은 아래 '검증과 분해' 안에 그대로 남겨 뒀다. */
+  const costSum = rows.reduce((a, r) => a + num(r.cost), 0);
   const pr = $('#plRate');
-  pr.className = 'delta ' + (y1 > 0.5 ? 'up' : y1 < -0.5 ? 'dn' : 'fl');
-  pr.innerHTML = `<span>1년 누적수익 ${y1 >= 0 ? '+' : '−'}${fmt(Math.abs(y1), 0)}만원</span>`
-    + (denom > 0 ? `<span class="pill">${y1 >= 0 ? '+' : '−'}${fmt(Math.abs(y1 / denom * 100), 1)}%</span>` : '');
+  pr.className = 'delta ' + (sum > 0.5 ? 'up' : sum < -0.5 ? 'dn' : 'fl');
+  pr.innerHTML = `<span>누적수익 ${sum >= 0 ? '+' : '−'}${fmt(Math.abs(sum), 0)}만원</span>`
+    + (costSum > 0 ? `<span class="pill">${sum >= 0 ? '+' : '−'}${fmt(Math.abs(sum / costSum * 100), 1)}%</span>` : '');
   const anyFull = rows.some(r => r.real != null);
   $('#plNote').innerHTML = `큰 숫자는 <b>실현 + 미실현</b>을 더한 내 기준 손익입니다.`
     + (anyFull
@@ -1186,9 +1195,8 @@ function renderAnalysis() {
       : ` <b>미국주식은 아직 미실현만 나옵니다.</b> 무매/VR 탭에서 시작 평단·시작 누적
           실현손익을 넣고 켜면 실현분까지 합산됩니다.`)
     + ` 부동산은 여기 포함하지 않습니다.`
-    + `<br>1년 누적수익은 메리츠 계좌 평가액 <b>${fmt(meritz(c), 0)}만원</b>에서 기준원금 ${fmt(denom, 0)}만원을 뺀 값입니다`
-    + (UI.ana === 'total' ? `. 전체는 여기에 DC·자녀 손익을 더합니다.` : `. 은행 예적금과 DC·자녀는 계좌가 달라 빠집니다.`)
-    + ` 기준원금은 실적·계획 탭에서 고칠 수 있습니다.`;
+    + `<br>기준원금은 쓰지 않습니다 — 이 숫자는 <b>산 값과 지금 값의 차이</b>일 뿐입니다.
+       원금 대비 성과는 아래 <b>검증과 분해</b> 를 펴 보세요.`;
 
   const bar = (v, mx) => `<div class="bar" style="width:110px"><i style="width:${Math.min(100, Math.abs(v) / mx * 100)}%;background:var(--${v < 0 ? 'down' : 'up'})"></i></div>`;
   const line = (r, mx) => {
@@ -1210,9 +1218,7 @@ function renderAnalysis() {
            <span>${g.n}</span><span class="vals" style="margin-left:auto"><span class="v num ${gs > 0 ? 'up' : gs < 0 ? 'dn' : 'fl'}">${gs >= 0 ? '+' : '−'}${fmt(Math.abs(gs), 0)}<span class="u">만원</span></span></span></div>`
       : `<div class="grp-h" style="padding-left:15px">${g.n}</div>`;
     return head + g.rs.map(r => line(r, maxAbs)).join('');
-  }).join('')
-    + `<div class="grp-h" style="padding-left:15px">원금 대비 · 과거 실현분까지</div>`
-    + line(realized, Math.max(Math.abs(realized.v), 1));
+  }).join('');
 
   $('#fx0').value = state.fx0;
   $('#fxNow').value = (+x.px.FX).toFixed(2);
@@ -2039,23 +2045,18 @@ function ibPlanPayload() {
    범위는 종목마다 다르다 — SOXL 은 반도체 3배라 TQQQ 보다 하루 변동이 크다.
    (사용자 지정, 2026-09-07: TQQQ 20% · SOXL 30%)
 
-   VR 은 사다리라 줄이 수십 개다. 대신 **줄 수**로 자른다. 가격으로 자르면
-   매도표가 통째로 날아간다 — VR 매도는 밴드 상단(1.15V) 자리라 현재가에서
-   +27% 쯤에 있는 것이 정상이다. */
-const NEAR_PCT = { 'mm.T': 0.20, 'mm.S': 0.30, 'vr.T': 0.20 };
-const VR_ROWS = 8;                      // VR 은 매수·매도 각각 이만큼만
+   VR 은 매수·매도 개수와 상관없이 **가격 ±30%** 로 자른다(사용자 지정).
+   VR 매도는 밴드 상단(1.15V) 자리라 현재가에서 +27% 쯤에 서는 것이 정상이라,
+   20% 로 자르면 매도표가 통째로 날아간다. 30% 면 살아남는다. */
+const NEAR_PCT = { 'mm.T': 0.20, 'mm.S': 0.30, 'vr.T': 0.30 };
 
 function near(rows, sl) {
-  if (sl.vr) {
-    const b = rows.filter(r => r.side === 'B').slice(0, VR_ROWS);
-    const t = rows.filter(r => r.side === 'S').slice(0, VR_ROWS);
-    return [...t, ...b];
-  }
   const close = num(latest().px[sl.px]);
   if (!(close > 0)) return rows;
   const w = NEAR_PCT[sl.k] != null ? NEAR_PCT[sl.k] : 0.20;
-  return rows.filter(r =>
-    !/대폭락/.test(r.tag || '') || Math.abs(num(r.px) / close - 1) <= w + 0.0001);
+  const inRange = r => Math.abs(num(r.px) / close - 1) <= w + 0.0001;
+  // VR 은 사다리라 전 줄에, 무매는 대폭락 줄에만 적용한다
+  return rows.filter(r => sl.vr ? inRange(r) : (!/대폭락/.test(r.tag || '') || inRange(r)));
 }
 
 function ibNote(p, m) {
@@ -2790,11 +2791,13 @@ document.getElementById('p-ib')?.addEventListener('change', e => {
     const avg = num(t.q) > 0 ? num(t.c) / num(t.q) : 0;
     t.q = v;
     if (avg > 0) t.c = +(v * avg).toFixed(2);
+    markFixed(sl.g, sl.s);
     markDirty(latestKey()); saveLocal(); renderAll();
-    toast(`보유수량 ${fmt(v, 0)}주 · 매입금액 $${fmt(num(t.c), 2)}`);
+    toast(`보유수량 ${fmt(v, 0)}주 · 매입금액 $${fmt(num(t.c), 2)} · 이전 알림은 검토로 갑니다`);
   } else {
     const a = Math.max(0, num(aEl.value));
     t.c = +(num(t.q) * a).toFixed(2);
+    markFixed(sl.g, sl.s);
     markDirty(latestKey()); saveLocal(); renderAll();
     toast(`평단 $${fmt(a, 4)} · 매입금액 $${fmt(num(t.c), 2)}`);
   }
@@ -3208,8 +3211,12 @@ $('#pxEdit').addEventListener('change', e => {
 $('#holdEdit').addEventListener('change', e => {
   const p = e.target.dataset.hold; if (!p) return;
   setPath(latest(), p, +e.target.value);
+  /* 미국주식 자리를 손으로 고쳤으면 그 시각을 남긴다 — 그보다 먼저 온 체결
+     알림은 이미 이 값에 들어 있다고 보고 자동 반영하지 않는다. */
+  const m = p.match(/^(mm|vr)\.([TS])\.(q|c)$/);
+  if (m) markFixed(m[1], m[2]);
   markDirty(latestKey()); saveLocal(); renderSummary(); renderAnalysis(); renderPlan();
-  toast('수정 반영됨');
+  toast(m ? '수정 반영됨 · 이 시각 이전 알림은 검토로 갑니다' : '수정 반영됨');
 });
 $('#fx0').addEventListener('change', e => { state.fx0 = +e.target.value; schedulePush(); saveLocal(); renderAnalysis(); });
 $('#principal').addEventListener('change', e => { state.principal = +e.target.value; schedulePush(); saveLocal(); renderAnalysis(); renderPlan(); });
@@ -3396,6 +3403,8 @@ async function sbPushMeta() {
     /* 되돌린 체결 목록. 이게 기기마다 따로 놀면, 한쪽에서 되돌린 것이 다른
        기기의 '최근 자동 반영' 에는 그대로 남아 또 되돌리게 된다. */
     { k: 'undone', v: state.undone || {} },
+    /* 손으로 고친 시각. 기기마다 따로 놀면 한쪽에서 막은 알림이 다른 기기에서 반영된다 */
+    { k: 'fixed', v: state.fixed || {} },
     /* 주문표를 만들다 터져도 나머지 동기화까지 막으면 안 된다.
        예전에는 이게 sbPushMeta 안에서 그대로 던져서, 실패하면 그날 원장이
        통째로 안 올라갔다. */
@@ -3509,6 +3518,11 @@ async function sbDrainInbox() {
        금액을 조금 다르게 적었으면 서명이 어긋나 빠져나간다.
        나이로 한 번 더 막고, 사람이 보게 검토로 보낸다. */
     if (new Date(r.received_at).getTime() < stale) { reviewIds.push(r.id); return; }
+    /* 그 자리를 손으로 고친 시각보다 오래된 알림은 자동 반영하지 않는다.
+       "지금 60주다" 라고 못박은 뒤에 그 앞의 체결을 또 더하면 수량이 늘어난다. */
+    if (ok.some(p => { const f = fixedAt(p.grp, p.slot); return f > 0 && new Date(r.received_at).getTime() < f; })) {
+      reviewIds.push(r.id); return;
+    }
     /* 무한매수법을 켠 종목은 '오늘 계획한 주문' 과 대조한다. 계획대로면 그대로 자동
        반영하고, 계획과 다르면 사람이 봐야 하므로 검토로 보낸다. 안 켠 종목은
        ibMatch() 가 null 을 주므로 지금까지와 똑같이 흐른다. */
@@ -3768,6 +3782,7 @@ async function initSupabase() {
       if (meta.vr) state.vr = meta.vr;
       if (meta.ibLog) state.ibLog = meta.ibLog;
       if (meta.undone) state.undone = meta.undone;
+      if (meta.fixed) state.fixed = meta.fixed;
       state.ts = meta.ts; ensureMeta(); ensurePlan(); saveLocal(); renderAll();
       toast('서버에서 최신 기록을 불러왔습니다');
     } else if (!isEmptyLedger()) {
