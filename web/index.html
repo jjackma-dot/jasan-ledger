@@ -541,7 +541,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-07 15:12';
+const BUILD = '2026-09-07 17:35';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2150,7 +2150,7 @@ function renderIB() {
   const run = ibRun(sl.k);
   let out = '';
 
-  if (sl.vr) { body.innerHTML = vrPanel(sl); return; }   // VR 은 방법론이 달라 화면도 따로다
+  if (sl.vr) { body.innerHTML = vrPanel(sl) + renderGuide(sl); return; }   // VR 은 방법론이 달라 화면도 따로다
 
   if (!run) {
     /* 왜 안 나오는지 정확히 말한다. 예전에는 켠 뒤에도 "아직 켜져 있지 않습니다" 라고만
@@ -2302,7 +2302,7 @@ function renderIB() {
     체결금액만큼 빼는 방식이라 수량으로 나눠도 증권사 평단과 다릅니다. 시작점만 맞으면 그 뒤는 매매 내역으로 이동평균을 직접 굴립니다.
     ${cfg.d0 && dayKeys().includes(cfg.d0) ? `시작일 이후 <b>${dayKeys().filter(d => d >= cfg.d0).length}일</b>을 다시 계산했습니다.` : ''}</p>`;
 
-  body.innerHTML = out;
+  body.innerHTML = out + renderGuide(sl);
 }
 
 /* 무매 탭 이벤트 — 다시 그릴 때마다 내용이 통째로 갈리므로 위임으로 건다 */
@@ -2411,6 +2411,193 @@ function ibAnchor() {
   cfg.q0 = num(t.q);
   cfg.a0 = num(t.q) > 0 ? +(num(t.c) / num(t.q)).toFixed(4) : 0;
 }
+
+/* ===================== 앱과 대조 =====================
+
+   무한매수법 앱(Ver 4.0)과 VR 앱은 각자 주문표를 낸다. 이 앱도 낸다.
+   **셋이 같아야 한다.** 다르면 어느 쪽이든 입력이 어긋난 것이고, 그 상태로 주문을
+   내면 돈이 잘못 나간다. 그런데 지금까지는 두 화면을 눈으로 번갈아 보며 맞췄다 —
+   줄이 열 개쯤 되면 사람이 못 한다. 실제로 그렇게 놓친 것이 여럿이었다
+   (VR 보유수량 119 vs 123, 무매 SOXL 60 vs 95).
+
+   그래서 앱 화면 글자를 그대로 붙여넣으면 줄 단위로 대조한다.
+   수집기 앱 오버레이의 `⋮ › 앞 화면 글자 복사` 로 앱 화면을 통째로 복사할 수 있다.
+
+   읽는 형식 둘:
+
+     무한매수법 앱 '간편 매매 가이드'        VR 앱 '예약 주문표'
+       TQQQ $71.35 / 378주                   표기 단위 2 주
+       [매수]                                 125주  $67.73  $10,857
+       LOC 평단 = $71.35 X 13주               127주  $66.64  $10,723
+       LOC 3.69% = $73.98 X 12주              ...
+       LOC $71.12 X 1주
+       [매도]
+       LOC 3.69% = $73.99 X 94주
+       지정가 15% = $82.06 X 284주
+
+   가격은 소수 둘째 자리까지 보고, ±$0.02 안이면 같다고 친다 — 양쪽이 각자
+   반올림하기 때문이다. 수량은 정확히 같아야 한다. */
+
+const gNum = v => +String(v == null ? '' : v).replace(/[,$\s]/g, '') || 0;
+
+function parseGuide(text) {
+  const out = { tick: null, avg: 0, qty: 0, cost: 0, seed: 0, amt: 0, unit: 0, rows: [], kind: null };
+  const lines = String(text || '').replace(/ /g, ' ').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  let side = null;
+
+  lines.forEach(l => {
+    if (/^\[?\s*매수\s*(표)?\s*\]?$/.test(l)) { side = 'B'; return; }
+    if (/^\[?\s*매도\s*(표)?\s*\]?$/.test(l)) { side = 'S'; return; }
+
+    let m;
+    /* 무매 앱 머리말 — "TQQQ $71.35 / 378주" */
+    if ((m = l.match(/^([A-Z]{2,6})\s*\$?\s*([\d,.]+)\s*\/\s*([\d,]+)\s*주/))) {
+      out.tick = m[1]; out.avg = gNum(m[2]); out.qty = gNum(m[3]); out.kind = 'ib'; return;
+    }
+    /* 카드에서 따로 떨어져 나온 값들 */
+    if ((m = l.match(/평단\s*가?\s*\$?\s*([\d,.]+)/))) { out.avg = gNum(m[1]); return; }
+    if ((m = l.match(/보유\s*수량\s*([\d,]+)\s*주?/))) { out.qty = gNum(m[1]); return; }
+    if ((m = l.match(/매입\s*금액\s*\$?\s*([\d,.]+)/))) { out.cost = gNum(m[1]); return; }
+    if ((m = l.match(/전체\s*시드\s*\$?\s*([\d,.]+)/))) { out.seed = gNum(m[1]); return; }
+    if ((m = l.match(/1회\s*투자금\s*\$?\s*([\d,.]+)/))) { out.amt = gNum(m[1]); return; }
+    if ((m = l.match(/표기\s*단위\s*([\d,]+)/))) { out.unit = gNum(m[1]); out.kind = 'vr'; return; }
+    if (/^[A-Z]{2,6}$/.test(l) && !out.tick) { out.tick = l; return; }
+
+    /* 무매 앱 주문 줄 — "LOC 평단 = $71.35 X 13주", "지정가 15% = $82.06 X 284주" */
+    if ((m = l.match(/(LOC|MOC|지정가|시장가|LOO)\s*([^=$]*?)\s*=?\s*\$\s*([\d,.]+)\s*[Xx×*]\s*([\d,]+)\s*주/))) {
+      if (side) out.rows.push({ side, typ: m[1], tag: (m[2] || '').trim(), px: gNum(m[3]), qty: gNum(m[4]) });
+      return;
+    }
+    /* VR 앱 예약 주문표 줄 — "125주 $67.73 $10,857" (수량은 체결 뒤 보유수량) */
+    if ((m = l.match(/^([\d,]+)\s*주\s*\$?\s*([\d,.]+)\s*(?:\$?\s*([\d,.]+))?$/))) {
+      out.kind = out.kind || 'vr';
+      out.rows.push({ side: side || 'B', typ: '지정가', tag: '', px: gNum(m[2]), qty: 0, hold: gNum(m[1]), pool: gNum(m[3]) });
+      return;
+    }
+  });
+
+  /* VR 은 표에 '한 줄당 주문 수량' 이 없다. 보유수량이 표기 단위씩 움직이므로 그걸로 낸다. */
+  if (out.kind === 'vr') {
+    const u = out.unit || 0, hs = out.rows.map(r => r.hold).filter(v => v > 0);
+    const step = u > 0 ? u : (hs.length > 1 ? Math.abs(hs[1] - hs[0]) : 0);
+    out.unit = step;
+    out.rows.forEach(r => { r.qty = step; });
+  }
+  return out;
+}
+
+/* 이 앱이 오늘 낼 주문줄 */
+function myOrders(sl) {
+  const push = (arr, side, l) => {
+    if (!l || num(l.qty) <= 0) return;
+    arr.push({ side, typ: l.typ, px: +num(l.px).toFixed(2), qty: Math.round(num(l.qty)), tag: l.tag || '' });
+  };
+  const out = [];
+  if (sl.vr) {
+    const r = vrRun(sl.k);
+    if (!r) return out;
+    r.orders.rows.forEach(l => push(out, l.side, l));
+    return out;
+  }
+  const r = ibRun(sl.k);
+  if (!r || !r.orders || r.orders.done) return out;
+  const o = r.orders;
+  ((o.buy && o.buy.legs) || []).forEach(l => push(out, 'B', l));
+  ((o.buy && o.buy.tiers) || []).forEach(l => push(out, 'B', l));
+  push(out, 'S', o.sell1); push(out, 'S', o.sell2);
+  return out;
+}
+
+/* 두 목록을 줄 단위로 짝짓는다.
+   같은 매매구분 안에서 **가격이 가장 가까운 것**끼리 붙인다. 태그 문구는 앱마다
+   달라(별% / 3.69% / 평단) 짝짓기 기준으로 쓰지 않는다 — 숫자만 본다. */
+function diffOrders(mine, theirs) {
+  const left = mine.map((r, i) => ({ ...r, i })), right = theirs.map((r, i) => ({ ...r, i }));
+  const pairs = [], usedL = new Set(), usedR = new Set();
+  const cand = [];
+  right.forEach(b => left.forEach(a => {
+    if (a.side !== b.side) return;
+    cand.push({ a, b, d: Math.abs(a.px - b.px) + Math.abs(a.qty - b.qty) / 1e4 });
+  }));
+  cand.sort((p, q) => p.d - q.d);
+  cand.forEach(({ a, b }) => {
+    if (usedL.has(a.i) || usedR.has(b.i)) return;
+    usedL.add(a.i); usedR.add(b.i);
+    const dp = +(a.px - b.px).toFixed(2), dq = a.qty - b.qty;
+    pairs.push({ mine: a, app: b, ok: Math.abs(dp) <= 0.02 && dq === 0, dp, dq });
+  });
+  left.forEach(a => { if (!usedL.has(a.i)) pairs.push({ mine: a, app: null, ok: false }); });
+  right.forEach(b => { if (!usedR.has(b.i)) pairs.push({ mine: null, app: b, ok: false }); });
+  pairs.sort((p, q) => {
+    const s = r => (r.mine || r.app).side === 'B' ? 0 : 1;
+    const v = r => (r.mine || r.app).px;
+    return s(p) - s(q) || v(q) - v(p);
+  });
+  return pairs;
+}
+
+let guideText = '';
+function renderGuide(sl) {
+  const g = guideText.trim() ? parseGuide(guideText) : null;
+  const isVR = !!sl.vr;
+  let out = `<h2 class="sec">앱과 대조</h2><div class="card pad">
+    <p class="note" style="margin:0 0 9px">${isVR ? 'VR 앱 <b>예약 주문표</b>' : '무한매수법 앱 <b>간편 매매 가이드</b>'}
+      화면 글자를 그대로 붙여넣으면 이 앱의 주문표와 줄 단위로 맞춰 봅니다.
+      수집기 앱 오버레이의 <b>⋮ › 앞 화면 글자 복사</b> 로 통째로 복사할 수 있습니다.</p>
+    <textarea id="guideIn" placeholder="${isVR ? '125주  $67.73  $10,857 …' : 'TQQQ $71.35 / 378주\n[매수]\nLOC 평단 = $71.35 X 13주 …'}"
+      style="min-height:78px">${esc(guideText)}</textarea>
+    <div style="display:flex;gap:8px;margin-top:9px">
+      <button class="act" id="guideGo" style="flex:1">대조하기</button>
+      <button class="ghost" id="guideClr">지우기</button></div>`;
+
+  if (g) {
+    const x = latest(), q = num(x[sl.g][sl.s].q), c = num(x[sl.g][sl.s].c);
+    let myAvg = q > 0 ? c / q : 0;
+    if (!isVR) { const r = ibRun(sl.k); if (r && r.st) myAvg = num(r.st.avg); }
+    const cmpN = (lbl, a, b, tol, d) => {
+      const ok = Math.abs(a - b) <= tol;
+      return `<tr><td>${lbl}</td><td class="mn">${fmt(a, d)}</td><td class="mn">${fmt(b, d)}</td>
+        <td style="color:var(--${ok ? 'c2' : 'up'});font-weight:600">${ok ? '일치' : (a - b >= 0 ? '+' : '−') + fmt(Math.abs(a - b), d)}</td></tr>`;
+    };
+    out += `<div class="scroll" style="margin-top:12px"><table class="tbl">
+      <tr><th>기준값</th><th>이 앱</th><th>${isVR ? 'VR 앱' : '무매 앱'}</th><th>차이</th></tr>`
+      + (g.qty > 0 ? cmpN('보유수량', q, g.qty, 0, 0) : '')
+      + (g.avg > 0 ? cmpN('평단가', myAvg, g.avg, 0.01, 4) : '')
+      + (g.cost > 0 ? cmpN('매입금액', q * myAvg, g.cost, 1, 2) : '')
+      + `</table></div>`;
+
+    const mine = myOrders(sl), pairs = diffOrders(mine, g.rows);
+    const bad = pairs.filter(p => !p.ok).length;
+    const cell = r => r ? `${r.typ} <b class="mn">$${fmt(r.px, 2)}</b> × ${fmt(r.qty, 0)}주` : '<span style="color:var(--muted)">—</span>';
+    out += `<div class="scroll" style="margin-top:12px"><table class="tbl">
+      <tr><th>이 앱</th><th>${isVR ? 'VR 앱' : '무매 앱'}</th><th>판정</th></tr>`
+      + (pairs.length ? pairs.map(p => {
+        const why = p.ok ? '일치'
+          : !p.app ? '앱에 없음' : !p.mine ? '이 앱에 없음'
+            : [Math.abs(p.dp) > 0.02 ? `가격 ${p.dp >= 0 ? '+' : '−'}$${fmt(Math.abs(p.dp), 2)}` : '',
+               p.dq ? `수량 ${p.dq >= 0 ? '+' : '−'}${fmt(Math.abs(p.dq), 0)}주` : ''].filter(Boolean).join(' · ');
+        return `<tr><td>${cell(p.mine)}</td><td>${cell(p.app)}</td>
+          <td style="color:var(--${p.ok ? 'c2' : 'up'});font-weight:600;white-space:nowrap">${why}</td></tr>`;
+      }).join('') : `<tr><td colspan="3" style="text-align:left;color:var(--muted)">주문줄을 읽지 못했습니다. 형식을 확인해 주세요.</td></tr>`)
+      + `</table></div>`;
+
+    out += `<p class="note" style="margin-top:9px">${bad === 0 && pairs.length
+      ? `<b style="color:var(--c2)">${pairs.length}줄 전부 일치합니다.</b> 그대로 주문을 내셔도 됩니다.`
+      : `<b style="color:var(--up)">${bad}줄이 다릅니다.</b> 보통 위쪽 기준값(보유수량·평단가)이 먼저 어긋나 있습니다 —
+         거기를 맞추면 주문줄은 따라옵니다. 기준값이 같은데도 다르면 시드·분할수·목표수익률을 보세요.`}
+      <br>가격은 ±$0.02 까지 같다고 봅니다(양쪽이 각자 반올림합니다). 수량은 정확히 같아야 합니다.</p>`;
+  }
+  return out + `</div>`;
+}
+
+document.getElementById('p-ib')?.addEventListener('click', e => {
+  if (e.target.closest('#guideGo')) {
+    guideText = ($('#guideIn') || {}).value || '';
+    renderIB();
+    return;
+  }
+  if (e.target.closest('#guideClr')) { guideText = ''; renderIB(); }
+});
 
 /* ===================== VR 5.0 (밸류 리밸런싱) =====================
    라오어 밸류 리밸런싱 5.0.
