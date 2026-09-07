@@ -541,7 +541,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-07 12:55';
+const BUILD = '2026-09-07 13:53';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1046,7 +1046,61 @@ function renderSummary() {
 }
 
 /* ===================== 분석 탭 ===================== */
+
+/* 미국주식 한 자리의 **원가와 실현손익**.
+
+   ── 왜 원장의 매입금액을 그대로 쓰지 않는가 ────────────────────────
+   원장의 매입금액(엑셀 '손익기준' 열)은 차감법이다. 매도하면 체결금액만큼 줄어든다.
+   그래서 `평가액 − 매입금액` 은 **미실현손익만** 나온다 — 실현한 이익은 매입금액이
+   줄면서 같이 사라지기 때문이다. 실측(2026-09-07):
+
+     무매 TQQQ   평가액 − 매입금액 = +$159.56   ← 화면에 이 값이 떴다
+                 누적 실현 +$1,379.98 · 미실현 +$159.69 → 실제 총손익 +$1,539.68
+     무매 SOXL   평가액 − 매입금액 = −$1,036.15
+                 누적 실현 −$781.17 · 미실현 −$1,036.15 → 실제 총손익 −$1,817.32
+
+   사용자가 말한 그대로다 — "실현손익이 100만원이면 지금 손실 보고 있는 −10만원을
+   빼서 90만원 이익" 이어야 하는데, 화면은 −10만원만 보여 주고 있었다.
+
+   ── 그래서 무한매수법 엔진의 값을 쓴다 ────────────────────────────
+   엔진은 증권사 거래내역으로 검증한 앵커(시작 평단·시작 누적실현)에서 출발해
+   이동평균 평단과 누적 실현손익을 함께 굴린다(docs/06). 거기서
+
+     원가 = 보유수량 × 평단 − 누적실현
+     손익 = 평가액 − 원가 = 미실현 + 누적실현        ← 사용자가 원하는 값
+
+   이 원가는 매수·매도로 흔들리지 않는다. 매수 $700 이면 수량×평단이 700 늘고,
+   매도하면 (매도수량×평단 + 실현) = 매도대금 만큼 준다 — 예수금 증감과 정확히
+   상쇄된다. 그래서 환차손익의 기준도 실제 환전에만 움직인다.
+
+   엔진을 안 켰거나 앵커가 비어 있으면 원장 매입금액으로 돌아간다. 그때는
+   미실현만 나오므로 화면에 그렇게 적는다 — 없는 값을 있는 척하지 않는다. */
+function usBasis(sl, x) {
+  const q = num(x[sl.g][sl.s].q), c = num(x[sl.g][sl.s].c);
+  if (!sl.vr) {
+    let r = null;
+    try { r = ibRun(sl.k); } catch (e) { r = null; }
+    if (r && r.st && num(r.st.avg) > 0) {
+      return { q, cost: q * num(r.st.avg) - num(r.st.realized), real: num(r.st.realized), avg: num(r.st.avg), full: true };
+    }
+  }
+  /* VR 은 평단·실현을 따로 굴리지 않는다. 매도가 없으면 차감법 매입금액이 곧
+     매입원가라 이 값이 정확하고, 매도가 있었다면 그만큼 실현분이 빠진다. */
+  return { q, cost: c, real: null, avg: q > 0 ? c / q : 0, full: false };
+}
 const BKEYS = ['무매 TQQQ', '무매 SOXL', 'VR TQQQ', '주식 레버리지', '자녀 QLD', 'DC', '부동산'];
+/* 미국주식 한 줄. 실현·미실현을 나눠 적는다 — 사용자가 두 값을 각각 확인할 수
+   있어야 어디가 어긋났는지 짚을 수 있다. */
+function plRow(n, b, px, fx) {
+  const val = b.q * px, pl = val - b.cost, un = val - b.q * b.avg;
+  const u0 = v => (v >= 0 ? '+' : '−') + '$' + fmt(Math.abs(v), 0);
+  return {
+    cat: 'core', grp: '미국주식', n,
+    sub: b.full ? `실현 ${u0(b.real)} · 미실현 ${u0(un)}` : '미실현만 · 무매/VR 을 켜면 실현분까지',
+    v: pl * fx / 1e4, cost: b.cost * fx / 1e4, real: b.full ? b.real * fx / 1e4 : null
+  };
+}
+
 function plRows() {
   const x = latest(), c = calc(x), p = x.px, fx = c.fx, fx0 = num(state.fx0);
   const B = {}; BKEYS.forEach(k => B[k] = (SEED.basis && SEED.basis[k]) || { cost: 0 });
@@ -1071,15 +1125,16 @@ function plRows() {
      이다. 사용자가 요청한 "금융손익에 기 실현 손익도 반영" 이 이걸로 충족된다.
      그리고 매입금액 + 달러예수금은 매수·매도로 변하지 않으므로(한쪽이 늘면 다른 쪽이
      그만큼 준다) 환차손익의 기준이 **실제 원화↔달러 환전에만** 움직인다. */
-  const cT = num(x.mm.T.c), cS = num(x.mm.S.c), cV = num(x.vr.T.c);
+  const bT = usBasis(IB_SLOTS[0], x), bS = usBasis(IB_SLOTS[1], x), bV = usBasis(IB_SLOTS[2], x);
+  const cT = bT.cost, cS = bS.cost, cV = bV.cost;
   const usdCost = cT + cS + cV;
   /* 매입원가 대비 평가손익 — 서로 겹치지 않으므로 단순 합산이 성립.
      cat 은 종합 탭과 같은 뜻이다. core = 주식계좌, ex = DC·자녀.
      부동산은 여기 넣지 않는다 — 자산이든 전체든 손익 목록에서는 뺀다. */
   const rows = [
-    { cat: 'core', grp: '미국주식', n: '무매 TQQQ', sub: '실현 + 미실현', v: (num(x.mm.T.q) * num(p.T) - cT) * fx / 1e4, cost: cT * fx / 1e4 },
-    { cat: 'core', grp: '미국주식', n: '무매 SOXL', sub: '실현 + 미실현', v: (num(x.mm.S.q) * num(p.S) - cS) * fx / 1e4, cost: cS * fx / 1e4 },
-    { cat: 'core', grp: '미국주식', n: 'VR TQQQ', sub: '실현 + 미실현', v: (num(x.vr.T.q) * num(p.T) - cV) * fx / 1e4, cost: cV * fx / 1e4 },
+    plRow('무매 TQQQ', bT, num(p.T), fx),
+    plRow('무매 SOXL', bS, num(p.S), fx),
+    plRow('VR TQQQ', bV, num(p.T), fx),
     { cat: 'core', grp: '미국주식', n: '환차손익', sub: '매입금액 + 달러예수금 × 환율차', v: (usdCost + num(x.usd)) * (fx - fx0) / 1e4, cost: (usdCost + num(x.usd)) * fx0 / 1e4 },
     { cat: 'core', grp: '국내주식', n: 'ISA 레버리지', v: c.isaV - man(num(B['주식 레버리지'].cost)), cost: man(num(B['주식 레버리지'].cost)) },
     { cat: 'ex', grp: '다른 계좌', n: '자녀 QLD', sub: '환차손익 포함', v: c.kidV - man(num(B['자녀 QLD'].cost)), cost: man(num(B['자녀 QLD'].cost)) },
@@ -1123,8 +1178,14 @@ function renderAnalysis() {
   pr.className = 'delta ' + (y1 > 0.5 ? 'up' : y1 < -0.5 ? 'dn' : 'fl');
   pr.innerHTML = `<span>1년 누적수익 ${y1 >= 0 ? '+' : '−'}${fmt(Math.abs(y1), 0)}만원</span>`
     + (denom > 0 ? `<span class="pill">${y1 >= 0 ? '+' : '−'}${fmt(Math.abs(y1 / denom * 100), 1)}%</span>` : '');
-  $('#plNote').innerHTML = `큰 숫자는 <b>매입원가 대비 손익</b>의 합입니다. 미국주식은 매입금액이 차감법이라
-    <b>매도해 실현한 손익까지 이미 들어 있습니다</b>(원장 ${dayKeys()[0]} 이후). 부동산은 여기 포함하지 않습니다.`
+  const anyFull = rows.some(r => r.real != null);
+  $('#plNote').innerHTML = `큰 숫자는 <b>실현 + 미실현</b>을 더한 내 기준 손익입니다.`
+    + (anyFull
+      ? ` 미국주식은 무매/VR 엔진의 <b>평단·누적 실현손익</b>으로 원가를 잡습니다 —
+          팔아서 남긴 이익이 손익에 그대로 들어 있습니다.`
+      : ` <b>미국주식은 아직 미실현만 나옵니다.</b> 무매/VR 탭에서 시작 평단·시작 누적
+          실현손익을 넣고 켜면 실현분까지 합산됩니다.`)
+    + ` 부동산은 여기 포함하지 않습니다.`
     + `<br>1년 누적수익은 메리츠 계좌 평가액 <b>${fmt(meritz(c), 0)}만원</b>에서 기준원금 ${fmt(denom, 0)}만원을 뺀 값입니다`
     + (UI.ana === 'total' ? `. 전체는 여기에 DC·자녀 손익을 더합니다.` : `. 은행 예적금과 DC·자녀는 계좌가 달라 빠집니다.`)
     + ` 기준원금은 실적·계획 탭에서 고칠 수 있습니다.`;
@@ -1167,8 +1228,9 @@ function renderAnalysis() {
   const loan = num(x.re.loan);                                  // 음수
   const reP = (c.reT - loan) - num(B['부동산'].cost);            // 대출 제외 평가액 − 매입원가
   /* 총매입원가도 손익 항목과 **같은 기준**이어야 항등식이 성립한다.
-     미국주식은 원장의 살아 있는 매입금액을 쓴다 (plRows 의 주석 참고). */
-  const totalCost = (num(x.mm.T.c) + num(x.mm.S.c) + num(x.vr.T.c) + num(x.usd)) * num(state.fx0) / 1e4
+     미국주식은 usBasis() 가 주는 '수량 × 평단 − 누적실현' 을 쓴다. */
+  const usB = IB_SLOTS.reduce((a, sl) => a + usBasis(sl, x).cost, 0);
+  const totalCost = (usB + num(x.usd)) * num(state.fx0) / 1e4
     + man(num(B['자녀 QLD'].cost)) + man(num(B['DC'].cost)) + man(num(B['주식 레버리지'].cost)) + num(B['부동산'].cost)
     + c.krw + c.savT;
   const direct = c.total - totalCost;
@@ -1193,7 +1255,7 @@ function renderAnalysis() {
      Pool 은 두 계좌(3020 무매 · 3081 VR)의 예수금 합이다. 앱이 외화예수금을 하나로만
      들고 있어 계좌별로 가르지 못한다. 계좌별 수익률이 필요해지면 예수금 입력을
      둘로 나눠야 한다. */
-  const usdCost = num(x.mm.T.c) + num(x.mm.S.c) + num(x.vr.T.c);
+  const usdCost = usB;
   const usdVal = num(x.mm.T.q) * num(x.px.T) + num(x.mm.S.q) * num(x.px.S) + num(x.vr.T.q) * num(x.px.T);
   const pool = num(x.usd), seed = usdCost + pool, gainU = usdVal - usdCost;
   const usd0 = v => '$' + fmt(v, 0);
@@ -2161,7 +2223,9 @@ function renderIB() {
     <div class="erow"><label>시작일 <span class="u">이 날짜부터 다시 계산</span></label>
       <input type="date" data-ib="d0" value="${cfg.d0 || ''}"></div>`
     + IB_FIELDS.map(([k, lb, u, stp, neg]) => signRow('ib', k, lb, u, stp, neg, num(cfg[k]))).join('')
-    + `<div class="erow"><label>현재 보유로 시작점 맞추기 <span class="u">평단은 증권사 값으로 고칠 것</span></label>
+    + `<div class="erow"><label>지금 보유수량 <span class="u">증권사 값과 맞출 것 · 원장을 고칩니다</span></label>
+        <input class="num" type="number" step="1" id="ibQty" value="${num(latest()[sl.g][sl.s].q)}"></div>
+    <div class="erow"><label>현재 보유로 시작점 맞추기 <span class="u">평단은 증권사 값으로 고칠 것</span></label>
         <button class="ghost" id="ibAnchor">맞추기</button></div></div>
     <p class="note" style="margin:8px 3px 0">
     <b>무매 앱을 쓰고 계시면 그 화면 값을 그대로 옮기는 것이 가장 빠릅니다.</b>
@@ -2603,10 +2667,15 @@ function vrPanel(sl) {
     <div class="erow"><label>시작일 <span class="u">이 날짜부터 다시 계산</span></label>
       <input type="date" data-vr="d0" value="${cfg.d0 || ''}"></div>`
     + VR_FIELDS.map(([k, lb, u, stp, neg]) => signRow('vr', k, lb, u, stp, neg, num(cfg[k]))).join('')
-    + `<div class="erow"><label>보유수량 <span class="u">원장을 고칩니다 · 증권사 값과 맞출 것</span></label>
-        <input class="num" type="number" step="1" id="vrQty" value="${fmt(curQ, 0).replace(/,/g, '')}"></div>
+    + `<div class="erow"><label>보유수량 <span class="u">증권사 값과 맞출 것</span></label>
+        <input class="num" type="number" step="1" id="vrQty" value="${num(curQ)}"></div>
+    <div class="erow"><label>평단가 <span class="u">USD · 매입금액을 다시 잡습니다</span></label>
+        <input class="num" type="number" step="0.0001" id="vrAvg" value="${curQ > 0 ? +(num(x[sl.g][sl.s].c) / curQ).toFixed(4) : 0}"></div>
     <div class="erow"><label>시작일만 오늘로 맞추기 <span class="u">넣어 둔 V 는 그대로 둡니다</span></label>
         <button class="ghost" id="vrAnchor">맞추기</button></div></div>
+    <p class="note" style="margin:8px 3px 0">보유수량·평단가는 <b>원장 오늘치</b>를 고칩니다.
+    증권사 화면과 다르면 여기서 맞춰 주세요 — 체결 알림을 한 건이라도 놓치면 어긋납니다.
+    평단가를 넣으면 매입금액이 <b>수량 × 평단가</b> 로 다시 잡힙니다.</p>
     <p class="note" style="margin:8px 3px 0">
     <b>G</b> 는 V 가 오르는 속도입니다. 분모가 클수록 천천히 올라 현금을 더 들고 갑니다
     (10 → 평균 현금 13%, 20 → 21%, 40 → 32%). 처음에는 10 으로 두고 해마다 11·12 로 올리는 것이
@@ -2664,17 +2733,34 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
               : '시작일과 기준선 V 를 지금 평가금으로 잡았습니다. Pool 을 확인해 주세요');
   }
 });
-/* 보유수량 정정 — 원장의 오늘치 절대값을 고친다.
-   VR 은 시작일부터 replay 하므로 여기를 고치면 Pool·주문표가 함께 다시 계산된다.
-   매입금액(c)은 건드리지 않는다. 수량만 어긋난 것을 바로잡는 자리이고,
-   매입금액까지 바꾸면 손익이 조용히 움직인다. */
+/* 보유수량·평단가 정정 — 원장의 오늘치 절대값을 고친다.
+
+   체결 알림을 한 건이라도 놓치면 원장이 증권사와 벌어진다. 실제로 그랬다 —
+   VR TQQQ 가 9/1 매수 4주($275.46)를 놓쳐 119주로 멈춰 있었고, 증권사는 123주였다.
+   그러면 평단·주문표·손익이 전부 어긋난다. 여기서 바로잡을 수 있어야 한다.
+
+   수량만 고치면 평단이 따라 틀어지므로 평단가 칸도 함께 둔다 —
+   매입금액을 '수량 × 평단가' 로 다시 잡는다. 무매 자리는 시작 평단(a0)·시작
+   누적실현(r0)이 따로 있으므로 수량만 고치면 replay 가 나머지를 다시 센다. */
 document.getElementById('p-ib')?.addEventListener('change', e => {
-  if (!e.target.closest('#vrQty')) return;
+  const qEl = e.target.closest('#vrQty, #ibQty'), aEl = e.target.closest('#vrAvg');
+  if (!qEl && !aEl) return;
   const sl = IB_SLOTS.find(s => s.k === UI.ib); if (!sl) return;
-  const x = latest(), v = Math.max(0, num(e.target.value));
-  x[sl.g][sl.s].q = v;
-  markDirty(latestKey()); saveLocal(); renderAll();
-  toast(`보유수량을 ${fmt(v, 0)}주로 고쳤습니다`);
+  const x = latest(), t = x[sl.g][sl.s];
+  if (qEl) {
+    const v = Math.max(0, num(qEl.value));
+    /* 평단을 유지한 채 수량만 고친다 — 매입금액을 그대로 두면 평단이 튄다 */
+    const avg = num(t.q) > 0 ? num(t.c) / num(t.q) : 0;
+    t.q = v;
+    if (avg > 0) t.c = +(v * avg).toFixed(2);
+    markDirty(latestKey()); saveLocal(); renderAll();
+    toast(`보유수량 ${fmt(v, 0)}주 · 매입금액 $${fmt(num(t.c), 2)}`);
+  } else {
+    const a = Math.max(0, num(aEl.value));
+    t.c = +(num(t.q) * a).toFixed(2);
+    markDirty(latestKey()); saveLocal(); renderAll();
+    toast(`평단 $${fmt(a, 4)} · 매입금액 $${fmt(num(t.c), 2)}`);
+  }
 });
 
 /* ===================== 은퇴 시뮬레이션 =====================
