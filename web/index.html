@@ -541,7 +541,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-07 14:58';
+const BUILD = '2026-09-07 15:12';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1168,7 +1168,6 @@ const meritz = c => c.usK + c.cashK + c.krw + c.isaV;
 function renderAnalysis() {
   const { rows: allRows, realized, c, x } = plRows();
   const rows = allRows.filter(r => inScope(r, UI.ana));      // 자산 = 주식계좌만, 전체 = DC·자녀까지
-  const sum = rows.reduce((a, r) => a + r.v, 0);
 
   /* 큰 숫자는 **원금 대비 1년 누적수익**이다 (2026-09-07, 사용자 요청).
 
@@ -1182,35 +1181,58 @@ function renderAnalysis() {
      맨 앞에 서야 할 것은 뒤쪽이다. 매입원가 대비 항목별 손익은 아래 목록에 그대로
      둔다 — 어느 종목이 얼마인지는 거기서 본다.
 
-     전체 범위는 여기에 DC·자녀 손익을 더한다. 그쪽은 계좌가 달라 원금도 따로다. */
-  const mz = meritz(c), denom = num(state.principal);
-  const exSum = allRows.filter(r => r.cat === 'ex').reduce((a, r) => a + r.v, 0);   // DC + 자녀
-  const y1 = (mz - denom) + (UI.ana === 'total' ? exSum : 0);
+     ── 범위마다 계좌도 원금도 다르다 ──────────────────────────────
+     계좌가 셋이다(docs/02). 메리츠·미래에셋(DC)·토스(자녀). 각각 원금이 따로다.
+
+       자산 = 메리츠만          원금 = 기준원금
+       전체 = 메리츠 + DC + 자녀  원금 = 기준원금 + DC 불입금 + 자녀 원금
+
+     DC·자녀의 '원금' 은 손익기준 매입금액이다 — DC 는 지금까지 낸 불입금 전액이고,
+     자녀는 넣어 준 원금이다. 예전에는 전체를 '(메리츠 − 기준원금) + DC·자녀 손익'
+     으로 냈는데, 값은 같지만 무엇과 견주는지가 화면에 안 보였다.
+     이제 평가액도 원금도 세 조각으로 적는다. */
+  const B0 = {}; BKEYS.forEach(k => B0[k] = (SEED.basis && SEED.basis[k]) || { cost: 0 });
+  const man0 = w => w / 1e4;
+  const total = UI.ana === 'total';
+  const mz = meritz(c);
+  const kidCost = man0(num(B0['자녀 QLD'].cost)), dcCost = man0(num(B0['DC'].cost));
+  const val = total ? mz + c.kidV + c.dcv : mz;
+  const denom = total ? num(state.principal) + kidCost + dcCost : num(state.principal);
+  const y1 = val - denom;
+
   $('#plVal').textContent = eok(y1);
-  $('#plLbl').textContent = UI.ana === 'total' ? '1년 누적수익 · 전체' : '1년 누적수익 · 자산';
+  $('#plLbl').textContent = total ? '1년 누적수익 · 전체' : '1년 누적수익 · 자산';
 
   const pr = $('#plRate');
   pr.className = 'delta ' + (y1 > 0.5 ? 'up' : y1 < -0.5 ? 'dn' : 'fl');
   pr.innerHTML = `<span>기준원금 ${fmt(denom, 0)}만원 대비</span>`
     + (denom > 0 ? `<span class="pill">${y1 >= 0 ? '+' : '−'}${fmt(Math.abs(y1 / denom * 100), 1)}%</span>` : '');
 
-  /* **왜 내가 더한 값과 다른가** 를 화면이 스스로 답하게 한다.
+  /* **왜 내가 더한 값과 다른가** 를 화면이 스스로 답하게 한다. 다만 접어 둔다 —
+     평소에는 큰 숫자만 보면 되고, 숫자가 안 맞을 때만 펴서 한 줄씩 대조하면 된다.
 
      사용자가 "메리츠 평가액이 17,618 인데 왜 1,618 이 아니라 1,517 이냐" 고 물었다.
      답은 은행 예적금이다 — 메리츠 계좌가 아니라 기준원금에 대응하지 않으므로 뺀다
-     (docs/02 '계좌가 셋이다'). 그런데 화면에는 합계만 있어서 어디서 벌어졌는지
-     짚을 수가 없었다. 이제 넷을 다 적고, 빠진 것도 액수와 함께 적는다. */
+     (docs/02 '계좌가 셋이다'). 화면에 합계만 있으면 어디서 벌어졌는지 짚을 수가 없다. */
   const savOut = c.savT;
-  $('#plNote').innerHTML =
-    `메리츠 계좌 평가액 <b>${fmt(mz, 0)}만원</b> = 미국주식 ${fmt(c.usK, 0)}`
-    + ` + 달러예수금 ${fmt(c.cashK, 0)} + 원화예수금 ${fmt(c.krw, 0)} + ISA ${fmt(c.isaV, 0)}`
-    + `<br>여기서 기준원금 <b>${fmt(denom, 0)}만원</b>을 뺀 값입니다.`
+  const body = total
+    ? `전체 평가액 <b>${fmt(val, 0)}만원</b> = 메리츠 ${fmt(mz, 0)} + DC ${fmt(c.dcv, 0)} + 자녀 ${fmt(c.kidV, 0)}`
+      + `<br>기준원금 <b>${fmt(denom, 0)}만원</b> = 메리츠 ${fmt(num(state.principal), 0)}`
+      + ` + DC ${fmt(dcCost, 0)} <span class="u">불입금</span> + 자녀 ${fmt(kidCost, 0)}`
+      + `<br>메리츠 ${fmt(mz, 0)} = 미국주식 ${fmt(c.usK, 0)} + 달러예수금 ${fmt(c.cashK, 0)}`
+      + ` + 원화예수금 ${fmt(c.krw, 0)} + ISA ${fmt(c.isaV, 0)}`
+    : `메리츠 계좌 평가액 <b>${fmt(mz, 0)}만원</b> = 미국주식 ${fmt(c.usK, 0)}`
+      + ` + 달러예수금 ${fmt(c.cashK, 0)} + 원화예수금 ${fmt(c.krw, 0)} + ISA ${fmt(c.isaV, 0)}`
+      + `<br>기준원금 <b>${fmt(num(state.principal), 0)}만원</b>`;
+  $('#plNote').innerHTML = `<details><summary style="cursor:pointer;color:var(--muted);font-size:11.5px">
+      계산 근거 <span style="font-size:9px">▾</span></summary>
+    <div style="margin-top:6px">${body}`
     + (savOut > 0.5
-      ? ` <b>은행 예적금 ${fmt(savOut, 0)}만원(하나·우리)은 빠집니다</b> — 증권 계좌가 아니라
-          기준원금에 대응하지 않습니다. 그만큼 더해 보신 값과 차이가 납니다.`
+      ? `<br><b>은행 예적금 ${fmt(savOut, 0)}만원(하나·우리)은 빠집니다</b> — 증권 계좌가 아니라
+          기준원금에 대응하지 않습니다.`
       : '')
-    + (UI.ana === 'total' ? ` 전체는 여기에 DC·자녀 손익 ${fmt(exSum, 0)}만원을 더합니다.` : '')
-    + ` 기준원금은 실적·계획 탭에서 고칠 수 있습니다. 부동산은 여기 포함하지 않습니다.`;
+    + ` 기준원금은 실적·계획 탭에서 고칠 수 있습니다. 부동산은 여기 포함하지 않습니다.
+        <b>매입원가 대비</b> 종목별 손익은 아래 목록에 있습니다 — 기준이 다른 값입니다.</div></details>`;
 
   const bar = (v, mx) => `<div class="bar" style="width:110px"><i style="width:${Math.min(100, Math.abs(v) / mx * 100)}%;background:var(--${v < 0 ? 'down' : 'up'})"></i></div>`;
   const line = (r, mx) => {
