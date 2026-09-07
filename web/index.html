@@ -541,7 +541,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-07 14:41';
+const BUILD = '2026-09-07 14:55';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -3565,7 +3565,9 @@ let recentApplied = [];
 async function fetchRecentApplied() {
   if (!SB || !sbTok) { recentApplied = []; renderRecentApplied(); return; }
   try {
-    const rows = await sbReq('/rest/v1/inbox?status=eq.applied&select=id,raw,received_at&order=received_at.desc&limit=8') || [];
+    /* 8건만 가져오다가 며칠치가 한꺼번에 들어온 날 뒷줄이 안 보였다.
+       되돌리려면 그날 것을 다 볼 수 있어야 한다. */
+    const rows = await sbReq('/rest/v1/inbox?status=eq.applied&select=id,raw,received_at&order=received_at.desc&limit=25') || [];
     recentApplied = rows.map(r => ({ ...r, parsed: parseKakao(r.raw).filter(p => !p.errs.length) })).filter(r => r.parsed.length);
   } catch (e) { }
   renderRecentApplied();
@@ -3602,21 +3604,30 @@ function renderRecentApplied() {
     if (run[k] == null) { e.after = null; return; }
     e.after = run[k];
     run[k] -= (e.p.side === 'B' ? 1 : -1) * num(e.p.qty);
+    /* 이 체결이 반영된 뒤에 그 자리를 **손으로 고쳤으면**, 지금 원장 수량에는
+       사람이 정한 값이 들어 있다. 그 상태에서 이 줄을 되돌리면 같은 수량이
+       두 번 빠진다. 되돌리기 전에 눈에 보여야 한다. */
+    e.fixedAfter = fixedAt(e.p.grp, e.p.slot) > new Date(e.r.received_at).getTime();
   });
 
   const nowLine = IB_SLOTS
     .map(sl => `${esc(sl.n)} <b>${fmt(num(x[sl.g][sl.s].q), 0)}</b>주`).join(' · ');
 
+  const nFixed = flat.filter(e => e.fixedAfter).length;
   list.innerHTML = `<div class="grp-h" style="padding-left:15px">지금 보유 — ${nowLine}</div>`
+    + (nFixed ? `<div class="row" style="background:var(--surf2)"><div class="nm" style="font-size:11.5px;line-height:1.45;color:var(--muted);flex:1;white-space:normal">
+        <b style="color:var(--up)">손질 후</b> 표시가 붙은 ${nFixed}건은 <b>반영된 뒤에 그 종목의 보유수량을 손으로 고친</b> 것입니다.
+        지금 원장에는 이미 사람이 정한 값이 들어 있으므로, 이 줄을 되돌리면 <b>같은 수량이 두 번 빠집니다.</b>
+        되돌리지 마세요.</div></div>` : '')
     + flat.map(e => {
       const p = e.p;
       const when = new Date(e.r.received_at).toLocaleString('ko-KR',
         { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       /* 줄 전체를 label 로 감싸면 폰에서 어디를 눌러도 체크된다 */
       return `<label class="row" style="cursor:pointer">
-        <input type="checkbox" class="undoCk" data-k="${e.key}" style="width:17px;height:17px;flex:none;margin-right:10px;accent-color:var(--brass)">
+        <input type="checkbox" class="undoCk" data-k="${e.key}" data-fixed="${e.fixedAfter ? 1 : 0}" style="width:17px;height:17px;flex:none;margin-right:10px;accent-color:var(--brass)">
         <div style="min-width:0;flex:1">
-        <div class="nm"><span class="tag ${p.side === 'B' ? 'b' : 's'}" style="margin-right:6px">${p.side === 'B' ? '매수' : '매도'}</span>${ACCT_LABEL[p.grp]} · ${esc(p.tick)}<span class="sub">${when}</span></div></div>
+        <div class="nm"><span class="tag ${p.side === 'B' ? 'b' : 's'}" style="margin-right:6px">${p.side === 'B' ? '매수' : '매도'}</span>${ACCT_LABEL[p.grp]} · ${esc(p.tick)}<span class="sub">${when}</span>${e.fixedAfter ? `<span class="pill" style="margin-left:5px;font-size:9.5px;color:var(--up);background:color-mix(in srgb,var(--up) 12%,transparent)">손질 후</span>` : ''}</div></div>
         <div class="vals">
           <div class="v num">${p.side === 'B' ? '+' : '−'}${fmt(p.qty, 0)}주${e.after == null ? '' : ` → <b>${fmt(e.after, 0)}</b>주`}</div>
           <div class="d num" style="color:var(--muted)">$${fmt(p.price, 2)}</div></div></label>`;
@@ -3701,9 +3712,16 @@ document.getElementById('p-in')?.addEventListener('change', e => {
   if (e.target.classList && e.target.classList.contains('undoCk')) syncUndoBar();
 });
 document.getElementById('undoBtn')?.addEventListener('click', () => {
-  const keys = [...document.querySelectorAll('#recentList .undoCk:checked')].map(c => c.dataset.k);
+  const cks = [...document.querySelectorAll('#recentList .undoCk:checked')];
+  const keys = cks.map(c => c.dataset.k);
   if (!keys.length) return;
-  if (!confirm(`선택한 ${keys.length}건을 원장에서 되돌립니다. 계속할까요?`)) return;
+  /* 반영된 뒤에 손으로 고친 자리는 되돌리면 두 번 빠진다. 그냥 넘기지 않는다. */
+  const risky = cks.filter(c => c.dataset.fixed === '1').length;
+  if (risky && !confirm(
+    `선택한 ${keys.length}건 중 ${risky}건은 '손질 후' 입니다.\n\n` +
+    `반영된 뒤에 그 종목 보유수량을 손으로 고치셨습니다. 지금 원장에는 이미 사람이 정한 ` +
+    `값이 들어 있으므로, 되돌리면 같은 수량이 두 번 빠집니다.\n\n정말 되돌릴까요?`)) return;
+  if (!risky && !confirm(`선택한 ${keys.length}건을 원장에서 되돌립니다. 계속할까요?`)) return;
   undoFills(keys);
 });
 /* 큐가 막혔다 뚫리면 검토 대기가 수십 건씩 쌓인다. 하나씩 누르게 두면
