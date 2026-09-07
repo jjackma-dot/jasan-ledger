@@ -120,6 +120,12 @@ svg.chart{display:block;width:100%;height:auto;overflow:visible}
 /* rows */
 .rows{margin-top:10px}
 .grp-h{font-size:10.5px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted);font-weight:600;padding:14px 3px 6px}
+/* 중분류 색점 — 누적 그래프·범례와 같은 색이라 목록과 그래프를 눈으로 잇는다 */
+.lgdot{width:8px;height:8px;border-radius:2px;flex:none;display:inline-block;margin-right:1px}
+/* 접는 블록. 사파리는 list-style:none 만으로 삼각형이 안 사라진다 */
+summary{list-style:none}
+summary::-webkit-details-marker{display:none}
+details[open] summary{margin-bottom:2px}
 .row{display:flex;align-items:center;gap:10px;padding:9px 15px;border-top:1px solid var(--line)}
 .row:first-child{border-top:0}
 .grp-h+.row{border-top:0}
@@ -281,7 +287,7 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         <div class="big num"><span id="heroVal">—</span><span class="unit">만원</span></div>
         <div id="heroDelta" class="delta fl">—</div>
         <div class="chartwrap" id="cw-sum">
-          <svg class="chart" id="ch-sum" viewBox="0 0 340 150" aria-label="항목별 누적 자산 추이"></svg>
+          <svg class="chart" id="ch-sum" viewBox="0 0 340 330" aria-label="항목별 누적 자산 추이"></svg>
           <div class="tip" id="tip-sum"></div>
         </div>
         <div class="legend" id="chLegend"></div>
@@ -466,7 +472,7 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
       <h2 class="sec">연도별 자산</h2>
       <div class="card hero" style="margin-top:0;padding-top:14px">
         <div class="chartwrap" id="cw-plan">
-          <svg class="chart" id="ch-plan" viewBox="0 0 340 160" aria-label="연도별 자산 추이"></svg>
+          <svg class="chart" id="ch-plan" viewBox="0 0 340 350" aria-label="연도별 자산 추이"></svg>
           <div class="tip" id="tip-plan"></div>
         </div>
         <div class="legend" id="lg-plan"></div>
@@ -535,7 +541,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-07 07:59';
+const BUILD = '2026-09-07 12:55';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -812,8 +818,12 @@ function buildStack(scope, scale, span) {
     Object.keys(byY).map(Number).sort((a, b) => a - b).slice(-span).forEach(y =>
       rows.push({ t: new Date(y, 11, 31), label: y + '', est: false, vals: byY[y] }));
   }
-  return gs.map((g, i) => ({
-    name: g, color: STACK_C[i % STACK_C.length],
+  /* 색은 **GROUPS 안의 고정 자리**로 정한다. 예전에는 걸러 낸 뒤의 인덱스를 썼는데,
+     그러면 범위를 바꿀 때마다 같은 항목이 다른 색이 됐다 —
+     '금융' 에서는 부동산이 빠지므로 주식이 --c1(부동산 색)을 물려받았고,
+     '자산' 에서는 --c2 였다. 같은 화면을 세 번 보면서 색을 세 번 새로 익혀야 했다. */
+  return gs.map(g => ({
+    name: g, color: groupColor(g),
     pts: rows.map(r => ({ t: r.t, label: r.label, est: r.est, v: r.vals[g] || 0 }))
   }));
 }
@@ -821,6 +831,9 @@ function buildStack(scope, scale, span) {
 /* ===================== 차트 ===================== */
 /* 누적 그래프 색 — 아래(부동산)부터 위(자녀)로. part1.html 의 차트 팔레트와 같은 계열이다 */
 const STACK_C = ['--c1', '--c2', '--c3', '--c4', '--c5'];
+/* 중분류 색. 범위(금융·자산·전체)와 무관하게 항목마다 늘 같은 색이다.
+   누적 그래프·범례·항목 목록이 전부 이걸 쓴다. */
+const groupColor = g => STACK_C[Math.max(0, GROUPS.indexOf(g)) % STACK_C.length];
 
 function drawChart(svg, tipEl, series, opt = {}) {
   const C = { line: cssv('--line'), line2: cssv('--line2'), muted: cssv('--muted'), surf: cssv('--surf') };
@@ -859,16 +872,20 @@ function drawChart(svg, tipEl, series, opt = {}) {
   const Y = v => T + ih - ih * (v - lo) / (hi - lo);
   let g = '';
 
-  // 그리드
-  for (let i = 0; i <= 2; i++) {
-    const y = T + ih * i / 2;
-    g += `<line x1="${L}" y1="${y}" x2="${L + iw}" y2="${y}" stroke="${C.line}" stroke-width="1"/>`;
+  /* 그리드 — 세로로 길어지면 눈금도 함께 늘린다. 그래프를 두 배로 키워 놓고
+     선을 셋만 그으면 사이가 휑해 오히려 값을 읽기 어렵다. 55 단위마다 한 줄. */
+  const gn = Math.max(2, Math.min(6, Math.round(ih / 55)));
+  for (let i = 0; i <= gn; i++) {
+    const y = T + ih * i / gn;
+    g += `<line x1="${L}" y1="${y.toFixed(1)}" x2="${L + iw}" y2="${y.toFixed(1)}" stroke="${C.line}" stroke-width="1"/>`;
   }
   /* 세로축 라벨. 경계를 억으로 스냅해 뒀으면 자연수로 떨어진다.
      범위가 1억 미만이면 억으로 못 쓰니 만원 그대로 둔다. */
   const axis = v => (hi - lo >= EOK) ? Math.round(v / EOK) + '억' : fmt(v, 0);
-  g += `<text x="${L + iw + 5}" y="${T + 4}" font-size="9" fill="${C.muted}" font-family="IBM Plex Mono,monospace">${esc(axis(hi))}</text>`;
-  g += `<text x="${L + iw + 5}" y="${T + ih + 3}" font-size="9" fill="${C.muted}" font-family="IBM Plex Mono,monospace">${esc(axis(lo))}</text>`;
+  for (let i = 0; i <= gn; i++) {
+    const y = T + ih * i / gn + 3.2, v = hi - (hi - lo) * i / gn;
+    g += `<text x="${L + iw + 5}" y="${y.toFixed(1)}" font-size="9" fill="${C.muted}" font-family="IBM Plex Mono,monospace">${esc(axis(v))}</text>`;
+  }
 
   if (stack) {
     // 위에서부터 그려야 아래 띠가 가려지지 않는다
@@ -1013,14 +1030,15 @@ function renderSummary() {
     const psum = pits ? pits.filter(it => it.g === g).reduce((a, it) => a + it.v, 0) : null;
     const open = !!OPEN_G[g];
     html += `<button class="grp-h grp-t" data-g="${g}" aria-expanded="${open}">
-        <span class="caret">${open ? '▾' : '▸'}</span><span>${g}</span>
+        <span class="caret">${open ? '▾' : '▸'}</span>
+        <i class="lgdot" style="background:var(${groupColor(g)})"></i><span>${g}</span>
         <span class="vals"><span class="v num">${fmt(sum, 0)}<span class="u">만원</span></span>${dCell(psum == null ? null : sum - psum)}</span>
       </button>`;
     if (!open) return;
     gi.forEach(it => {
       const prev = pits ? pits.find(p => p.k === it.k) : null;
       html += `<div class="row sub-row"><div><div class="nm">${it.n}${it.s ? `<span class="sub">${it.s}</span>` : ''}</div>
-        <div class="bar" style="width:96px"><i style="width:${Math.min(100, Math.abs(it.v) / maxAbs * 100)}%;background:${it.v < 0 ? 'var(--down)' : 'var(--c1)'}"></i></div></div>
+        <div class="bar" style="width:96px"><i style="width:${Math.min(100, Math.abs(it.v) / maxAbs * 100)}%;background:${it.v < 0 ? 'var(--down)' : `var(${groupColor(g)})`}"></i></div></div>
         <div class="vals"><div class="v num">${fmt(it.v, 0)}</div>${dCell(prev ? it.v - prev.v : null)}</div></div>`;
     });
   });
@@ -1033,18 +1051,39 @@ function plRows() {
   const x = latest(), c = calc(x), p = x.px, fx = c.fx, fx0 = num(state.fx0);
   const B = {}; BKEYS.forEach(k => B[k] = (SEED.basis && SEED.basis[k]) || { cost: 0 });
   const man = w => w / 1e4;                                  // 원 → 만원
-  const usdCost = num(B['무매 TQQQ'].cost) + num(B['무매 SOXL'].cost) + num(B['VR TQQQ'].cost);
+
+  /* 미국주식 매입금액은 **원장에 살아 있는 값**을 쓴다. seed.json 의 고정값이 아니다.
+
+     예전에는 SEED.basis['무매 TQQQ'].cost 같은 고정값을 썼다. 시드를 만든 날에는
+     원장의 매입금액과 같은 값이라 티가 안 났는데, 체결이 쌓이면 갈라진다.
+     갈라지는 순간 **자기 돈으로 주식을 사는 것만으로 이익이 생겼다** —
+     $700 을 사면 예수금이 700 줄고 평가액이 700 느는데 고정 매입원가는 그대로라,
+     손익 합계가 700 × 매입평균환율 만큼 근거 없이 올랐다 (실측 +100.04만원).
+     매도하면 반대로 그만큼 사라졌다.
+
+     원장의 매입금액은 **차감법**이다 (docs/02 '체결 반영 규칙') —
+     매수하면 체결금액만큼 늘고, 매도하면 체결금액만큼 준다. 그래서
+
+       평가액 − 매입금액 = (지금 평가액 + 지금까지 받은 매도대금)
+                          − (시작 매입금액 + 지금까지 낸 매수대금)
+                        = **원장 시작 이후의 총손익 (실현 + 미실현)**
+
+     이다. 사용자가 요청한 "금융손익에 기 실현 손익도 반영" 이 이걸로 충족된다.
+     그리고 매입금액 + 달러예수금은 매수·매도로 변하지 않으므로(한쪽이 늘면 다른 쪽이
+     그만큼 준다) 환차손익의 기준이 **실제 원화↔달러 환전에만** 움직인다. */
+  const cT = num(x.mm.T.c), cS = num(x.mm.S.c), cV = num(x.vr.T.c);
+  const usdCost = cT + cS + cV;
   /* 매입원가 대비 평가손익 — 서로 겹치지 않으므로 단순 합산이 성립.
      cat 은 종합 탭과 같은 뜻이다. core = 주식계좌, ex = DC·자녀.
      부동산은 여기 넣지 않는다 — 자산이든 전체든 손익 목록에서는 뺀다. */
   const rows = [
-    { cat: 'core', n: '무매 TQQQ', sub: '달러손익 × 현재환율', v: (num(x.mm.T.q) * num(p.T) - num(B['무매 TQQQ'].cost)) * fx / 1e4, cost: num(B['무매 TQQQ'].cost) * fx / 1e4 },
-    { cat: 'core', n: '무매 SOXL', sub: '달러손익 × 현재환율', v: (num(x.mm.S.q) * num(p.S) - num(B['무매 SOXL'].cost)) * fx / 1e4, cost: num(B['무매 SOXL'].cost) * fx / 1e4 },
-    { cat: 'core', n: 'VR TQQQ', sub: '달러손익 × 현재환율', v: (num(x.vr.T.q) * num(p.T) - num(B['VR TQQQ'].cost)) * fx / 1e4, cost: num(B['VR TQQQ'].cost) * fx / 1e4 },
-    { cat: 'core', n: '환차손익', sub: '미국주식 매입금액 + 달러예수금', v: (usdCost + num(x.usd)) * (fx - fx0) / 1e4, cost: (usdCost + num(x.usd)) * fx0 / 1e4 },
-    { cat: 'core', n: 'ISA 레버리지', v: c.isaV - man(num(B['주식 레버리지'].cost)), cost: man(num(B['주식 레버리지'].cost)) },
-    { cat: 'ex', n: '자녀 QLD', sub: '환차손익 포함', v: c.kidV - man(num(B['자녀 QLD'].cost)), cost: man(num(B['자녀 QLD'].cost)) },
-    { cat: 'ex', n: 'DC 퇴직연금', v: c.dcv - man(num(B['DC'].cost)), cost: man(num(B['DC'].cost)) }
+    { cat: 'core', grp: '미국주식', n: '무매 TQQQ', sub: '실현 + 미실현', v: (num(x.mm.T.q) * num(p.T) - cT) * fx / 1e4, cost: cT * fx / 1e4 },
+    { cat: 'core', grp: '미국주식', n: '무매 SOXL', sub: '실현 + 미실현', v: (num(x.mm.S.q) * num(p.S) - cS) * fx / 1e4, cost: cS * fx / 1e4 },
+    { cat: 'core', grp: '미국주식', n: 'VR TQQQ', sub: '실현 + 미실현', v: (num(x.vr.T.q) * num(p.T) - cV) * fx / 1e4, cost: cV * fx / 1e4 },
+    { cat: 'core', grp: '미국주식', n: '환차손익', sub: '매입금액 + 달러예수금 × 환율차', v: (usdCost + num(x.usd)) * (fx - fx0) / 1e4, cost: (usdCost + num(x.usd)) * fx0 / 1e4 },
+    { cat: 'core', grp: '국내주식', n: 'ISA 레버리지', v: c.isaV - man(num(B['주식 레버리지'].cost)), cost: man(num(B['주식 레버리지'].cost)) },
+    { cat: 'ex', grp: '다른 계좌', n: '자녀 QLD', sub: '환차손익 포함', v: c.kidV - man(num(B['자녀 QLD'].cost)), cost: man(num(B['자녀 QLD'].cost)) },
+    { cat: 'ex', grp: '다른 계좌', n: 'DC 퇴직연금', v: c.dcv - man(num(B['DC'].cost)), cost: man(num(B['DC'].cost)) }
   ];
   /* 주식 반영수익 = (DC·자녀 제외 전체 금융자산) − 원금 */
   const realized = { n: '주식 반영수익', sub: '무매+VR+레버리지 − 원금', v: c.stockAcct - num(state.principal), cost: num(state.principal) };
@@ -1084,7 +1123,8 @@ function renderAnalysis() {
   pr.className = 'delta ' + (y1 > 0.5 ? 'up' : y1 < -0.5 ? 'dn' : 'fl');
   pr.innerHTML = `<span>1년 누적수익 ${y1 >= 0 ? '+' : '−'}${fmt(Math.abs(y1), 0)}만원</span>`
     + (denom > 0 ? `<span class="pill">${y1 >= 0 ? '+' : '−'}${fmt(Math.abs(y1 / denom * 100), 1)}%</span>` : '');
-  $('#plNote').innerHTML = `큰 숫자는 <b>매입원가 대비 평가손익</b>의 합입니다. 부동산은 여기 포함하지 않습니다.`
+  $('#plNote').innerHTML = `큰 숫자는 <b>매입원가 대비 손익</b>의 합입니다. 미국주식은 매입금액이 차감법이라
+    <b>매도해 실현한 손익까지 이미 들어 있습니다</b>(원장 ${dayKeys()[0]} 이후). 부동산은 여기 포함하지 않습니다.`
     + `<br>1년 누적수익은 메리츠 계좌 평가액 <b>${fmt(meritz(c), 0)}만원</b>에서 기준원금 ${fmt(denom, 0)}만원을 뺀 값입니다`
     + (UI.ana === 'total' ? `. 전체는 여기에 DC·자녀 손익을 더합니다.` : `. 은행 예적금과 DC·자녀는 계좌가 달라 빠집니다.`)
     + ` 기준원금은 실적·계획 탭에서 고칠 수 있습니다.`;
@@ -1096,9 +1136,21 @@ function renderAnalysis() {
       <div class="vals"><div class="v num ${cls}">${r.v >= 0 ? '+' : '−'}${fmt(Math.abs(r.v), 0)}</div>
       <div class="d num" style="color:var(--muted)">${r.cost > 0 ? (r.v >= 0 ? '+' : '−') + fmt(Math.abs(r.v / r.cost * 100), 1) + '%' : '—'}</div></div></div>`;
   };
+  /* 묶음별로 소계를 달아 준다. 일곱 줄이 평평하게 놓여 있으면 '미국주식이 전체로는
+     얼마인가' 를 매번 암산해야 했다. 환차손익도 미국주식과 한 덩어리다 —
+     달러로 산 것을 원화로 볼 때 생기는 값이라 따로 떼면 뜻이 흐려진다. */
   const maxAbs = Math.max(...rows.map(r => Math.abs(r.v)), 1);
-  $('#plRows').innerHTML = rows.map(r => line(r, maxAbs)).join('')
-    + `<div class="grp-h" style="padding-left:15px">원금 대비 · 실현분 포함</div>`
+  const grps = [];
+  rows.forEach(r => { const g = grps.find(o => o.n === r.grp); if (g) g.rs.push(r); else grps.push({ n: r.grp, rs: [r] }); });
+  $('#plRows').innerHTML = grps.map(g => {
+    const gs = g.rs.reduce((a, r) => a + r.v, 0);
+    const head = g.rs.length > 1
+      ? `<div class="grp-h" style="padding-left:15px;display:flex;align-items:baseline">
+           <span>${g.n}</span><span class="vals" style="margin-left:auto"><span class="v num ${gs > 0 ? 'up' : gs < 0 ? 'dn' : 'fl'}">${gs >= 0 ? '+' : '−'}${fmt(Math.abs(gs), 0)}<span class="u">만원</span></span></span></div>`
+      : `<div class="grp-h" style="padding-left:15px">${g.n}</div>`;
+    return head + g.rs.map(r => line(r, maxAbs)).join('');
+  }).join('')
+    + `<div class="grp-h" style="padding-left:15px">원금 대비 · 과거 실현분까지</div>`
     + line(realized, Math.max(Math.abs(realized.v), 1));
 
   $('#fx0').value = state.fx0;
@@ -1114,7 +1166,9 @@ function renderAnalysis() {
   const man = w => w / 1e4;
   const loan = num(x.re.loan);                                  // 음수
   const reP = (c.reT - loan) - num(B['부동산'].cost);            // 대출 제외 평가액 − 매입원가
-  const totalCost = (num(B['무매 TQQQ'].cost) + num(B['무매 SOXL'].cost) + num(B['VR TQQQ'].cost) + num(x.usd)) * num(state.fx0) / 1e4
+  /* 총매입원가도 손익 항목과 **같은 기준**이어야 항등식이 성립한다.
+     미국주식은 원장의 살아 있는 매입금액을 쓴다 (plRows 의 주석 참고). */
+  const totalCost = (num(x.mm.T.c) + num(x.mm.S.c) + num(x.vr.T.c) + num(x.usd)) * num(state.fx0) / 1e4
     + man(num(B['자녀 QLD'].cost)) + man(num(B['DC'].cost)) + man(num(B['주식 레버리지'].cost)) + num(B['부동산'].cost)
     + c.krw + c.savT;
   const direct = c.total - totalCost;
@@ -1139,7 +1193,7 @@ function renderAnalysis() {
      Pool 은 두 계좌(3020 무매 · 3081 VR)의 예수금 합이다. 앱이 외화예수금을 하나로만
      들고 있어 계좌별로 가르지 못한다. 계좌별 수익률이 필요해지면 예수금 입력을
      둘로 나눠야 한다. */
-  const usdCost = num(B['무매 TQQQ'].cost) + num(B['무매 SOXL'].cost) + num(B['VR TQQQ'].cost);
+  const usdCost = num(x.mm.T.c) + num(x.mm.S.c) + num(x.vr.T.c);
   const usdVal = num(x.mm.T.q) * num(x.px.T) + num(x.mm.S.q) * num(x.px.S) + num(x.vr.T.q) * num(x.px.T);
   const pool = num(x.usd), seed = usdCost + pool, gainU = usdVal - usdCost;
   const usd0 = v => '$' + fmt(v, 0);
@@ -1156,7 +1210,10 @@ function renderAnalysis() {
     </table></div>
     <p class="note" style="margin-top:8px">Pool 이 시드의 <b>${fmt(pool / seed * 100, 0)}%</b> 입니다.
     분할매수 전략은 놀고 있는 Pool 까지 시드에 넣어야 실제 성과가 보입니다. 환차손익은 위 목록에 따로 있습니다.</p>` : '';
-  $('#idCheck').innerHTML = `<div style="font-size:11.5px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600">검증</div>
+  /* 검증·분해표는 접어 둔다. 늘 펴 두면 화면 아래가 표 넉 장으로 가득 차서
+     정작 위의 항목별 손익이 묻힌다. 요약(차이 몇 만원)은 접힌 채로도 보인다. */
+  $('#idCheck').innerHTML = `<details${gap < 0.5 ? '' : ' open'}><summary style="cursor:pointer;font-size:11.5px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600;list-style:none">
+      검증과 분해 <span style="color:var(--${gap < 0.5 ? 'c2' : 'up'});letter-spacing:0;text-transform:none">· 차이 ${fmt(gap, 2)}만원</span></summary>
     <div class="scroll" style="margin-top:8px"><table class="tbl">
     <tr><td>손익 7개 항목 합</td><td>${fmt(sumAll, 1)}</td></tr>
     <tr><td>부동산 <span class="u">대출 제외</span></td><td>${fmt(reP, 1)}</td></tr>
@@ -1173,8 +1230,8 @@ function renderAnalysis() {
     <tr><td>주식계좌 평가액</td><td>${fmt(c.stockAcct, 0)}</td></tr>
     <tr><td>− 원금</td><td>${fmt(num(state.principal), 0)}</td></tr>
     <tr><td style="color:var(--ink);font-weight:600">= 반영수익</td><td style="font-weight:600">${fmt(realized.v, 0)}</td></tr>
-    <tr><td>그중 현재 미실현</td><td>${fmt(unreal, 0)}</td></tr>
-    <tr><td>과거 매도 실현분</td><td>${fmt(realized.v - unreal, 0)}</td></tr>
+    <tr><td>그중 원장 이후 <span class="u">실현 + 미실현</span></td><td>${fmt(unreal, 0)}</td></tr>
+    <tr><td>원장 이전 실현분</td><td>${fmt(realized.v - unreal, 0)}</td></tr>
     </table></div>
     ${poolBlock}
     ${cum1 == null ? '' : `<div class="scroll" style="margin-top:12px"><table class="tbl">
@@ -1184,7 +1241,7 @@ function renderAnalysis() {
     <tr><td style="color:var(--ink);font-weight:600">= 누적수익</td><td style="font-weight:600">${fmt(cumAll, 0)}</td></tr>
     </table></div>`}
     <p class="note" style="margin-top:8px">반영수익은 위 목록의 무매·VR·환차·ISA와 계좌가 겹치므로 합산 대상이 아닙니다. 원금 대비 계좌 전체 성과를 따로 보는 값입니다.
-    ${cum1 == null ? '' : `누적수익은 과거 실현수익 ${fmt(num(state.stPast), 0)}만원에 반영수익을 더한 값이고, 그중 최근 1년치를 갈라 놓은 것이 위 표입니다.`}</p>`;
+    ${cum1 == null ? '' : `누적수익은 과거 실현수익 ${fmt(num(state.stPast), 0)}만원에 반영수익을 더한 값이고, 그중 최근 1년치를 갈라 놓은 것이 위 표입니다.`}</p></details>`;
 }
 
 /* ===================== 시세 자동 조회 =====================
@@ -1624,13 +1681,15 @@ function ibRecord(x, p, src) {
   });
 }
 
+/* sn 은 오버레이 탭에 쓰는 짧은 이름이다. 오버레이는 화면 절반 폭이라
+   '무매 TQQQ' 셋이 나란히 서면 탭 줄이 옆으로 밀려 나간다. 웹 화면은 긴 이름을 쓴다. */
 const IB_SLOTS = [
-  { k: 'mm.T', n: '무매 TQQQ', g: 'mm', s: 'T', px: 'T' },
-  { k: 'mm.S', n: '무매 SOXL', g: 'mm', s: 'S', px: 'S' },
+  { k: 'mm.T', n: '무매 TQQQ', sn: '무매TQ', g: 'mm', s: 'T', px: 'T' },
+  { k: 'mm.S', n: '무매 SOXL', sn: '무매SX', g: 'mm', s: 'S', px: 'S' },
   /* VR 은 밸류 리밸런싱이라 분할수(n)라는 개념 자체가 없다. 무한매수법 엔진을
      그대로 씌우면 없는 값을 입력하라고 요구하게 된다. 별도 방법론이 들어오기
      전까지는 이 자리에 엔진을 돌리지 않는다. */
-  { k: 'vr.T', n: 'VR TQQQ', g: 'vr', s: 'T', px: 'T', vr: true }
+  { k: 'vr.T', n: 'VR TQQQ', sn: 'VR TQ', g: 'vr', s: 'T', px: 'T', vr: true }
 ];
 const IB_BASE = { on: false, n: 40, seed: 0, ty: 10, lp: 10, d0: '', q0: 0, a0: 0, r0: 0, t0: 0 };
 
@@ -1888,7 +1947,7 @@ function ibPlanPayload() {
     ((o.buy && o.buy.legs) || []).forEach(l => add('B', l));
     ((o.buy && o.buy.tiers) || []).forEach(l => add('B', l));
     add('S', o.sell1); add('S', o.sell2);
-    if (rows.length) out.slots.push({ k: sl.k, n: sl.n, tick: SYM[sl.px] || sl.px, rows: near(rows, sl) });
+    if (rows.length) out.slots.push({ k: sl.k, n: sl.n, sn: sl.sn || sl.n, tick: SYM[sl.px] || sl.px, rows: near(rows, sl) });
   });
   /* VR 은 가격대별 사다리라 줄이 많다. 같은 규칙으로 추려 올린다. */
   IB_SLOTS.filter(sl => sl.vr).forEach(sl => {
@@ -1898,7 +1957,7 @@ function ibPlanPayload() {
       side: l.side, typ: l.typ, px: +num(l.px).toFixed(2),
       qty: Math.round(num(l.qty)), tag: l.tag || ''
     }));
-    out.slots.push({ k: sl.k, n: sl.n, tick: SYM[sl.px] || sl.px, rows: near(rows, sl) });
+    out.slots.push({ k: sl.k, n: sl.n, sn: sl.sn || sl.n, tick: SYM[sl.px] || sl.px, rows: near(rows, sl) });
   });
   return out;
 }
@@ -1920,6 +1979,11 @@ function ibNote(p, m) {
 }
 
 /* ===================== 무매 탭 ===================== */
+/* 다섯째 값이 true 면 음수를 넣을 수 있는 칸이다 — 옆에 ± 버튼을 단다.
+
+   안드로이드에서 <input type="number"> 는 숫자 키패드를 띄우는데, 기기·키보드에
+   따라 **빼기 부호가 아예 없다.** 그래서 '시작 시점 누적 실현손익' 이 마이너스인데
+   폰에서는 넣을 방법이 없었다. 데스크톱에서만 되는 것을 되는 것으로 치면 안 된다. */
 const IB_FIELDS = [
   ['n', '분할수', '회', 1],
   ['seed', '시드', 'USD', 1],
@@ -1927,9 +1991,19 @@ const IB_FIELDS = [
   ['lp', '큰수 기준', '%', 0.1],
   ['q0', '시작 보유수량', '주', 1],
   ['a0', '시작 평단가', 'USD', 0.01],
-  ['r0', '시작 시점 누적 실현손익', 'USD', 1],
+  ['r0', '시작 시점 누적 실현손익', 'USD · 손실이면 −', 1, true],
   ['t0', '시작 T값', '비우면 자동 근사', 0.000001]
 ];
+/* 음수 가능 칸의 입력 + ± 버튼. group 은 'ib' 또는 'vr'. */
+const signRow = (grp, k, lb, u, stp, neg, v) =>
+  `<div class="erow"><label>${lb} <span class="u">${u}</span></label>`
+  + (neg
+    ? `<div style="display:flex;gap:6px;align-items:center;flex:none">
+         <input class="num" type="number" step="${stp}" data-${grp}="${k}" value="${v}" style="flex:1">
+         <button class="ghost" data-sgn="${grp}|${k}" title="부호 바꾸기"
+           style="flex:none;padding:6px 10px;font-size:13px;line-height:1">±</button></div>`
+    : `<input class="num" type="number" step="${stp}" data-${grp}="${k}" value="${v}">`)
+  + `</div>`;
 const ibU = (v, d = 2) => '$' + fmt(num(v), d);
 const ibSgn = (v, d = 0) => (num(v) >= 0 ? '+' : '−') + '$' + fmt(Math.abs(num(v)), d);
 
@@ -1999,9 +2073,10 @@ function renderIB() {
         <span class="pill">${fmt(tPct, 1)}%</span>
         ${st.mode === 'NORMAL' ? `<span class="pill">별 ${fmt(st.P, 2)}%</span>` : ''}</div>
       <div class="bar" style="width:100%;margin:9px 0 2px"><i style="width:${pct}%;background:${modeC}"></i></div>
-      <div class="note" style="margin-top:8px">1회 투자금 <b>${ibU(o.amt, 2)}</b> ·
-        사용한 시드 <b>${ibU(used, 0)}</b> / ${ibU(num(cfg.seed), 0)} · 큰수 <b>${ibU(o.large)}</b>
-        <span class="u">종가 ${ibU(close)} +${fmt(num(cfg.lp), 0)}%</span></div>
+      <div class="note" style="margin-top:8px">보유 <b>${fmt(st.q, 0)}주</b> ·
+        평단가 <b>${ibU(st.avg, 4)}</b> ·
+        사용한 시드 <b>${ibU(used, 0)}</b> / ${ibU(num(cfg.seed), 0)}
+        <span class="u">현재가 ${ibU(close)}</span></div>
     </div>`;
 
     if (o.done) {
@@ -2085,9 +2160,7 @@ function renderIB() {
         <button data-v="0" aria-pressed="${cfg.on ? 'false' : 'true'}">끔</button></div></div>
     <div class="erow"><label>시작일 <span class="u">이 날짜부터 다시 계산</span></label>
       <input type="date" data-ib="d0" value="${cfg.d0 || ''}"></div>`
-    + IB_FIELDS.map(([k, lb, u, stp]) =>
-      `<div class="erow"><label>${lb} <span class="u">${u}</span></label>
-        <input class="num" type="number" step="${stp}" data-ib="${k}" value="${num(cfg[k])}"></div>`).join('')
+    + IB_FIELDS.map(([k, lb, u, stp, neg]) => signRow('ib', k, lb, u, stp, neg, num(cfg[k]))).join('')
     + `<div class="erow"><label>현재 보유로 시작점 맞추기 <span class="u">평단은 증권사 값으로 고칠 것</span></label>
         <button class="ghost" id="ibAnchor">맞추기</button></div></div>
     <p class="note" style="margin:8px 3px 0">
@@ -2125,6 +2198,14 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
     return;
   }
   if (e.target.closest('#ibAnchor')) { ibAnchor(); saveLocal(); schedulePush(); renderIB(); toast('오늘 보유수량으로 시작점을 맞췄습니다. 평단가를 증권사 값으로 고치세요'); }
+});
+/* ± — 폰 숫자 키패드에 빼기 부호가 없는 기기가 있다. 부호만 뒤집는다. */
+document.getElementById('p-ib')?.addEventListener('click', e => {
+  const b = e.target.closest('[data-sgn]'); if (!b) return;
+  const [grp, f] = b.dataset.sgn.split('|');
+  const cfg = grp === 'vr' ? vrCfg(UI.ib) : ibCfg(UI.ib);
+  cfg[f] = -num(cfg[f]);
+  saveLocal(); schedulePush(); renderIB();
 });
 /* 시드 어림값 = 그 종목의 매입금액 + 예수금을 켠 자리 수로 나눈 몫.
    예수금은 계좌 하나로만 들고 있어 자리별로 가를 수가 없다. 그래서 어림값을 넣어 두고
@@ -2251,7 +2332,7 @@ function ibAnchor() {
 /* days 는 **영업일**이다. 사용자의 VR 앱이 사이클을 08.31 ~ 09.11 로 잡는데,
    그 사이 평일이 정확히 10일이다(주말만 건너뛴다 — 미국 휴장일은 세지 않는다).
    달력 14일로 잡으면 사이클 경계가 조금씩 밀린다. */
-const VR_BASE = { on: false, V: 0, G: 10, band: 15, mode: '거치', flow: 0, pool: 0, d0: '', days: 10 };
+const VR_BASE = { on: false, V: 0, G: 10, band: 15, mode: '거치', flow: 0, pool: 0, d0: '', days: 10, unit: 2 };
 const VR_CAP = { '적립': 0.75, '거치': 0.50, '인출': 0.25 };
 const VR_MODES = ['적립', '거치', '인출'];
 
@@ -2321,50 +2402,68 @@ function vrRun(key) {
   const close = num(latest().px[sl.px]);
   return { cfg, sl, V, pool, q, close, invested, cycles, nextCycle: next, cycPool,
     cycFrom: cycles[cycles.length - 1].d,
-    orders: vrLadder(cfg, V, cycPool, q, close) };
+    orders: vrLadder(cfg, V, cycPool, q, close, pool) };
 }
 
-/* 오늘 걸어 둘 주문표.
-   목표는 늘 하나다 — 어떤 가격 p 에서든 평가금이 V 가 되게, 즉 V/p 주를 들고 있게.
-   그래서 가격대별 목표수량 V/p 를 구하고 이웃한 단계와의 차이를 주문으로 낸다.
-   이렇게 해야 여러 줄을 한꺼번에 걸어 둬도 겹쳐서 과매매가 되지 않는다.
+/* 오늘 걸어 둘 예약 주문표.
 
-   밴드 안에서는 아무것도 하지 않으므로, 매도는 평가금이 상단을 넘는 가격부터,
-   매수는 하단 밑으로 내려가는 가격부터 시작한다.
-   현재가 ±20% 를 2% 간격으로 훑는다 — 오버레이가 그만큼만 보여 준다. */
-function vrLadder(cfg, V, cycPool, q, close) {
+   목표는 늘 하나다 — 어떤 가격 p 에서든 평가금이 V 가 되게, 즉 V/p 주를 들고 있게.
+
+   ── 가격 격자에서 수량 격자로 바꿨다 (2026-09-07) ──────────────────────────
+   예전에는 현재가 ±20% 를 2% 간격으로 훑고 그 가격마다 필요한 수량을 냈다.
+   그러면 한 줄이 17주, 다음 줄이 9주 … 처럼 제각각이라 증권사에 예약주문으로
+   걸기가 번거로웠다.
+
+   사용자의 VR 앱 '예약 주문표' 는 반대로 한다 — **목표 보유수량을 '표기 단위'(기본
+   2주)씩 옮기고, 그 수량이 되는 가격 p = V ÷ 목표수량** 을 짝짓는다. 그래서
+   한 줄이 늘 같은 수량이고, 표를 그대로 예약주문으로 옮길 수 있다.
+   (사용자 화면 실측: 125주 $67.73 · 127주 $66.64 · 129주 $65.60 …
+    수량 × 가격이 8,466 · 8,463 · 8,462 로 거의 일정 = 그 값이 V 다)
+
+   줄마다 Pool 잔액을 함께 낸다 — 어디까지 사면 현금이 바닥나는지가 한눈에 보여야
+   예약주문을 어디서 끊을지 정할 수 있다. 매수는 Pool 사용 한도에서 끊는다.
+
+   **밴드로 줄을 자르지 않는다.** 밴드(±15%)는 '지금 당장 리밸런싱할 때인가' 를
+   가르는 기준이고, 예약 주문표는 앞으로 가격이 어디로 가든 목표수량을 따라가도록
+   미리 걸어 두는 것이다. 사용자의 VR 앱도 밴드와 무관하게 전 구간을 낸다.
+   지금이 밴드 안인지 밖인지는 화면 위쪽 '밴드 안 — 대기' 표시가 따로 말해 준다. */
+function vrLadder(cfg, V, cycPool, q, close, poolNow) {
   const band = num(cfg.band) / 100;
   const up = V * (1 + band), dn = V * (1 - band);
   /* 한도는 **이번 사이클이 시작할 때의 Pool** 기준이다. 쓰는 동안 Pool 이 줄어도
      한도는 그대로여야 사이클 안에서 계획이 흔들리지 않는다. 사용자의 VR 앱이
      "이번 사이클 운용 Pool $11,842.67 / 사용 한도 50%인 $5,921.34" 로 그렇게 쓴다. */
   const cap = (VR_CAP[cfg.mode] != null ? VR_CAP[cfg.mode] : 0.5) * Math.max(0, cycPool);
+  const unit = Math.max(1, Math.round(num(cfg.unit) || 2));
   const rows = [];
-  if (!(close > 0) || !(V > 0)) return { rows, up, dn, cap, used: 0 };
+  if (!(close > 0) || !(V > 0) || !(q > 0)) return { rows, up, dn, cap, used: 0, unit };
 
-  const grid = [];
-  for (let k = -20; k <= 20; k += 2) grid.push(+(close * (1 + k / 100)).toFixed(2));
+  const MAX = 24;                          // 화면·오버레이가 감당할 줄 수
+  const hiP = close * 1.6, loP = close * 0.4;   // 이 밖은 오늘 걸어 둘 일이 없다
+  let pool = num(poolNow);
 
-  // 매도 — 낮은 가격부터 올라가며 목표수량까지 덜어 낸다
-  let held = q;
-  grid.filter(p => q * p > up).sort((a, b) => a - b).forEach(p => {
-    const target = Math.floor(V / p);
-    const sell = held - target;
-    if (sell > 0) { rows.push({ side: 'S', typ: '지정가', px: p, qty: sell, tag: '밴드 상단' }); held = target; }
-  });
+  // 매도 — 목표수량을 unit 씩 줄인다. 수량이 줄면 그 수량이 되는 가격은 오른다
+  for (let i = 0, t = q - unit; i < MAX && t > 0; i++, t -= unit) {
+    const px = +(V / t).toFixed(2);
+    if (px > hiP) break;
+    pool += unit * px;
+    rows.push({ side: 'S', typ: '지정가', px, qty: unit, hold: t,
+      pool: Math.round(pool), tag: `보유 ${fmt(t, 0)}주` });
+  }
 
-  // 매수 — 높은 가격부터 내려가며 채운다. Pool 한도까지만
-  held = q; let used = 0;
-  grid.filter(p => q * p < dn).sort((a, b) => b - a).forEach(p => {
-    const target = Math.floor(V / p);
-    let buy = target - held;
-    if (buy <= 0) return;
-    if (used + buy * p > cap) buy = Math.floor(Math.max(0, cap - used) / p);
-    if (buy <= 0) return;
-    used += buy * p; held += buy;
-    rows.push({ side: 'B', typ: '지정가', px: p, qty: buy, tag: '밴드 하단' });
-  });
-  return { rows, up, dn, cap, used };
+  // 매수 — 목표수량을 unit 씩 늘린다. Pool 사용 한도 안에서만
+  let used = 0;
+  pool = num(poolNow);
+  for (let i = 0, t = q + unit; i < MAX; i++, t += unit) {
+    const px = +(V / t).toFixed(2);
+    if (px < loP) break;
+    const cost = unit * px;
+    if (used + cost > cap) break;
+    used += cost; pool -= cost;
+    rows.push({ side: 'B', typ: '지정가', px, qty: unit, hold: t,
+      pool: Math.round(pool), tag: `보유 ${fmt(t, 0)}주` });
+  }
+  return { rows, up, dn, cap, used, unit };
 }
 
 /* ── VR 화면 ─────────────────────────────────────────────────── */
@@ -2373,8 +2472,9 @@ const VR_FIELDS = [
   ['pool', 'Pool', 'USD', 1],
   ['G', '그라디언트 G', '분모', 1],
   ['band', '밴드', '±%', 0.5],
-  ['flow', '사이클당 적립액', 'USD · 적립식만', 1],
-  ['days', '사이클 길이', '일', 1]
+  ['unit', '표기 단위', '주 · 한 줄당 주문 수량', 1],
+  ['flow', '사이클당 적립액', 'USD · 적립식만 · 인출이면 −', 1, true],
+  ['days', '사이클 길이', '영업일', 1]
 ];
 
 function vrPanel(sl) {
@@ -2409,6 +2509,12 @@ function vrPanel(sl) {
   } else {
     const { V, pool, q, invested, orders: o } = run;
     const val = q * close;
+    /* VR 은 평단을 쓰지 않는다. 그래도 증권사 화면과 눈으로 맞춰 볼 값이 필요해서
+       원장의 매입금액 ÷ 보유수량을 '장부 평단' 으로 함께 보여 준다.
+       매입금액이 차감법이라 **증권사의 이동평균 평단과는 다르다** —
+       실현손익만큼 낮게(이익이면) 나온다. 참고값으로만 볼 것. */
+    const lx = latest();
+    const bookAvg = q > 0 ? num(lx[sl.g][sl.s].c) / q : 0;
     const pct = V > 0 ? val / V * 100 : 0;
     const inBand = val >= o.dn && val <= o.up;
     const zone = val > o.up ? '상단 초과 — 매도' : val < o.dn ? '하단 미만 — 매수' : '밴드 안 — 대기';
@@ -2423,28 +2529,33 @@ function vrPanel(sl) {
         <span class="pill">±${fmt(num(cfg.band), 0)}%</span></div>
       <div class="bar" style="width:100%;margin:9px 0 2px">
         <i style="width:${Math.max(0, Math.min(100, pct / 1.5))}%;background:${zc}"></i></div>
-      <div class="note" style="margin-top:8px">평가금 <b>${ibU(val, 0)}</b> · 기준선 V <b>${ibU(V, 0)}</b>
+      <div class="note" style="margin-top:8px">보유 <b>${fmt(q, 0)}주</b> ·
+        평단가 <b>${ibU(bookAvg, 4)}</b> <span class="u">장부</span> ·
+        평가금 <b>${ibU(val, 0)}</b> / V <b>${ibU(V, 0)}</b>
         <span class="u">밴드 ${ibU(o.dn, 0)} ~ ${ibU(o.up, 0)}</span></div>
     </div>`;
 
     out += `<h2 class="sec">주문</h2><div class="card pad">`;
     if (!o.rows.length) {
-      out += `<p class="note">지금 가격에서 ±20% 안에는 낼 주문이 없습니다.
-        평가금이 밴드(${ibU(o.dn, 0)} ~ ${ibU(o.up, 0)}) 안에 있고, 그 범위를 벗어나는
-        가격대가 ±20% 밖이라는 뜻입니다.</p>`;
+      out += `<p class="note">낼 주문이 없습니다. 보유수량이 0 이거나 기준선 V 가 비어 있는지
+        확인해 주세요. 매수표가 비었다면 Pool 사용 한도(${ibU(o.cap, 0)})가 0 인 것입니다.</p>`;
     } else {
       const sell = o.rows.filter(r => r.side === 'S'), buy = o.rows.filter(r => r.side === 'B');
       const tbl = (title, rs) => rs.length ? `<div class="scroll" style="margin-top:10px"><table class="tbl">
-        <tr><th>${title}</th><th>수량</th></tr>` + rs.map(r =>
-          `<tr><td>${r.typ} <b class="mn">${ibU(r.px)}</b>
-            <span class="u">${fmt((r.px / close - 1) * 100, 0)}%</span></td>
-            <td>${fmt(r.qty, 0)}주</td></tr>`).join('') + `</table></div>` : '';
+        <tr><th>${title}</th><th>가격</th><th>보유</th><th>Pool</th></tr>` + rs.map(r =>
+          `<tr><td>${fmt(r.qty, 0)}주 <span class="u">${fmt((r.px / close - 1) * 100, 0)}%</span></td>
+            <td class="mn">${ibU(r.px)}</td>
+            <td>${fmt(r.hold, 0)}주</td>
+            <td style="color:var(--muted)">${ibU(r.pool, 0)}</td></tr>`).join('') + `</table></div>` : '';
       out += tbl('매도', sell) + tbl('매수', buy);
-      out += `<p class="note" style="margin-top:9px">현재가 ${ibU(close)} 기준 <b>±20%</b> 구간입니다.
-        모든 줄을 한꺼번에 걸어 두어도 겹치지 않습니다 — 각 줄은 그 가격에서 평가금이 V 가 되도록
-        <b>모자란 만큼만</b> 냅니다. 매수는 Pool 한도 <b>${ibU(o.cap, 0)}</b>
-        (${cfg.mode}식 ${Math.round((VR_CAP[cfg.mode] || 0.5) * 100)}%) 안에서만 냅니다
-        ${o.used > 0 ? `— 이 표가 다 체결되면 ${ibU(o.used, 0)} 를 씁니다` : ''}.</p>`;
+      out += `<p class="note" style="margin-top:9px">한 줄이 <b>${fmt(o.unit, 0)}주</b>씩입니다
+        (설정의 <b>표기 단위</b>). 목표 보유수량을 ${fmt(o.unit, 0)}주씩 옮기고 그 수량이 되는
+        가격 <b>V ÷ 보유수량</b> 을 짝지은 것이라, 표를 그대로 예약주문으로 걸어 두면
+        가격이 어디로 가든 평가금이 V 를 따라갑니다. 겹치지 않습니다.
+        <br>매수는 Pool 사용 한도 <b>${ibU(o.cap, 0)}</b>
+        (${cfg.mode}식 ${Math.round((VR_CAP[cfg.mode] || 0.5) * 100)}%) 에서 끊습니다
+        ${o.used > 0 ? `— 매수표가 다 체결되면 ${ibU(o.used, 0)} 를 씁니다` : ''}.
+        <b>Pool</b> 열은 그 줄까지 체결됐을 때 남는 현금입니다.</p>`;
     }
     out += `</div>`;
 
@@ -2491,10 +2602,10 @@ function vrPanel(sl) {
     + `</div></div>
     <div class="erow"><label>시작일 <span class="u">이 날짜부터 다시 계산</span></label>
       <input type="date" data-vr="d0" value="${cfg.d0 || ''}"></div>`
-    + VR_FIELDS.map(([k, lb, u, stp]) =>
-      `<div class="erow"><label>${lb} <span class="u">${u}</span></label>
-        <input class="num" type="number" step="${stp}" data-vr="${k}" value="${num(cfg[k])}"></div>`).join('')
-    + `<div class="erow"><label>지금 평가금으로 시작점 맞추기 <span class="u">V 와 Pool 을 채웁니다</span></label>
+    + VR_FIELDS.map(([k, lb, u, stp, neg]) => signRow('vr', k, lb, u, stp, neg, num(cfg[k]))).join('')
+    + `<div class="erow"><label>보유수량 <span class="u">원장을 고칩니다 · 증권사 값과 맞출 것</span></label>
+        <input class="num" type="number" step="1" id="vrQty" value="${fmt(curQ, 0).replace(/,/g, '')}"></div>
+    <div class="erow"><label>시작일만 오늘로 맞추기 <span class="u">넣어 둔 V 는 그대로 둡니다</span></label>
         <button class="ghost" id="vrAnchor">맞추기</button></div></div>
     <p class="note" style="margin:8px 3px 0">
     <b>G</b> 는 V 가 오르는 속도입니다. 분모가 클수록 천천히 올라 현금을 더 들고 갑니다
@@ -2514,11 +2625,18 @@ function vrSeedGuess(sl) {
     pool: Math.max(0, Math.round(num(x.usd) / 2))
   };
 }
+/* 맞추기 — **시작일을 오늘로 옮기는 것**이 본래 일이다.
+
+   예전에는 여기서 cfg.V 를 지금 평가금으로 무조건 덮어썼다. 그래서 사용자가
+   기준선 V 를 손으로 넣고 맞추기를 누르면 그 값이 소리 없이 사라졌다.
+   V 는 사용자가 정하는 값이지 화면이 정하는 값이 아니다.
+
+   비어 있을 때만(0) 채워 준다 — 처음 켤 때의 편의는 남긴다. */
 function vrAnchor() {
   const sl = IB_SLOTS.find(s => s.k === UI.ib) || IB_SLOTS[0];
   const cfg = vrCfg(sl.k), g = vrSeedGuess(sl);
   cfg.d0 = latestKey();
-  cfg.V = g.V;
+  if (num(cfg.V) <= 0) cfg.V = g.V;
   if (num(cfg.pool) <= 0) cfg.pool = g.pool;
 }
 
@@ -2540,9 +2658,23 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
   const md = e.target.closest('#vrMode button');
   if (md) { vrCfg(UI.ib).mode = md.dataset.v; saveLocal(); schedulePush(); renderIB(); return; }
   if (e.target.closest('#vrAnchor')) {
+    const had = num(vrCfg(UI.ib).V) > 0;
     vrAnchor(); saveLocal(); schedulePush(); renderIB();
-    toast('지금 평가금으로 기준선 V 를 잡았습니다. Pool 을 확인해 주세요');
+    toast(had ? `시작일을 ${latestKey()} 로 옮겼습니다. 기준선 V 는 그대로입니다`
+              : '시작일과 기준선 V 를 지금 평가금으로 잡았습니다. Pool 을 확인해 주세요');
   }
+});
+/* 보유수량 정정 — 원장의 오늘치 절대값을 고친다.
+   VR 은 시작일부터 replay 하므로 여기를 고치면 Pool·주문표가 함께 다시 계산된다.
+   매입금액(c)은 건드리지 않는다. 수량만 어긋난 것을 바로잡는 자리이고,
+   매입금액까지 바꾸면 손익이 조용히 움직인다. */
+document.getElementById('p-ib')?.addEventListener('change', e => {
+  if (!e.target.closest('#vrQty')) return;
+  const sl = IB_SLOTS.find(s => s.k === UI.ib); if (!sl) return;
+  const x = latest(), v = Math.max(0, num(e.target.value));
+  x[sl.g][sl.s].q = v;
+  markDirty(latestKey()); saveLocal(); renderAll();
+  toast(`보유수량을 ${fmt(v, 0)}주로 고쳤습니다`);
 });
 
 /* ===================== 은퇴 시뮬레이션 =====================
@@ -2860,6 +2992,30 @@ function renderPlan() {
   $('#lg-plan').innerHTML = series.map(s =>
     `<span><i class="swatch" style="background:${cssv(s.color)}"></i>${s.name}</span>`).join('');
 }
+
+/* 숫자칸에 0 이 미리 찍혀 있으면 타이핑이 "0123" 이 된다. 폰에서는 커서를 0 뒤로
+   옮겨 지우는 것이 특히 번거롭다. 포커스하면 0 을 비우고, 아무것도 안 고치고
+   나가면 도로 0 을 넣는다.
+
+   값을 바꾸는 것이 아니라 **화면의 글자만** 손댄다 — change 를 쏘지 않으므로
+   상태도 안 변하고 다시 그리지도 않는다. 입력 중 렌더가 돌면 포커스가 끊긴다
+   (2026-09-04 에 실적/계획 탭에서 겪은 그 버그다).
+
+   브라우저는 프로그램이 넣은 value 를 '사용자 수정' 으로 치지 않으므로,
+   비워 놓기만 하고 손대지 않은 칸에서는 change 가 뜨지 않는다. */
+const zeroish = v => v === '0' || /^-?0(\.0+)?$/.test(v);
+document.addEventListener('focusin', e => {
+  const el = e.target;
+  if (!el || el.tagName !== 'INPUT' || el.type !== 'number') return;
+  if (zeroish(el.value)) { el.dataset.z = '1'; el.value = ''; }
+});
+document.addEventListener('focusout', e => {
+  const el = e.target;
+  if (!el || el.tagName !== 'INPUT' || el.type !== 'number') return;
+  if (!el.dataset.z) return;
+  delete el.dataset.z;
+  if (el.value === '') el.value = '0';
+});
 
 /* ===================== 렌더 & 이벤트 ===================== */
 function renderAll() {
