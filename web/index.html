@@ -546,7 +546,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-08 16:12';
+const BUILD = '2026-09-08 16:37';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2454,59 +2454,61 @@ const gNum = v => {
 
 /* 앱 화면 글자를 주문표로 읽는다.
 
-   ── 형식이 둘이다 ────────────────────────────────────────────────
+   ── 형식이 셋이다 ────────────────────────────────────────────────
    ① 팝업('간편 매매 가이드')은 한 줄에 다 있다:
         LOC 평단 = $71.35 X 13주
-   ② 포트폴리오 카드는 셀마다 노드가 따로라 줄이 쪼개져 온다:
+   ② 카드는 유형/태그가 갈리고 값이 한 줄:
         LOC / 평단 / $71.35 × 13주
-        평단가 / $71.35
-        보유 수량 / 378주
-   접근성으로 훑으면 ②로 오고, 사람이 복사하면 ①로 온다. 둘 다 읽어야 한다.
+   ③ 값까지 갈리는 경우:
+        지정가 / 15% / $82.06 / 284주
+   접근성으로 훑으면 ②·③ 으로 오고, 사람이 복사하면 ① 로 온다. 셋 다 읽어야 한다.
    그래서 **줄을 하나씩 보며 상태를 이어 간다** — 유형(LOC)을 만나면 기억해 두고,
-   그다음 값 줄에서 한 줄을 완성한다.
+   가격이 오면 담아 두고, 수량이 오면 한 줄을 마감한다.
 
-   VR 앱 예약 주문표는 또 다르다:
-        125주 / $67.73 / $10,857   (수량은 체결 뒤 보유수량)              */
+   라벨과 값도 갈려 온다:
+        평단가 / $71.35        보유 수량 / 378주        매입 금액 / $26,971.88
+   라벨을 만나면 다음 줄을 그 값으로 받는다.
+
+   VR 앱 예약 주문표는 또 다르다 — 유형 없이 수량·가격·Pool 세 칸이다:
+        125주 / $67.73 / $10,857   (수량은 체결 뒤 보유수량)                */
 function parseGuide(text) {
   const out = { tick: null, avg: 0, qty: 0, cost: 0, seed: 0, amt: 0, unit: 0, rows: [], kind: null };
-  const lines = String(text || '').replace(/ /g, ' ').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  const lines = String(text || '').replace(/\u00a0/g, ' ').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
 
   const TYPE = /^(LOC|MOC|LOO|지정가|시장가)$/;
-  /* 라벨 → 담을 곳. 값은 다음 줄에 온다 */
   const LBL = {
     '평단가': 'avg', '보유 수량': 'qty', '보유수량': 'qty',
     '매입 금액': 'cost', '매입금액': 'cost',
     '전체 시드': 'seed', '시드': 'seed', '1회 투자금': 'amt', '표기 단위': 'unit'
   };
-  let side = null, typ = null, tag = '', pend = null;
-  /* VR 예약 주문표는 셀마다 노드가 따로다 — "125주" / "$67.73" / "$10,857".
-     한 줄로 오지 않으므로 모아 뒀다가 다음 수량 줄에서 마감한다. */
+  let side = null, typ = null, tag = '', rowPx = 0, pend = null;
+  /* VR 표는 유형 줄이 없다. 수량 → 가격 → Pool 순으로 와서 다음 수량 줄에 마감한다. */
   let vr = null;
   const flushVR = () => {
     if (vr && vr.px > 0) out.rows.push({ side: side || 'B', typ: '지정가', tag: '', px: vr.px, qty: 0, hold: vr.hold, pool: vr.pool });
     vr = null;
   };
-  const push = (px, qty) => {
+  const pushRow = (px, qty) => {
     if (!side || !typ) return;
     out.rows.push({ side, typ, tag, px, qty });
-    typ = null; tag = '';
+    typ = null; tag = ''; rowPx = 0;
   };
 
   lines.forEach(l => {
     let m;
-    if (/^\[?\s*매수\s*(표)?\s*\]?$/.test(l)) { side = 'B'; typ = null; tag = ''; pend = null; return; }
-    if (/^\[?\s*매도\s*(표)?\s*\]?$/.test(l)) { side = 'S'; typ = null; tag = ''; pend = null; return; }
+    if (/^\[?\s*매수\s*(표)?\s*\]?$/.test(l)) { flushVR(); side = 'B'; typ = null; tag = ''; rowPx = 0; pend = null; return; }
+    if (/^\[?\s*매도\s*(표)?\s*\]?$/.test(l)) { flushVR(); side = 'S'; typ = null; tag = ''; rowPx = 0; pend = null; return; }
 
     /* ① 한 줄에 다 있는 경우 */
     if ((m = l.match(/(LOC|MOC|LOO|지정가|시장가)\s*([^=$]*?)\s*=?\s*\$\s*([\d,.]+)\s*[Xx×*]\s*([\d,]+)\s*주/))) {
       if (side) out.rows.push({ side, typ: m[1], tag: (m[2] || '').trim(), px: gNum(m[3]), qty: gNum(m[4]) });
-      typ = null; tag = ''; pend = null; return;
+      typ = null; tag = ''; rowPx = 0; pend = null; return;
     }
-    /* ② 값만 있는 줄 — 앞서 본 유형에 붙인다 */
+    /* ② 값 한 줄 — 앞서 본 유형에 붙인다 */
     if ((m = l.match(/^\$?\s*([\d,.]+)\s*[Xx×*]\s*([\d,]+)\s*주$/))) {
-      push(gNum(m[1]), gNum(m[2])); pend = null; return;
+      pushRow(gNum(m[1]), gNum(m[2])); pend = null; return;
     }
-    if (TYPE.test(l)) { typ = l; tag = ''; pend = null; return; }
+    if (TYPE.test(l)) { flushVR(); typ = l; tag = ''; rowPx = 0; pend = null; return; }
 
     /* 무매 앱 머리말 — "TQQQ $71.35 / 378주" */
     if ((m = l.match(/^([A-Z]{2,6})\s+\$?\s*([\d,.]+)\s*\/\s*([\d,]+)\s*주/))) {
@@ -2514,7 +2516,7 @@ function parseGuide(text) {
     }
     /* 한 줄짜리 라벨+값 */
     if ((m = l.match(/^(평단가?|보유\s*수량|매입\s*금액|전체\s*시드|1회\s*투자금|표기\s*단위)\s*[:：]?\s*\$?\s*([\d,.]+)/))) {
-      const k = LBL[m[1].replace(/\s+/g, ' ')] || LBL[m[1]];
+      const k = LBL[m[1].replace(/\s+/g, ' ')];
       if (k) { out[k] = gNum(m[2]); if (k === 'unit') out.kind = 'vr'; pend = null; return; }
     }
     /* 라벨만 있는 줄 — 값은 다음 줄 */
@@ -2527,6 +2529,10 @@ function parseGuide(text) {
       return;
     }
 
+    /* ③ 유형은 봤는데 가격·수량이 따로 오는 경우 */
+    if (typ && !rowPx && (m = l.match(/^\$\s*([\d,.]+)$/))) { rowPx = gNum(m[1]); return; }
+    if (typ && rowPx && (m = l.match(/^[Xx×*]?\s*([\d,]+)\s*주$/))) { pushRow(rowPx, gNum(m[1])); return; }
+
     /* VR 앱 예약 주문표 — 한 줄로 온 경우 */
     if ((m = l.match(/^([\d,]+)\s*주\s+\$?\s*([\d,.]+)\s*(?:\$?\s*([\d,.]+))?$/))) {
       flushVR(); out.kind = out.kind || 'vr';
@@ -2534,7 +2540,8 @@ function parseGuide(text) {
       return;
     }
     /* 셀마다 쪼개져 온 경우 — 수량 줄이 새 행의 시작이다.
-       무매 카드의 "378주" 는 '보유 수량' 라벨 뒤에 오므로(pend) 여기까지 오지 않는다. */
+       무매 카드의 "378주" 는 '보유 수량' 라벨 뒤에 오므로(pend) 여기까지 오지 않고,
+       주문줄의 수량은 유형(typ)이 살아 있어 위에서 걸린다. */
     if (!pend && !typ && (m = l.match(/^([\d,]+)\s*주$/))) {
       flushVR(); out.kind = out.kind || 'vr';
       vr = { hold: gNum(m[1]), px: 0, pool: 0 };
@@ -2549,8 +2556,8 @@ function parseGuide(text) {
     /* 티커만 있는 줄 */
     if (/^[A-Z]{2,6}$/.test(l) && !out.tick) { out.tick = l; out.kind = out.kind || 'ib'; return; }
   });
-
   flushVR();
+
   /* VR 은 표에 '한 줄당 주문 수량' 이 없다. 보유수량이 표기 단위씩 움직이므로 그걸로 낸다. */
   if (out.kind === 'vr') {
     const hs = out.rows.map(r => r.hold).filter(v => v > 0);
@@ -2627,7 +2634,16 @@ function diffOrders(mine, theirs, byHold) {
       pairs.push({ mine: a, app: b, ok: Math.abs(dp) <= 0.02 && dq === 0, dp, dq });
     });
   }
-  left.forEach(a => { if (!usedL.has(a.i)) pairs.push({ mine: a, app: null, ok: false }); });
+  /* 앱 표가 우리보다 짧게 잡혔을 수 있다 — 스크롤 상한에 걸렸거나 화면이 짧으면
+     그렇다. 그때 우리 줄이 '앱에 없음' 으로 나오면 거짓 경보다. **앱이 실제로
+     덮은 구간 밖**의 우리 줄은 세지 않고 그렇게 적는다. */
+  const hs = right.map(b => num(b.hold)).filter(v => v > 0);
+  const lo = hs.length ? Math.min(...hs) : 0, hi = hs.length ? Math.max(...hs) : 0;
+  left.forEach(a => {
+    if (usedL.has(a.i)) return;
+    const outside = byHold && hs.length && (num(a.hold) < lo || num(a.hold) > hi);
+    pairs.push({ mine: a, app: null, ok: false, outside });
+  });
   const extra = right.filter(b => !usedR.has(b.i));
   pairs.sort((p, q) => {
     const sd = r => (r.mine || r.app).side === 'B' ? 0 : 1;
@@ -2635,7 +2651,8 @@ function diffOrders(mine, theirs, byHold) {
     return sd(p) - sd(q) || v(q) - v(p);
   });
   /* 우리가 낸 줄 중 앱과 다른 것만 센다. 앱에만 있는 줄은 범위 차이일 뿐이다. */
-  pairs.bad = pairs.filter(p => p.mine && !p.ok).length;
+  pairs.bad = pairs.filter(p => p.mine && !p.ok && !p.outside).length;
+  pairs.outside = pairs.filter(p => p.outside).length;
   pairs.extra = extra.length;
   return pairs;
 }
@@ -2677,6 +2694,7 @@ function renderGuide(sl) {
       <tr><th>이 앱</th><th>${isVR ? 'VR 앱' : '무매 앱'}</th><th>판정</th></tr>`
       + (pairs.length ? pairs.map(p => {
         const why = p.ok ? '일치'
+          : p.outside ? '앱 표 범위 밖'
           : !p.app ? '앱에 없음' : !p.mine ? '이 앱에 없음'
             : [Math.abs(p.dp) > 0.02 ? `가격 ${p.dp >= 0 ? '+' : '−'}$${fmt(Math.abs(p.dp), 2)}` : '',
                p.dq ? `수량 ${p.dq >= 0 ? '+' : '−'}${fmt(Math.abs(p.dq), 0)}주` : ''].filter(Boolean).join(' · ');
@@ -2796,6 +2814,9 @@ function splitByTicker(txt) {
   let cur = null;
   lines.forEach(l => {
     const t = l.trim();
+    /* 전체 진행 상황 카드는 종목 카드가 아니다. 여기 들어가면 그 카드의
+       '매입 금액 $33,899' 이 종목 매입금액으로 읽힌다 — 실제로 그랬다. */
+    if (/^전체\s*진행/.test(t) || /^전체\s*시드$/.test(t)) { cur = null; return; }
     if (/^TQQQ$/.test(t)) { cur = 'mm.T'; if (!out[cur]) { out[cur] = []; order.push(cur); } return; }
     if (/^SOXL/.test(t)) { cur = 'mm.S'; if (!out[cur]) { out[cur] = []; order.push(cur); } return; }
     if (cur) out[cur].push(l);
