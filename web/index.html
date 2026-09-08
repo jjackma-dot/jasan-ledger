@@ -546,7 +546,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-08 16:37';
+const BUILD = '2026-09-08 16:54';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2568,6 +2568,15 @@ function parseGuide(text) {
   return out;
 }
 
+/* 대조 범위 — 오버레이에 보내는 것과 같은 기준이다(NEAR_PCT).
+   무매는 대폭락 줄에만, VR 은 전 줄에 걸리지만, 판정에서는 **가격이 이 범위 밖이면
+   양쪽 다 세지 않는다.** 앱은 범위 밖까지 다 보여 주기 때문이다. */
+function winOf(sl) {
+  const close = num(latest().px[sl.px]);
+  const w = NEAR_PCT[sl.k] != null ? NEAR_PCT[sl.k] : 0.2;
+  return px => !(close > 0) || Math.abs(num(px) / close - 1) <= w + 0.0001;
+}
+
 /* 이 앱이 오늘 낼 주문줄 */
 function myOrders(sl) {
   const push = (arr, side, l) => {
@@ -2608,7 +2617,7 @@ function myOrders(sl) {
       한 칸씩 밀려 붙어 전부 어긋난 것처럼 보인다.
 
    태그 문구는 앱마다 달라(별% / 3.69% / 평단) 짝짓기 기준으로 쓰지 않는다. */
-function diffOrders(mine, theirs, byHold) {
+function diffOrders(mine, theirs, byHold, inWin) {
   const left = mine.map((r, i) => ({ ...r, i })), right = theirs.map((r, i) => ({ ...r, i }));
   const pairs = [], usedL = new Set(), usedR = new Set();
 
@@ -2641,10 +2650,17 @@ function diffOrders(mine, theirs, byHold) {
   const lo = hs.length ? Math.min(...hs) : 0, hi = hs.length ? Math.max(...hs) : 0;
   left.forEach(a => {
     if (usedL.has(a.i)) return;
-    const outside = byHold && hs.length && (num(a.hold) < lo || num(a.hold) > hi);
-    pairs.push({ mine: a, app: null, ok: false, outside });
+    /* 짝이 없는 줄 중 **대조 범위 밖**인 것은 세지 않는다.
+       판정 기준은 사용자가 정했다(2026-09-08): 매수 leg(2줄 또는 1줄) · 매도 2줄 ·
+       그리고 **범위 안 대폭락 매수**가 맞으면 양호다. 앱은 ±20%/30% 를 넘는 대폭락
+       줄까지 다 보여 주는데, 그건 이 앱이 오늘 걸 주문이 아니라 판정과 무관하다. */
+    const outByHold = byHold && hs.length && (num(a.hold) < lo || num(a.hold) > hi);
+    const outByPx = !!inWin && !inWin(num(a.px));
+    pairs.push({ mine: a, app: null, ok: false, outside: !!(outByHold || outByPx) });
   });
-  const extra = right.filter(b => !usedR.has(b.i));
+  const unmatched = right.filter(b => !usedR.has(b.i));
+  const extra = inWin ? unmatched.filter(b => inWin(num(b.px))) : unmatched;
+  const far = unmatched.length - extra.length;
   pairs.sort((p, q) => {
     const sd = r => (r.mine || r.app).side === 'B' ? 0 : 1;
     const v = r => (r.mine || r.app).px;
@@ -2654,6 +2670,8 @@ function diffOrders(mine, theirs, byHold) {
   pairs.bad = pairs.filter(p => p.mine && !p.ok && !p.outside).length;
   pairs.outside = pairs.filter(p => p.outside).length;
   pairs.extra = extra.length;
+  pairs.far = far;                       // 앱에만 있고 범위도 벗어난 줄 (판정 제외)
+  pairs.cmp = pairs.filter(p => p.mine && !p.outside).length;   // 실제로 판정한 줄 수
   return pairs;
 }
 
@@ -2687,7 +2705,7 @@ function renderGuide(sl) {
       + (g.cost > 0 ? cmpN('매입금액', q * myAvg, g.cost, 1, 2) : '')
       + `</table></div>`;
 
-    const mine = myOrders(sl), pairs = diffOrders(mine, g.rows, !!sl.vr);
+    const mine = myOrders(sl), pairs = diffOrders(mine, g.rows, !!sl.vr, winOf(sl));
     const bad = pairs.bad;
     const cell = r => r ? `${r.typ} <b class="mn">$${fmt(r.px, 2)}</b> × ${fmt(r.qty, 0)}주` : '<span style="color:var(--muted)">—</span>';
     out += `<div class="scroll" style="margin-top:12px"><table class="tbl">
@@ -2723,6 +2741,23 @@ function renderGuide(sl) {
    눌린 건지 아닌지 모른다 — 그래서 **누른 시각보다 새 결과가 올라올 때까지**
    2초 간격으로 물어보고, 진행 상황을 그대로 적는다. 안 오면 안 왔다고 말한다. */
 let vfyBusy = false;
+
+/* 검증을 걸어 둔 흔적. 폰이 다 읽는 데 15~25초 걸리는데 그동안 브라우저가 탭을
+   비우거나 사용자가 새로고침하면 기다리던 루프가 죽어 **결과를 영영 못 본다.**
+   실제로 그랬다 — 폰이 엉뚱한 브라우저를 열어 되돌아오지 못한 판이 있었다.
+   그래서 누른 사실을 저장해 두고, 다시 열릴 때 이어서 기다린다. */
+const VFY_KEY = 'jasan_vfy';
+const vfyPending = () => { try { return JSON.parse(localStorage.getItem(VFY_KEY) || 'null'); } catch (e) { return null; } };
+const vfySet = v => { try { v ? localStorage.setItem(VFY_KEY, JSON.stringify(v)) : localStorage.removeItem(VFY_KEY); } catch (e) { } };
+
+/* 무매/VR 탭을 열 때 걸어 둔 검증이 남아 있으면 이어서 기다린다 */
+function resumeVerify() {
+  const p = vfyPending();
+  if (!p || vfyBusy) return;
+  if (Date.now() - num(p.t0) > 5 * 60e3) { vfySet(null); return; }
+  pollVerify(p.what, num(p.t0), true);
+}
+
 async function runVerify(what) {
   if (vfyBusy) return;
   const box = $('#vfyOut'); if (!box) return;
@@ -2731,23 +2766,29 @@ async function runVerify(what) {
       서버에 연결되어 있어야 폰이 읽은 결과를 받아올 수 있습니다. 입력 탭에서 로그인해 주세요.</div></div>`;
     return;
   }
-  const key = what === 'vr' ? 'guideVR' : 'guideIB';
-  const lbl = what === 'vr' ? 'VR' : '무매';
   const t0 = Date.now();
-  vfyBusy = true;
-  const say = m => { box.innerHTML = `<p class="note" style="margin:9px 3px 0">${m}</p>`; };
-  say(`${lbl} 앱을 여는 중… 폰에서 앱이 뜨고 표를 훑습니다. 이 화면은 그대로 두세요.`);
-
+  vfySet({ what, t0 });
   try { location.href = `intent://verify?what=${what}#Intent;scheme=jasan;package=kr.jasan.collector;end`; }
   catch (e) { }
+  pollVerify(what, t0, false);
+}
 
-  for (let i = 0; i < 30; i++) {                       // 최대 60초
+async function pollVerify(what, t0, resumed) {
+  const box = $('#vfyOut'); if (!box) return;
+  const key = what === 'vr' ? 'guideVR' : 'guideIB';
+  const lbl = what === 'vr' ? 'VR' : '무매';
+  vfyBusy = true;
+  const say = m => { box.innerHTML = `<p class="note" style="margin:9px 3px 0">${m}</p>`; };
+  say(resumed ? `${lbl} 검증 결과를 기다리는 중…`
+    : `${lbl} 앱을 여는 중… 폰에서 앱이 뜨고 표를 훑습니다. 다 읽으면 이 화면으로 돌아옵니다.`);
+
+  for (let i = 0; i < 45; i++) {                       // 최대 90초
     await new Promise(r => setTimeout(r, 2000));
     let rows = null;
     try { rows = await sbReq('/rest/v1/meta?k=eq.' + key + '&select=v'); } catch (e) { }
     const v = rows && rows[0] && rows[0].v;
     if (v && num(v.t) > t0) {
-      vfyBusy = false;
+      vfyBusy = false; vfySet(null);
       const txt = String(v.text || '');
       if (txt.startsWith('ERR')) {
         box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div>
@@ -2759,7 +2800,7 @@ async function runVerify(what) {
     }
     say(`${lbl} 앱 화면을 읽는 중… ${(i + 1) * 2}초`);
   }
-  vfyBusy = false;
+  vfyBusy = false; vfySet(null);
   box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div>
     <b>결과가 오지 않았습니다.</b> 폰에서 확인해 주세요 —
     ① 수집기 앱의 <b>접근성 서비스</b>가 켜져 있는지
@@ -2778,7 +2819,7 @@ function verifyReport(what, txt) {
     const t = parts[sl.k];
     if (!t) { html += `<div class="row"><div class="nm">${esc(sl.n)}</div>
       <div class="vals"><div class="v num fl">앱 화면에 없음</div></div></div>`; return; }
-    const g = parseGuide(t), mine = myOrders(sl), pairs = diffOrders(mine, g.rows, !!sl.vr);
+    const g = parseGuide(t), mine = myOrders(sl), pairs = diffOrders(mine, g.rows, !!sl.vr, winOf(sl));
     const x = latest(), q = num(x[sl.g][sl.s].q);
     let avg = q > 0 ? num(x[sl.g][sl.s].c) / q : 0;
     if (!sl.vr) { const r = ibRun(sl.k); if (r && r.st) avg = num(r.st.avg); }
@@ -2792,7 +2833,7 @@ function verifyReport(what, txt) {
       : Math.abs(da) > 0.01 ? `평단 ${da > 0 ? '+' : '−'}$${fmt(Math.abs(da), 4)}`
       : pairs.extra ? `앱에 ${fmt(pairs.extra, 0)}줄 더` : '';
     html += `<div class="row"><div style="min-width:0">
-      <div class="nm">${esc(sl.n)}<span class="sub">우리 ${fmt(mine.length, 0)}줄 · 앱 ${fmt(g.rows.length, 0)}줄${g.qty > 0 ? ` · 앱 ${fmt(g.qty, 0)}주` : ``}${g.avg > 0 ? ` $${fmt(g.avg, 4)}` : ``}</span></div></div>
+      <div class="nm">${esc(sl.n)}<span class="sub">${fmt(pairs.cmp, 0)}줄 대조${pairs.far ? ` · 범위 밖 ${fmt(pairs.far, 0)}줄 제외` : ``}${g.qty > 0 ? ` · 앱 ${fmt(g.qty, 0)}주` : ``}${g.avg > 0 ? ` $${fmt(g.avg, 4)}` : ``}</span></div></div>
       <div class="vals"><div class="v num ${ok ? '' : 'up'}" style="${ok ? 'color:var(--c2)' : ''}">${ok ? '양호' : nbad + '건 불일치'}</div>
       <div class="d num" style="color:var(--muted)">${why}</div></div></div>`;
   });
@@ -2801,7 +2842,9 @@ function verifyReport(what, txt) {
       : `<b style="color:var(--up)">${bad}건이 다릅니다</b>`;
   return `<div class="card rows" style="margin-top:10px">
       <div class="grp-h" style="padding-left:15px">${what === 'vr' ? 'VR' : '무매'} 검증 · ${head}</div>${html}</div>
-    <p class="note" style="margin:8px 3px 0">보유수량·평단가가 먼저 어긋나면 주문줄은 따라 어긋납니다.
+    <p class="note" style="margin:8px 3px 0">판정 기준은 <b>매수 leg · 매도 2줄 · 범위 안 대폭락</b> 입니다.
+    앱은 ±20%(SOXL 30%) 를 넘는 줄까지 보여 주는데, 그건 오늘 걸 주문이 아니라 판정에서 뺍니다.
+    <br>보유수량·평단가가 먼저 어긋나면 주문줄은 따라 어긋납니다.
     자세한 줄별 차이는 아래 <b>앱과 대조</b> 에 붙여 보세요 —
     <button class="ghost" id="vfyPaste" data-t="${esc(btoa(unescape(encodeURIComponent(txt))))}"
       style="padding:3px 8px;font-size:11.5px">읽은 글자 넣기</button></p>`;
@@ -3655,7 +3698,7 @@ $$('nav button').forEach(b => b.addEventListener('click', () => {
   $$('nav button').forEach(o => o.setAttribute('aria-pressed', o === b));
   $$('.pane').forEach(p => p.classList.toggle('on', p.id === 'p-' + UI.tab));
   window.scrollTo({ top: 0, behavior: 'instant' });
-  if (UI.tab === 'sum') renderSummary(); if (UI.tab === 'plan') renderPlan(); if (UI.tab === 'ib') { renderIB(); ibPlanStatus(); }
+  if (UI.tab === 'sum') renderSummary(); if (UI.tab === 'plan') renderPlan(); if (UI.tab === 'ib') { renderIB(); ibPlanStatus(); resumeVerify(); }
   if (UI.tab === 'in') { renderReviewList(); renderRecentApplied(); }
 }));
 $('#themeBtn').addEventListener('click', () => {
@@ -4390,6 +4433,8 @@ PROVIDERS.splice(1, 0, {
     if (fillToToday()) renderAll();
     refreshQuotes(false);
     recoverServer();                                   // 앱을 다시 열 때가 복구할 가장 좋은 순간이다
+    /* 검증을 걸어 두고 폰에서 앱을 다녀왔다면, 돌아온 이 순간이 결과를 받을 때다 */
+    if (UI.tab === 'ib') resumeVerify();
   });
   /* 모바일에서 소프트 키보드가 뜨면 window 가 innerHeight 만 줄어든 채로
      resize 이벤트를 낸다. 그때마다 여기서 그대로 다시 그리면 방금 포커스한
