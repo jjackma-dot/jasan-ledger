@@ -546,7 +546,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-08 18:00';
+const BUILD = '2026-09-08 18:46';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2783,11 +2783,36 @@ function resumeVerify(force) {
     return;
   }
   const p = vfyPending();
-  if (!p) return;
-  if (Date.now() - num(p.t0) > 5 * 60e3) { vfySet(null); return; }
+  if (!p) { if (force) latestVerify(); return; }
+  if (Date.now() - num(p.t0) > 5 * 60e3) { vfySet(null); if (force) latestVerify(); return; }
   if (!force && UI.tab !== 'ib') return;
   goTab('ib');
   pollVerify(p.what, num(p.t0), true);
+}
+
+/* 걸어 둔 것이 없어도 **최근 검증 결과가 있으면 보여 준다.**
+
+   폰이 다 읽고 나서 그 앱을 닫으면 시스템이 직전 앱(대개 원래 크롬 탭)을 앞으로
+   올린다. 그 탭에는 대개 걸어 둔 흔적이 살아 있어 그대로 이어받지만, 5분이 지났거나
+   다른 탭에서 이미 받아 갔으면 비어 있다. 그때도 **결과는 서버에 그대로 있다** —
+   무매/VR 탭을 열면 보이는 것이 맞다.
+
+   화면에 이미 무언가 떠 있으면 건드리지 않는다. 사람이 방금 누른 것을 덮으면 안 된다. */
+async function latestVerify() {
+  if (!SB || !sbTok || vfyBusy) return;
+  const box = $('#vfyOut'); if (!box || box.innerHTML.trim()) return;
+  let rows = null;
+  try { rows = await sbReq('/rest/v1/meta?k=in.(guideIB,guideVR)&select=k,v'); } catch (e) { return; }
+  let best = null;
+  (rows || []).forEach(r => { const v = r.v; if (v && num(v.t) && (!best || num(v.t) > num(best.t))) best = v; });
+  if (!best || Date.now() - num(best.t) > 5 * 60e3) return;
+  if (box.innerHTML.trim()) return;
+  const what = best.what === 'vr' ? 'vr' : 'ib', txt = String(best.text || '');
+  goTab('ib');
+  box.innerHTML = txt.startsWith('ERR')
+    ? `<div class="warn" style="margin-top:9px"><span>◔</span><div>
+        <b>${what === 'vr' ? 'VR' : '무매'} 앱을 읽지 못했습니다.</b><br>${esc(txt.replace(/^ERR\s*/, ''))}</div></div>`
+    : verifyReport(what, txt, num(best.t));
 }
 
 async function runVerify(what) {
@@ -2857,7 +2882,7 @@ async function pollVerify(what, t0, resumed) {
 
 /* 폰이 떠 온 글자를 자리별로 갈라 각각 대조한다.
    무매는 TQQQ·SOXL 둘 다 본다 — 한 화면에 카드 둘이 이어져 있다. */
-function verifyReport(what, txt) {
+function verifyReport(what, txt, at) {
   const slots = what === 'vr' ? IB_SLOTS.filter(s => s.vr) : IB_SLOTS.filter(s => !s.vr);
   const parts = what === 'vr' ? { 'vr.T': txt } : splitByTicker(txt);
   let html = '', bad = 0, seen = 0;
@@ -2887,7 +2912,7 @@ function verifyReport(what, txt) {
     : bad === 0 ? `<b style="color:var(--c2)">전부 양호</b> — 앱과 같습니다`
       : `<b style="color:var(--up)">${bad}건이 다릅니다</b>`;
   return `<div class="card rows" style="margin-top:10px">
-      <div class="grp-h" style="padding-left:15px">${what === 'vr' ? 'VR' : '무매'} 검증 · ${head}</div>${html}</div>
+      <div class="grp-h" style="padding-left:15px">${what === 'vr' ? 'VR' : '무매'} 검증 · ${head}${at ? ` <span class="u">${new Date(at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 읽음</span>` : ''}</div>${html}</div>
     <p class="note" style="margin:8px 3px 0">판정 기준은 <b>매수 leg · 매도 2줄 · 범위 안 대폭락</b> 입니다.
     앱은 ±20%(SOXL 30%) 를 넘는 줄까지 보여 주는데, 그건 오늘 걸 주문이 아니라 판정에서 뺍니다.
     <br>보유수량·평단가가 먼저 어긋나면 주문줄은 따라 어긋납니다.
