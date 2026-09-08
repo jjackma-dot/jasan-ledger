@@ -546,7 +546,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-08 17:14';
+const BUILD = '2026-09-08 18:00';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2741,6 +2741,9 @@ function renderGuide(sl) {
    눌린 건지 아닌지 모른다 — 그래서 **누른 시각보다 새 결과가 올라올 때까지**
    2초 간격으로 물어보고, 진행 상황을 그대로 적는다. 안 오면 안 왔다고 말한다. */
 let vfyBusy = false;
+/* 폴링 세대. 새 폴링이 시작하면 앞선 것은 스스로 물러난다 —
+   두 루프가 같은 화면에 결과를 쓰면 늦게 끝난 쪽이 이겨 버린다. */
+let vfyGen = 0;
 
 /* 검증을 걸어 둔 흔적. 폰이 다 읽는 데 15~25초 걸리는데 그동안 브라우저가 탭을
    비우거나 사용자가 새로고침하면 기다리던 루프가 죽어 **결과를 영영 못 본다.**
@@ -2750,11 +2753,40 @@ const VFY_KEY = 'jasan_vfy';
 const vfyPending = () => { try { return JSON.parse(localStorage.getItem(VFY_KEY) || 'null'); } catch (e) { return null; } };
 const vfySet = v => { try { v ? localStorage.setItem(VFY_KEY, JSON.stringify(v)) : localStorage.removeItem(VFY_KEY); } catch (e) { } };
 
-/* 무매/VR 탭을 열 때 걸어 둔 검증이 남아 있으면 이어서 기다린다 */
-function resumeVerify() {
+/* 검증 결과를 이어받는다.
+
+   ── 원래 탭으로 돌아오지 못해도 결과가 뜨게 한다 (2026-09-08) ──────────
+   폰에서 돌아오는 길이 기기마다 다르게 논다. 기본 브라우저가 잡히기도 하고,
+   맞는 브라우저인데 새 탭이 열리기도 한다. 그때마다 **읽기는 다 해 놓고 결과만
+   못 보는** 일이 생겼다.
+
+   결과는 이미 서버(meta.guideIB/guideVR)에 있다. 그러니 원래 탭도, 원래
+   브라우저도 필요 없다 — 주소 뒤의 `#vfy=ib` 하나만 보면 된다. 앱이 돌아올 때
+   그걸 붙여 준다. 그 표시가 있으면 무매/VR 탭으로 가서 최근 5분 안의 결과를
+   받아 온다.
+
+   원래 탭으로 잘 돌아온 경우에는 localStorage 에 걸어 둔 것으로 이어받는다
+   (그쪽이 더 빠르고, 언제 시작했는지도 정확하다). */
+function resumeVerify(force) {
+  const h = (location.hash || '').match(/vfy=(ib|vr)/);
+  /* 해시가 붙어 왔으면 **돌던 것을 끊고** 새로 받는다. 브라우저가 탭을 재사용하면
+     페이지는 그대로고 주소만 바뀌므로, 앞서 돌던 폴링이 남아 있을 수 있다. */
+  if (!h && vfyBusy) return;
+  if (h) {
+    /* 주소의 표시는 한 번만 쓴다. 새로고침할 때마다 다시 도는 것을 막는다 */
+    try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { }
+    const p = vfyPending();
+    vfySet(null);
+    goTab('ib');
+    /* 언제 시작했는지 모를 수 있으므로 '최근 5분 안' 이면 받는다 */
+    pollVerify(h[1], p && num(p.t0) ? num(p.t0) : Date.now() - 5 * 60e3, true);
+    return;
+  }
   const p = vfyPending();
-  if (!p || vfyBusy) return;
+  if (!p) return;
   if (Date.now() - num(p.t0) > 5 * 60e3) { vfySet(null); return; }
+  if (!force && UI.tab !== 'ib') return;
+  goTab('ib');
   pollVerify(p.what, num(p.t0), true);
 }
 
@@ -2777,6 +2809,7 @@ async function runVerify(what) {
 }
 
 async function pollVerify(what, t0, resumed) {
+  const gen = ++vfyGen;
   const box = $('#vfyOut'); if (!box) return;
   const key = what === 'vr' ? 'guideVR' : 'guideIB';
   const lbl = what === 'vr' ? 'VR' : '무매';
@@ -2787,6 +2820,16 @@ async function pollVerify(what, t0, resumed) {
 
   for (let i = 0; i < 45; i++) {                       // 최대 90초
     await new Promise(r => setTimeout(r, 2000));
+    if (gen !== vfyGen) return;                        // 더 새 폴링이 시작됐다
+    /* 다른 브라우저로 열렸는데 거기는 로그인이 안 돼 있으면 아무리 기다려도
+       못 받는다. 90초를 헛되이 세지 말고 바로 말한다. */
+    if (i >= 2 && (!SB || !sbTok)) {
+      vfyBusy = false;
+      box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div>
+        <b>이 브라우저는 서버에 연결되어 있지 않습니다.</b> 결과는 서버에 올라가 있으니
+        <b>검증을 실행한 브라우저</b>에서 무매/VR 탭을 열거나, 입력 탭에서 로그인해 주세요.</div></div>`;
+      return;
+    }
     let rows = null;
     try { rows = await sbReq('/rest/v1/meta?k=eq.' + key + '&select=v'); } catch (e) { }
     const v = rows && rows[0] && rows[0].v;
@@ -3696,13 +3739,22 @@ $('#spanSeg').addEventListener('click', e => {
   [...$('#spanSeg').children].forEach(c => c.setAttribute('aria-pressed', c === b));
   renderSummary();
 });
-$$('nav button').forEach(b => b.addEventListener('click', () => {
-  UI.tab = b.dataset.t;
-  $$('nav button').forEach(o => o.setAttribute('aria-pressed', o === b));
-  $$('.pane').forEach(p => p.classList.toggle('on', p.id === 'p-' + UI.tab));
+/* 탭 전환은 한 곳에서만 한다. 코드에서 옮길 일이 생겨(검증 결과를 받으면
+   무매/VR 탭으로 가야 한다) 버튼 핸들러와 갈라 두면 상태가 어긋난다. */
+function showTab(t) {
+  UI.tab = t;
+  $$('nav button').forEach(o => o.setAttribute('aria-pressed', o.dataset.t === t));
+  $$('.pane').forEach(p => p.classList.toggle('on', p.id === 'p-' + t));
   window.scrollTo({ top: 0, behavior: 'instant' });
-  if (UI.tab === 'sum') renderSummary(); if (UI.tab === 'plan') renderPlan(); if (UI.tab === 'ib') { renderIB(); ibPlanStatus(); resumeVerify(); }
-  if (UI.tab === 'in') { renderReviewList(); renderRecentApplied(); }
+  if (t === 'sum') renderSummary();
+  if (t === 'plan') renderPlan();
+  if (t === 'ib') { renderIB(); ibPlanStatus(); }
+  if (t === 'in') { renderReviewList(); renderRecentApplied(); }
+}
+function goTab(t) { if (UI.tab !== t) showTab(t); }
+$$('nav button').forEach(b => b.addEventListener('click', () => {
+  showTab(b.dataset.t);
+  if (UI.tab === 'ib') resumeVerify();
 }));
 $('#themeBtn').addEventListener('click', () => {
   const cur = document.documentElement.getAttribute('data-theme');
@@ -4427,17 +4479,27 @@ PROVIDERS.splice(1, 0, {
     ['sbHead', 'sbCard', 'sbNote'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = 'none'; });
   }
   renderSpanSeg(); renderAll();
-  initSupabase().then(ok => ok || initCloud()).then(() => { refreshQuotes(false); recoverServer(); });
+  initSupabase().then(ok => ok || initCloud()).then(() => {
+    refreshQuotes(false); recoverServer();
+    /* 폰이 검증을 마치고 `#vfy=ib` 를 붙여 돌려보냈으면 여기서 받는다.
+       서버에 붙은 뒤라야 결과를 읽을 수 있어 이 자리다. 새 탭으로 열렸어도
+       무매/VR 탭으로 옮겨 결과를 띄운다. */
+    resumeVerify(true);
+  });
   setInterval(() => { if (!document.hidden) refreshQuotes(false); }, 5 * 60e3);
   // 데이터가 덜 찬 상태로 남지 않게 주기적으로도 확인한다. 다 차 있으면 즉시 빠져나온다
   setInterval(() => { if (!document.hidden) recoverServer(); }, 60e3);
+  /* 브라우저가 탭을 재사용하면 페이지가 다시 열리지 않고 **주소만** 바뀐다.
+     그때도 결과를 받아야 한다 — 이게 없으면 아무 일도 일어나지 않는다. */
+  addEventListener('hashchange', () => resumeVerify(true));
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     if (fillToToday()) renderAll();
     refreshQuotes(false);
     recoverServer();                                   // 앱을 다시 열 때가 복구할 가장 좋은 순간이다
-    /* 검증을 걸어 두고 폰에서 앱을 다녀왔다면, 돌아온 이 순간이 결과를 받을 때다 */
-    if (UI.tab === 'ib') resumeVerify();
+    /* 검증을 걸어 두고 폰에서 앱을 다녀왔다면, 돌아온 이 순간이 결과를 받을 때다.
+       어느 탭에 있든 받는다 — 새 탭으로 열렸으면 종합 탭에서 시작한다. */
+    resumeVerify(true);
   });
   /* 모바일에서 소프트 키보드가 뜨면 window 가 innerHeight 만 줄어든 채로
      resize 이벤트를 낸다. 그때마다 여기서 그대로 다시 그리면 방금 포커스한
