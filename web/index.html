@@ -369,10 +369,11 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         <button data-v="mm.S" aria-pressed="false">무매 SOXL</button>
         <button data-v="vr.T" aria-pressed="false">VR TQQQ</button>
       </div>
+      <!-- 셋 다 같은 폭 한 줄. 글자를 줄여 두 줄짜리 버튼을 없앴다 -->
       <div style="display:flex;gap:7px;margin-top:10px">
-        <button class="ghost" id="ibOverlay" style="flex:1;padding:9px 4px;font-size:12.5px">폰 화면 위에<br>주문표 띄우기</button>
-        <button class="ghost" id="vfyIB" style="flex:.5;padding:9px 4px;font-size:12px">무매매수표<br>검증</button>
-        <button class="ghost" id="vfyVR" style="flex:.5;padding:9px 4px;font-size:12px">VR매수표<br>검증</button>
+        <button class="ghost" id="ibOverlay" style="flex:1 1 0;min-width:0;padding:10px 2px;font-size:12.5px">주문표 띄우기</button>
+        <button class="ghost" id="vfyIB" style="flex:1 1 0;min-width:0;padding:10px 2px;font-size:12.5px">무매 검증</button>
+        <button class="ghost" id="vfyVR" style="flex:1 1 0;min-width:0;padding:10px 2px;font-size:12.5px">VR 검증</button>
       </div>
       <div id="vfyOut"></div>
       <p class="note" id="ibOverlayNote" style="margin:6px 3px 0">
@@ -598,7 +599,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-09 14:58';
+const BUILD = '2026-09-10 09:57';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1035,7 +1036,7 @@ function drawChart(svg, tipEl, series, opt = {}) {
 }
 
 /* ===================== 종합 탭 ===================== */
-let UI = { scope: 'asset', scale: 'd', span: 90, tab: 'sum', plan: 'asset', ana: 'asset', ib: 'mm.T' };
+let UI = { scope: 'asset', scale: 'd', span: 90, tab: 'sum', plan: 'asset', ana: 'asset', ib: 'mm.T', ibOpen: {} };
 /* 종합 탭에서 펼쳐 둔 중분류. 처음에는 다 접혀 있고 합계만 보인다 */
 let OPEN_G = {};
 const SPANS = { d: [[60, '60일'], [90, '90일'], [180, '180일']], m: [[12, '1년'], [36, '3년'], [60, '5년']], y: [[10, '10년'], [20, '20년'], [30, '30년']] };
@@ -2174,6 +2175,17 @@ function ibPlanPayload() {
    20% 로 자르면 매도표가 통째로 날아간다. 30% 면 살아남는다. */
 const NEAR_PCT = { 'mm.T': 0.20, 'mm.S': 0.30, 'vr.T': 0.30 };
 
+/* 판정 허용오차. 값마다 '왜 그만큼인가' 가 다르다.
+
+   px  : 주문가. 양쪽이 각자 센트로 반올림하므로 같은 값이라도 경계를 다르게 넘으면
+         1센트가 벌어진다. 2센트까지 봐준다 — 한 칸 여유다.
+         **사용자 질문(2026-09-09) 에 대한 답**: "0.01달러 이하 차이는 정상으로" 는
+         이미 그렇게 되어 있다. 1센트는 지금도 통과한다. 그러니 여러 줄이 한꺼번에
+         틀렸다면 그것은 반올림이 아니다 — 아래 vrCause() 가 무엇인지 짚어 준다.
+   avg : 평단. 앱은 소수 넷째 자리까지 보여 준다.
+   qty : 수량은 양쪽 다 정수다. 반올림이 만들 수 있는 차이가 0 이라 허용오차가 없다. */
+const PX_TOL = 0.02, AVG_TOL = 0.01, COST_TOL = 1;
+
 function near(rows, sl) {
   const close = num(latest().px[sl.px]);
   if (!(close > 0)) return rows;
@@ -2219,6 +2231,18 @@ const signRow = (grp, k, lb, u, stp, neg, v) =>
   + `</div>`;
 const ibU = (v, d = 2) => '$' + fmt(num(v), d);
 const ibSgn = (v, d = 0) => (num(v) >= 0 ? '+' : '−') + '$' + fmt(Math.abs(num(v)), d);
+
+/* 무매/VR 탭의 접는 구획. 입력 탭의 details.secd 와 같은 모양이다.
+
+   이 탭은 innerHTML 로 통째로 다시 그린다(renderIB). 그래서 사용자가 펴 둔 것이
+   다시 그릴 때마다 닫힌다 — 30초 배출이나 시세 갱신이 renderAll 을 부르면 그렇다.
+   펴 둔 구획을 UI 에 기억해 두고 그대로 되살린다. localStorage 까지는 안 간다
+   (이 앱의 다른 접기와 같은 수명이다). */
+function secD(key, title, inner, sum) {
+  const op = UI.ibOpen && UI.ibOpen[key] ? ' open' : '';
+  return `<details class="secd" data-sec="${key}"${op}>
+    <summary>${title}${sum ? `<span class="sm">${sum}</span>` : ''}</summary>${inner}</details>`;
+}
 
 function ibLegRows(title, legs) {
   const rs = legs.filter(l => l && num(l.qty) > 0);
@@ -2296,20 +2320,27 @@ function renderIB() {
       out += `<div class="warn"><span>◕</span><div><b>사이클이 끝났습니다.</b> 전량 매도됐습니다.
         내일부터 새 사이클 1일차로 자동 전환되어 최초 매수 주문이 나옵니다.</div></div>`;
     } else {
+      /* 대폭락 줄은 급락한 날에만 체결되는 보험이다. 오늘 걸 주문은 leg 와 매도 두 줄뿐인데
+         대폭락이 여러 줄이면 그것이 화면을 다 먹는다. 따로 접어 둔다. */
+      const tiers = (o.buy && o.buy.tiers) || [];
+      const legRows = o.buy && o.buy.no
+        ? `<tr><th>매수</th><th>수량</th></tr>
+           <tr><td colspan="2" style="text-align:left;color:var(--up)">${esc(o.buy.no)}
+             <span class="u">${esc(o.buy.why)}</span></td></tr>`
+        : ibLegRows('매수', (o.buy && o.buy.legs) || []);
       out += `<h2 class="sec">주문</h2><div class="card pad"><div class="scroll"><table class="tbl">`
-        + (o.buy && o.buy.no
-          ? `<tr><th>매수</th><th>수량</th></tr>
-             <tr><td colspan="2" style="text-align:left;color:var(--up)">${esc(o.buy.no)}
-               <span class="u">${esc(o.buy.why)}</span></td></tr>`
-            + (o.buy.tiers || []).map(l => `<tr><td>${l.typ} <b class="mn">${ibU(l.px)}</b>
-               <span class="u">${esc(l.tag)}</span></td><td>${fmt(l.qty, 0)}주</td></tr>`).join('')
-          : ibLegRows('매수', [...(o.buy.legs || []), ...(o.buy.tiers || [])]))
+        + legRows
         + `</table></div><div class="scroll" style="margin-top:12px"><table class="tbl">`
         + ibLegRows('매도', [o.sell1, o.sell2])
-        + `</table></div>
-        <p class="note" style="margin-top:9px">LOC 는 종가 기준 체결입니다. 장 마감 전에 걸어 두세요.
-        매도 두 줄은 <b>동시에</b> 겁니다 — 1/4 은 별%로, 나머지 3/4 은 목표수익률 지정가로.
-        ${o.buy && o.buy.tiers && o.buy.tiers.length ? `아래쪽 <b>대폭락</b> 줄은 급락한 날에만 체결되는 보험입니다.` : ''}</p></div>`;
+        + `</table></div>`
+        + (tiers.length ? secD('tier', '대폭락 매수', `<div class="card pad"><div class="scroll"><table class="tbl">`
+          + `<tr><th>대폭락</th><th>수량</th></tr>`
+          + tiers.map(l => `<tr><td>${l.typ} <b class="mn">${ibU(l.px)}</b>
+              <span class="u">${esc(l.tag)}</span></td><td>${fmt(l.qty, 0)}주</td></tr>`).join('')
+          + `</table></div><p class="note" style="margin-top:9px">급락한 날에만 체결되는 보험입니다.
+             오늘 걸 주문은 위 매수·매도 줄입니다.</p></div>`, `${fmt(tiers.length, 0)}줄`) : '')
+        + `<p class="note" style="margin-top:9px">LOC 는 종가 기준 체결입니다. 장 마감 전에 걸어 두세요.
+        매도 두 줄은 <b>동시에</b> 겁니다 — 1/4 은 별%로, 나머지 3/4 은 목표수익률 지정가로.</p></div>`;
     }
 
     const val = st.q * close, acct = val + st.balance;
@@ -2323,6 +2354,8 @@ function renderIB() {
       <tr><td>매입금액 <span class="u">평단 × 수량</span></td><td>${ibU(st.q * st.avg, 2)}</td></tr>
       <tr><td>사용한 시드 <span class="u">매입금액 − 누적실현</span></td><td>${ibU(used, 2)}</td></tr>
       <tr><td>1회 투자금</td><td>${ibU(o.amt, 2)}</td></tr>
+      <tr><td>분할수</td><td>${fmt(n, 0)}회</td></tr>
+      <tr><td>목표수익률</td><td>${fmt(num(cfg.ty), 1)}%</td></tr>
       <tr><td>Star 값 <span class="u">별%</span></td><td>${fmt(st.P, 2)}%</td></tr>
       <tr><td>잔금 <span class="u">Pool</span></td><td>${ibU(st.balance, 0)}</td></tr>
       <tr><td>= 계좌 평가액</td><td>${ibU(acct, 0)}</td></tr>
@@ -2355,7 +2388,7 @@ function renderIB() {
 
   const lg = (state.ibLog || []).filter(l => l.k === sl.k).slice(-8).reverse();
   if (lg.length) {
-    out += `<h2 class="sec">계획 대조</h2><div class="card rows">` + lg.map(l => {
+    out += secD('plan', '계획 대조', `<div class="card rows">` + lg.map(l => {
       const w = new Date(l.t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
       return `<div class="row"><div style="min-width:0"><div class="nm">
         <span class="tag ${l.side === 'B' ? 'b' : 's'}" style="margin-right:6px">${l.side === 'B' ? '매수' : '매도'}</span>
@@ -2364,10 +2397,10 @@ function renderIB() {
         <div class="note" style="margin-top:3px">${esc(l.why)}</div></div>
         <div class="vals"><div class="v num">${fmt(l.qty, 0)}주</div>
         <div class="d num" style="color:var(--muted)">$${fmt(l.price, 2)}</div></div></div>`;
-    }).join('') + `</div>`;
+    }).join('') + `</div>`, `${fmt(lg.length, 0)}건`);
   }
 
-  out += `<h2 class="sec">설정</h2><div class="card">
+  out += secD('cfg', '설정', `<div class="card">
     <div class="erow"><label>무한매수법 적용</label>
       <div class="seg mini" id="ibOn" style="width:118px;flex:none">
         <button data-v="1" aria-pressed="${cfg.on ? 'true' : 'false'}">켬</button>
@@ -2389,10 +2422,21 @@ function renderIB() {
     없습니다 — 비워 두면 근사하고, 넣으면 앱과 정확히 같아집니다.
     <br><br>시작 평단가에는 <b>증권사 앱의 평단</b>을 넣으세요. 이 앱의 매입금액은 매도할 때
     체결금액만큼 빼는 방식이라 수량으로 나눠도 증권사 평단과 다릅니다. 시작점만 맞으면 그 뒤는 매매 내역으로 이동평균을 직접 굴립니다.
-    ${cfg.d0 && dayKeys().includes(cfg.d0) ? `시작일 이후 <b>${dayKeys().filter(d => d >= cfg.d0).length}일</b>을 다시 계산했습니다.` : ''}</p>`;
+    ${cfg.d0 && dayKeys().includes(cfg.d0) ? `시작일 이후 <b>${dayKeys().filter(d => d >= cfg.d0).length}일</b>을 다시 계산했습니다.` : ''}</p>`,
+    `분할 ${fmt(num(cfg.n), 0)} · 목표 ${fmt(num(cfg.ty), 1)}%`);
 
   body.innerHTML = out + renderGuide(sl);
 }
+
+/* 접어 둔 구획을 기억한다. 이 탭은 다시 그릴 때 innerHTML 을 통째로 갈아치우므로,
+   기억하지 않으면 시세가 갱신될 때마다 사용자가 펴 둔 것이 저절로 닫힌다.
+   toggle 은 버블링하지 않아 capture 로 받는다. */
+document.getElementById('p-ib')?.addEventListener('toggle', e => {
+  const d = e.target.closest ? e.target.closest('details[data-sec]') : null;
+  if (!d) return;
+  UI.ibOpen = UI.ibOpen || {};
+  UI.ibOpen[d.dataset.sec] = d.open;
+}, true);
 
 /* 무매 탭 이벤트 — 다시 그릴 때마다 내용이 통째로 갈리므로 위임으로 건다 */
 document.getElementById('p-ib')?.addEventListener('change', e => {
@@ -2553,14 +2597,17 @@ const gNum = v => {
    VR 앱 예약 주문표는 또 다르다 — 유형 없이 수량·가격·Pool 세 칸이다:
         125주 / $67.73 / $10,857   (수량은 체결 뒤 보유수량)                */
 function parseGuide(text) {
-  const out = { tick: null, avg: 0, qty: 0, cost: 0, seed: 0, amt: 0, unit: 0, rows: [], kind: null };
+  const out = { tick: null, avg: 0, qty: 0, cost: 0, seed: 0, amt: 0, unit: 0, V: 0, band: 0, dup: 0, rows: [], kind: null };
   const lines = String(text || '').replace(/\u00a0/g, ' ').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
 
   const TYPE = /^(LOC|MOC|LOO|지정가|시장가)$/;
   const LBL = {
     '평단가': 'avg', '보유 수량': 'qty', '보유수량': 'qty',
     '매입 금액': 'cost', '매입금액': 'cost',
-    '전체 시드': 'seed', '시드': 'seed', '1회 투자금': 'amt', '표기 단위': 'unit'
+    '전체 시드': 'seed', '시드': 'seed', '1회 투자금': 'amt', '표기 단위': 'unit',
+    /* VR 화면의 기준선. **여기가 어긋나면 주문줄 40개가 통째로 어긋난다** —
+       VR 가격은 밴드경계 ÷ 보유수량 하나뿐이라 V 가 밀리면 전 줄이 같이 밀린다. */
+    'V 값': 'V', 'V값': 'V', '기준선 V': 'V', '밴드': 'band'
   };
   let side = null, typ = null, tag = '', rowPx = 0, pend = null;
   /* VR 표는 유형 줄이 없다. 수량 → 가격 → Pool 순으로 와서 다음 수량 줄에 마감한다. */
@@ -2596,7 +2643,7 @@ function parseGuide(text) {
       out.tick = m[1]; out.avg = gNum(m[2]); out.qty = gNum(m[3]); out.kind = 'ib'; pend = null; return;
     }
     /* 한 줄짜리 라벨+값 */
-    if ((m = l.match(/^(평단가?|보유\s*수량|매입\s*금액|전체\s*시드|1회\s*투자금|표기\s*단위)\s*[:：]?\s*\$?\s*([\d,.]+)/))) {
+    if ((m = l.match(/^(평단가?|보유\s*수량|매입\s*금액|전체\s*시드|1회\s*투자금|표기\s*단위|V\s*값|기준선\s*V|밴드)\s*[:：]?\s*\$?\s*([\d,.]+)/))) {
       const k = LBL[m[1].replace(/\s+/g, ' ')];
       if (k) { out[k] = gNum(m[2]); if (k === 'unit') out.kind = 'vr'; pend = null; return; }
     }
@@ -2639,6 +2686,24 @@ function parseGuide(text) {
   });
   flushVR();
 
+  /* 폰이 스크롤하며 이어 붙인 글자에는 **같은 줄이 두 번** 들어올 수 있다.
+     한 표 안에서 매매구분·유형·가격·수량·보유수량이 전부 같은 주문줄은 나오지 않는다
+     (가격이 줄마다 다르다). 그러니 그런 줄은 하나로 본다.
+
+     screenLines 의 '줄 단위 중복 제거 금지' 와 충돌하지 않는다 — 저기는 라벨과 값이
+     어긋나는 문제였고, 여기는 **이미 완성된 행**을 접는 것이다.
+     2026-09-09: 무매 SOXL 주문표 9줄이 18줄로 읽혀 "앱에 4줄 더 · 범위 밖 5줄 제외"
+     가 떴다. 폰 쪽도 함께 고쳤지만(readAll), 여기서도 한 번 더 막는다. */
+  {
+    const seenRow = new Set(), n0 = out.rows.length;
+    out.rows = out.rows.filter(r => {
+      const k = [r.side, r.typ, num(r.px).toFixed(2), num(r.qty), num(r.hold)].join('|');
+      if (seenRow.has(k)) return false;
+      seenRow.add(k); return true;
+    });
+    out.dup = n0 - out.rows.length;
+  }
+
   /* VR 은 표에 '한 줄당 주문 수량' 이 없다. 보유수량이 표기 단위씩 움직이므로 그걸로 낸다. */
   if (out.kind === 'vr') {
     const hs = out.rows.map(r => r.hold).filter(v => v > 0);
@@ -2656,6 +2721,40 @@ function winOf(sl) {
   const close = num(latest().px[sl.px]);
   const w = NEAR_PCT[sl.k] != null ? NEAR_PCT[sl.k] : 0.2;
   return px => !(close > 0) || Math.abs(num(px) / close - 1) <= w + 0.0001;
+}
+
+/* 전 줄이 한꺼번에 틀렸을 때 **공통 원인 하나**를 짚는다.
+
+   ── 40건은 40개의 오류가 아니다 (2026-09-09) ──────────────────────
+   사용자가 "VR 검증에서 40건 불일치 사유는?" 하고 물었다. 40 은 우리 사다리의
+   전부다(vrLadder 의 MAX 20 × 매도·매수). 줄마다 다른 이유로 틀릴 수 있는 수가
+   아니다 — **입력 하나가 다르면 나오는 모양**이다.
+
+   VR 가격식은 하나뿐이다: 매수 = V(1−밴드) ÷ (보유−단위·k), 매도 = V(1+밴드) ÷ (보유+단위·k).
+   짝은 '체결 뒤 보유수량' 으로 짓고 그건 V 와 무관하다. 그래서 V 가 밀리면
+   **짝은 전부 맞는데 가격만 전 줄이 같이 밀린다.** 줄마다 ΔV 를 되돌려 보면
+   그 값이 한 곳으로 모이는지(=V 하나) 매수·매도가 갈리는지(=밴드 폭)가 드러난다.
+
+   V 는 $6 만 어긋나도 40줄 전부가 2센트를 넘는다. 그러니 "반올림 때문 아니냐" 는
+   물음의 답은 아니다 — 1센트는 지금도 통과한다(PX_TOL). */
+function vrCause(sl, pairs) {
+  const run = vrRun(sl.k); if (!run) return '';
+  const b = num(vrCfg(sl.k).band) / 100, u = Math.max(1, num(run.orders.unit));
+  const es = pairs.filter(p => p.mine && p.app && !p.ok).map(p => p.mine.side === 'B'
+    ? p.dp * (num(p.mine.hold) - u) / (1 - b)
+    : p.dp * (num(p.mine.hold) + u) / (1 + b));
+  if (es.length < 3) return '';
+  const avgV = es.reduce((a, v) => a + v, 0) / es.length;
+  const same = es.every(v => Math.abs(v - avgV) <= Math.abs(avgV) * 0.05 + 1);
+  const d0 = vrCfg(sl.k).d0 || '시작일';
+  return same
+    ? `<b>원인은 하나입니다 — 기준선 V 가 ${ibSgn(avgV, 0)} 어긋나 있습니다.</b>
+       설정의 <b>기준선 V</b> 는 <b>${esc(d0)} 의 V</b> 이고 오늘 값이 아닙니다.
+       사이클 경계마다 <b>V + Pool ÷ ${fmt(num(vrCfg(sl.k).G), 0)}</b> 로 오르므로
+       지금은 <b>${ibU(num(run.V), 0)}</b> 입니다 — 앱 화면의 V 와 맞춰야 하는 것이 이 값입니다.
+       앱의 V 를 설정칸에 그대로 옮겨 적으면 그만큼 더 높아집니다.`
+    : `<b>매수와 매도가 다른 방향으로 어긋납니다 — 밴드 폭이 다를 수 있습니다.</b>
+       설정의 밴드는 ±${fmt(num(vrCfg(sl.k).band), 1)}% 입니다.`;
 }
 
 /* 이 앱이 오늘 낼 주문줄 */
@@ -2708,7 +2807,7 @@ function diffOrders(mine, theirs, byHold, inWin) {
       if (!b) return;
       usedL.add(a.i); usedR.add(b.i);
       const dp = +(a.px - b.px).toFixed(2), dq = a.qty - b.qty;
-      pairs.push({ mine: a, app: b, ok: Math.abs(dp) <= 0.02 && dq === 0, dp, dq });
+      pairs.push({ mine: a, app: b, ok: Math.abs(dp) <= PX_TOL && dq === 0, dp, dq });
     });
   } else {
     const cand = [];
@@ -2721,7 +2820,7 @@ function diffOrders(mine, theirs, byHold, inWin) {
       if (usedL.has(a.i) || usedR.has(b.i)) return;
       usedL.add(a.i); usedR.add(b.i);
       const dp = +(a.px - b.px).toFixed(2), dq = a.qty - b.qty;
-      pairs.push({ mine: a, app: b, ok: Math.abs(dp) <= 0.02 && dq === 0, dp, dq });
+      pairs.push({ mine: a, app: b, ok: Math.abs(dp) <= PX_TOL && dq === 0, dp, dq });
     });
   }
   /* 앱 표가 우리보다 짧게 잡혔을 수 있다 — 스크롤 상한에 걸렸거나 화면이 짧으면
@@ -2753,6 +2852,10 @@ function diffOrders(mine, theirs, byHold, inWin) {
   pairs.extra = extra.length;
   pairs.far = far;                       // 앱에만 있고 범위도 벗어난 줄 (판정 제외)
   pairs.cmp = pairs.filter(p => p.mine && !p.outside).length;   // 실제로 판정한 줄 수
+  pairs.them = right.length;             // 앱 화면에서 읽은 주문줄 수 (전부)
+  /* 1센트 차이로 통과한 줄. 봐주되 말은 한다 — 여러 줄이 **같은 방향**으로만 1센트면
+     그건 반올림이 아니라 식이 한 칸 다른 것이다. */
+  pairs.near = pairs.filter(p => p.app && p.ok && Math.abs(p.dp) > 0.001).length;
   return pairs;
 }
 
@@ -2760,7 +2863,9 @@ let guideText = '';
 function renderGuide(sl) {
   const g = guideText.trim() ? parseGuide(guideText) : null;
   const isVR = !!sl.vr;
-  let out = `<h2 class="sec">앱과 대조</h2><div class="card pad">
+  /* 안쪽을 다 만든 뒤에 접는 구획으로 감싼다. out 이 여러 번 += 되므로
+     여는 자리에서 secD() 를 호출할 수는 없다. */
+  let out = `<div class="card pad">
     <p class="note" style="margin:0 0 9px">${isVR ? 'VR 앱 <b>예약 주문표</b>' : '무한매수법 앱 <b>간편 매매 가이드</b>'}
       화면 글자를 그대로 붙여넣으면 이 앱의 주문표와 줄 단위로 맞춰 봅니다.
       수집기 앱 오버레이의 <b>⋮ › 앞 화면 글자 복사</b> 로 통째로 복사할 수 있습니다.</p>
@@ -2782,8 +2887,9 @@ function renderGuide(sl) {
     out += `<div class="scroll" style="margin-top:12px"><table class="tbl">
       <tr><th>기준값</th><th>이 앱</th><th>${isVR ? 'VR 앱' : '무매 앱'}</th><th>차이</th></tr>`
       + (g.qty > 0 ? cmpN('보유수량', q, g.qty, 0, 0) : '')
-      + (g.avg > 0 ? cmpN('평단가', myAvg, g.avg, 0.01, 4) : '')
-      + (g.cost > 0 ? cmpN('매입금액', q * myAvg, g.cost, 1, 2) : '')
+      + (g.avg > 0 ? cmpN('평단가', myAvg, g.avg, AVG_TOL, 4) : '')
+      + (g.cost > 0 ? cmpN('매입금액', q * myAvg, g.cost, COST_TOL, 2) : '')
+      + (isVR && g.V > 0 ? cmpN('기준선 V <span class="u">오늘</span>', num((vrRun(sl.k) || {}).V), g.V, 1, 2) : '')
       + `</table></div>`;
 
     const mine = myOrders(sl), pairs = diffOrders(mine, g.rows, !!sl.vr, winOf(sl));
@@ -2808,9 +2914,14 @@ function renderGuide(sl) {
          거기를 맞추면 주문줄은 따라옵니다. 기준값이 같은데도 다르면 시드·분할수·목표수익률을 보세요.`}
       ${pairs.extra ? `<br><b>앱에 ${fmt(pairs.extra, 0)}줄이 더 있습니다</b> — 틀린 것이 아니라 보여 주는 범위가 다른 것입니다.
         이 앱은 현재가 ±${fmt((NEAR_PCT[sl.k] != null ? NEAR_PCT[sl.k] : 0.2) * 100, 0)}% 안만 냅니다.` : ''}
-      <br>가격은 ±$0.02 까지 같다고 봅니다(양쪽이 각자 반올림합니다). 수량은 정확히 같아야 합니다.</p>`;
+      <br>가격은 ±$${PX_TOL.toFixed(2)} 까지 같다고 봅니다 — 양쪽이 각자 센트로 반올림하므로
+      같은 값이라도 경계를 다르게 넘으면 1센트가 벌어집니다. 수량과 보유수량은 정수라 정확히 같아야 합니다.
+      ${pairs.near ? `<br>1센트 안팎으로 다른 줄 <b>${fmt(pairs.near, 0)}줄</b> 은 반올림으로 보고 넘겼습니다.` : ''}
+      ${g.dup ? `<br>폰이 스크롤하며 <b>같은 줄 ${fmt(g.dup, 0)}개</b>를 두 번 읽어 와 하나로 접었습니다.` : ''}</p>
+      ${isVR && pairs.bad >= 3 && pairs.bad === pairs.cmp
+        ? `<p class="note" style="margin:8px 3px 0;color:var(--ink2)">${vrCause(sl, pairs)}</p>` : ''}`;
   }
-  return out + `</div>`;
+  return secD('guide', '앱과 대조', out + '</div>');
 }
 
 /* ===================== 앱 검증 (폰에서 자동으로 읽어 온다) =====================
@@ -2848,6 +2959,9 @@ const vfySet = v => { try { v ? localStorage.setItem(VFY_KEY, JSON.stringify(v))
 
    원래 탭으로 잘 돌아온 경우에는 localStorage 에 걸어 둔 것으로 이어받는다
    (그쪽이 더 빠르고, 언제 시작했는지도 정확하다). */
+/* force 여도 **탭을 옮기지 않는다.** 그날의 결과를 그대로 두게 하면서 창을 하루로
+   넓혔더니, 검증한 날에는 웹을 열 때마다 무매/VR 탭에서 시작했다. 첫 화면은 종합이다.
+   결과는 무매/VR 탭에 들어가면 그때 채워진다(showTab 에서 latestVerify(true)). */
 function resumeVerify(force) {
   const h = (location.hash || '').match(/vfy=(ib|vr)/);
   /* 해시가 붙어 왔으면 **돌던 것을 끊고** 새로 받는다. 브라우저가 탭을 재사용하면
@@ -2864,8 +2978,8 @@ function resumeVerify(force) {
     return;
   }
   const p = vfyPending();
-  if (!p) { if (force) latestVerify(); return; }
-  if (Date.now() - num(p.t0) > 5 * 60e3) { vfySet(null); if (force) latestVerify(); return; }
+  if (!p) { if (force) latestVerify(true); return; }
+  if (Date.now() - num(p.t0) > 5 * 60e3) { vfySet(null); if (force) latestVerify(true); return; }
   if (!force && UI.tab !== 'ib') return;
   goTab('ib');
   pollVerify(p.what, num(p.t0), true);
@@ -2981,28 +3095,39 @@ function verifyReport(what, txt, at) {
     const dq = g.qty > 0 ? q - g.qty : 0, da = g.avg > 0 ? avg - g.avg : 0;
     /* 우리가 낸 줄이 앱과 다를 때만 센다. 앱에 더 있는 줄은 범위 차이다 —
        예전에 이걸 세어 "200건 이상 불일치" 가 떴다. */
-    const nbad = pairs.bad + (dq !== 0 ? 1 : 0) + (Math.abs(da) > 0.01 ? 1 : 0);
+    const nbad = pairs.bad + (dq !== 0 ? 1 : 0) + (Math.abs(da) > AVG_TOL ? 1 : 0);
     bad += nbad; seen++;
     const ok = nbad === 0;
-    const why = dq !== 0 ? `수량 ${dq > 0 ? '+' : '−'}${fmt(Math.abs(dq), 0)}`
-      : Math.abs(da) > 0.01 ? `평단 ${da > 0 ? '+' : '−'}$${fmt(Math.abs(da), 4)}`
-      : pairs.extra ? `앱에 ${fmt(pairs.extra, 0)}줄 더` : '';
+    /* 전 줄이 같은 이유로 틀렸을 때는 줄 수를 말하지 말고 어디를 보라고 말한다.
+       VR 40건이 정확히 그 모양이었다 — 40개의 오류가 아니라 기준선 하나다. */
+    const allBad = pairs.cmp >= 3 && pairs.bad === pairs.cmp;
+    const why = allBad ? (sl.vr ? '전 줄이 같이 밀렸습니다 — 기준선 V' : '전 줄이 같이 밀렸습니다 — 평단·시드')
+      : dq !== 0 ? `수량 ${dq > 0 ? '+' : '−'}${fmt(Math.abs(dq), 0)}`
+        : Math.abs(da) > AVG_TOL ? `평단 ${da > 0 ? '+' : '−'}$${fmt(Math.abs(da), 4)}`
+          : pairs.extra ? `앱에 ${fmt(pairs.extra, 0)}줄 더` : '';
+    /* 한 줄로 짧게. 예전에는 '9줄 대조 · 범위 밖 5줄 제외 · 앱 45주 $124.5600' 에
+       오른쪽 '앱에 4줄 더' 까지 붙어 두 줄이 됐다. 읽을 것은 넷뿐이다 —
+       우리/앱 줄 수, 수량, 평단, 판정. */
     html += `<div class="row"><div style="min-width:0">
-      <div class="nm">${esc(sl.n)}<span class="sub">${fmt(pairs.cmp, 0)}줄 대조${pairs.far ? ` · 범위 밖 ${fmt(pairs.far, 0)}줄 제외` : ``}${g.qty > 0 ? ` · 앱 ${fmt(g.qty, 0)}주` : ``}${g.avg > 0 ? ` $${fmt(g.avg, 4)}` : ``}</span></div></div>
+      <div class="nm">${esc(sl.n)}<span class="sub">${fmt(pairs.cmp, 0)}/${fmt(pairs.them, 0)}줄${g.dup ? ` <span style="color:var(--muted)">(겹친 ${fmt(g.dup, 0)}줄 접음)</span>` : ``}${g.qty > 0 ? ` · ${fmt(g.qty, 0)}주` : ``}${g.avg > 0 ? ` · $${fmt(g.avg, 2)}` : ``}</span></div></div>
       <div class="vals"><div class="v num ${ok ? '' : 'up'}" style="${ok ? 'color:var(--c2)' : ''}">${ok ? '양호' : nbad + '건 불일치'}</div>
-      <div class="d num" style="color:var(--muted)">${why}</div></div></div>`;
+      ${ok ? '' : `<div class="d num" style="color:var(--muted)">${why}</div>`}</div></div>`;
   });
   const head = !seen ? '읽은 것이 없습니다'
     : bad === 0 ? `<b style="color:var(--c2)">전부 양호</b> — 앱과 같습니다`
       : `<b style="color:var(--up)">${bad}건이 다릅니다</b>`;
   return `<div class="card rows" style="margin-top:10px">
       <div class="grp-h" style="padding-left:15px">${what === 'vr' ? 'VR' : '무매'} 검증 · ${head}${at ? ` <span class="u">${new Date(at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })} 읽음</span>` : ''}</div>${html}</div>
-    <p class="note" style="margin:8px 3px 0">판정 기준은 <b>매수 leg · 매도 2줄 · 범위 안 대폭락</b> 입니다.
-    앱은 ±20%(SOXL 30%) 를 넘는 줄까지 보여 주는데, 그건 오늘 걸 주문이 아니라 판정에서 뺍니다.
-    <br>보유수량·평단가가 먼저 어긋나면 주문줄은 따라 어긋납니다.
-    자세한 줄별 차이는 아래 <b>앱과 대조</b> 에 붙여 보세요 —
-    <button class="ghost" id="vfyPaste" data-t="${esc(btoa(unescape(encodeURIComponent(txt))))}"
-      style="padding:3px 8px;font-size:11.5px">읽은 글자 넣기</button></p>`;
+    <details class="inl bare" style="margin-top:6px">
+      <summary style="padding:8px 3px 6px;font-size:11.5px;color:var(--muted)">판정 기준과 자세히 보기</summary>
+      <p class="note" style="margin:0 3px 6px"><b>왼쪽 숫자는 우리가 낸 줄 / 앱 화면에서 읽은 줄</b> 입니다.
+      판정은 <b>매수 leg · 매도 2줄 · 범위 안 대폭락</b> 으로 합니다 —
+      앱은 ±20%(SOXL·VR 30%) 밖의 줄까지 보여 주는데 그건 오늘 걸 주문이 아니라 판정에서 뺍니다.
+      <br>보유수량·평단가가 먼저 어긋나면 주문줄은 따라 어긋납니다.
+      자세한 줄별 차이는 아래 <b>앱과 대조</b> 에 붙여 보세요 —
+      <button class="ghost" id="vfyPaste" data-t="${esc(btoa(unescape(encodeURIComponent(txt))))}"
+        style="padding:3px 8px;font-size:11.5px">읽은 글자 넣기</button></p>
+    </details>`;
 }
 
 /* 무매 앱 포트폴리오 화면은 카드가 이어져 있다. 티커가 처음 나오는 자리에서 자른다. */
@@ -3015,8 +3140,14 @@ function splitByTicker(txt) {
     /* 전체 진행 상황 카드는 종목 카드가 아니다. 여기 들어가면 그 카드의
        '매입 금액 $33,899' 이 종목 매입금액으로 읽힌다 — 실제로 그랬다. */
     if (/^전체\s*진행/.test(t) || /^전체\s*시드$/.test(t)) { cur = null; return; }
-    if (/^TQQQ$/.test(t)) { cur = 'mm.T'; if (!out[cur]) { out[cur] = []; order.push(cur); } return; }
-    if (/^SOXL/.test(t)) { cur = 'mm.S'; if (!out[cur]) { out[cur] = []; order.push(cur); } return; }
+    /* 하단 탭·상단 제목은 카드가 아니다. **여기서 닫지 않으면 마지막 카드가 그 뒤
+       모든 줄을 삼킨다** — 스크롤 판이 겹쳐 들어오면 그대로 두 배가 된다.
+       TQQQ 는 SOXL 머리줄에서 끊기지만 SOXL 을 끊어 줄 것이 없었다. */
+    if (/^(포트폴리오|무한매수법|VR|설정|홈|내정보|마이페이지)$/.test(t.replace(/\s+/g, ''))) { cur = null; return; }
+    /* 둘 다 같은 기준으로 본다. 예전에는 TQQQ 만 정확 일치라, 앱이 머리줄을
+       'TQQQ $71.38 / 390주' 한 줄로 주면 TQQQ 카드를 아예 못 찾았다. */
+    if (/^TQQQ\b/.test(t)) { cur = 'mm.T'; if (!out[cur]) { out[cur] = []; order.push(cur); } return; }
+    if (/^SOXL\b/.test(t)) { cur = 'mm.S'; if (!out[cur]) { out[cur] = []; order.push(cur); } return; }
     if (cur) out[cur].push(l);
   });
   const r = {};
@@ -3231,7 +3362,10 @@ function vrLadder(cfg, V, cycPool, q, close, poolNow) {
 
 /* ── VR 화면 ─────────────────────────────────────────────────── */
 const VR_FIELDS = [
-  ['V', '기준선 V', 'USD', 1],
+  /* **오늘의 V 가 아니다.** hero 에는 오늘의 V 가 뜨고 여기에는 시작일의 V 가 들어가는데
+     이름이 같으면 앱 화면의 V 를 그대로 옮겨 적게 된다. 그러면 사이클 경계마다 다시
+     올라 우리 V 만 높아지고, 주문표 40줄이 통째로 어긋난다(2026-09-09). */
+  ['V', '시작일의 기준선 V', 'USD · 오늘 값이 아닙니다', 1],
   ['pool', 'Pool', 'USD', 1],
   ['G', '그라디언트 G', '분모', 1],
   ['band', '밴드', '±%', 0.5],
@@ -3303,15 +3437,29 @@ function vrPanel(sl) {
       out += `<p class="note">낼 주문이 없습니다. 보유수량이 0 이거나 기준선 V 가 비어 있는지
         확인해 주세요. 매수표가 비었다면 Pool 사용 한도(${ibU(o.cap, 0)})가 0 인 것입니다.</p>`;
     } else {
-      const sell = o.rows.filter(r => r.side === 'S'), buy = o.rows.filter(r => r.side === 'B');
+      /* 사다리가 ±30% 까지 나오는데 오늘 실제로 걸 자리는 현재가 언저리다.
+         **±20% 안**만 펴 두고 그 밖은 접는다 — 급락·급등용 줄이 화면을 다 먹지 않게. */
+      const VR_NEAR = 0.20;
+      const near = r => close > 0 && Math.abs(num(r.px) / close - 1) <= VR_NEAR + 1e-9;
+      const rows = (rs) => rs.map(r =>
+        `<tr><td>${fmt(r.qty, 0)}주 <span class="u">${fmt((r.px / close - 1) * 100, 0)}%</span></td>
+          <td class="mn">${ibU(r.px)}</td>
+          <td>${fmt(r.hold, 0)}주</td>
+          <td style="color:var(--muted)">${ibU(r.pool, 0)}</td></tr>`).join('');
       const tbl = (title, rs) => rs.length ? `<div class="scroll" style="margin-top:10px"><table class="tbl">
-        <tr><th>${title}</th><th>가격</th><th>보유</th><th>Pool</th></tr>` + rs.map(r =>
-          `<tr><td>${fmt(r.qty, 0)}주 <span class="u">${fmt((r.px / close - 1) * 100, 0)}%</span></td>
-            <td class="mn">${ibU(r.px)}</td>
-            <td>${fmt(r.hold, 0)}주</td>
-            <td style="color:var(--muted)">${ibU(r.pool, 0)}</td></tr>`).join('') + `</table></div>` : '';
-      out += tbl('매도', sell) + tbl('매수', buy);
-      out += `<p class="note" style="margin-top:9px">한 줄이 <b>${fmt(o.unit, 0)}주</b>씩입니다
+        <tr><th>${title}</th><th>가격</th><th>보유</th><th>Pool</th></tr>` + rows(rs) + `</table></div>` : '';
+      const sell = o.rows.filter(r => r.side === 'S'), buy = o.rows.filter(r => r.side === 'B');
+      out += tbl('매도', sell.filter(near)) + tbl('매수', buy.filter(near));
+      const far = [...sell.filter(r => !near(r)), ...buy.filter(r => !near(r))];
+      if (far.length) {
+        out += secD('vrfar', `현재가 ±${fmt(VR_NEAR * 100, 0)}% 밖`, `<div class="card pad">`
+          + tbl('매도', sell.filter(r => !near(r))) + tbl('매수', buy.filter(r => !near(r)))
+          + `<p class="note" style="margin-top:9px">크게 움직였을 때를 위한 줄입니다.
+             오늘 걸 것은 위 표입니다.</p></div>`, `${fmt(far.length, 0)}줄`);
+      }
+      out += `<details class="inl bare" style="margin-top:4px">
+        <summary style="padding:8px 3px 6px;font-size:11.5px;color:var(--muted)">이 표를 읽는 법</summary>
+        <p class="note" style="margin:0 3px 6px">한 줄이 <b>${fmt(o.unit, 0)}주</b>씩입니다
         (설정의 <b>표기 단위</b>). 매수는 <b>밴드 하단 ${ibU(o.dn, 0)} ÷ 지금 보유수량</b>,
         매도는 <b>밴드 상단 ${ibU(o.up, 0)} ÷ 지금 보유수량</b> 자리입니다 —
         그 가격이 되면 평가금이 밴드에 닿습니다. 한 줄 체결되면 보유수량이 바뀌므로
@@ -3321,7 +3469,7 @@ function vrPanel(sl) {
         이번 사이클에 이미 쓴 <b>${ibU(o.spent0, 0)}</b> 를 뺀
         <b>${ibU(o.budget, 0)}</b> 입니다
         ${o.used > 0 ? `— 매수표가 다 체결되면 ${ibU(o.used, 0)} 를 씁니다` : ''}.
-        <b>Pool</b> 열은 그 줄까지 체결됐을 때 남는 현금입니다.</p>`;
+        <b>Pool</b> 열은 그 줄까지 체결됐을 때 남는 현금입니다.</p></details>`;
     }
     out += `</div>`;
 
@@ -3359,7 +3507,7 @@ function vrPanel(sl) {
       이 표를 원본 시트와 한 줄씩 맞춰 보실 수 있습니다.</p></div>`;
   }
 
-  out += `<h2 class="sec">설정</h2><div class="card">
+  out += secD('cfg', '설정', `<div class="card">
     <div class="erow"><label>VR 5.0 적용</label>
       <div class="seg mini" id="vrOn" style="width:118px;flex:none">
         <button data-v="1" aria-pressed="${cfg.on ? 'true' : 'false'}">켬</button>
@@ -3377,6 +3525,10 @@ function vrPanel(sl) {
         <input class="num" type="number" step="0.0001" id="vrAvg" value="${curQ > 0 ? +(num(x[sl.g][sl.s].c) / curQ).toFixed(4) : 0}"></div>
     <div class="erow"><label>시작일만 오늘로 맞추기 <span class="u">넣어 둔 V 는 그대로 둡니다</span></label>
         <button class="ghost" id="vrAnchor">맞추기</button></div></div>
+    <p class="note" style="margin:8px 3px 0"><b>기준선 V 는 시작일(${esc(cfg.d0 || '—')})의 값입니다.</b>
+    오늘의 V 는 사이클 경계마다 <b>V + Pool ÷ ${fmt(num(cfg.G), 0)}</b> 로 올라
+    지금 <b>${ibU(num((vrRun(sl.k) || {}).V), 0)}</b> 입니다 — 앱 화면의 V 와 맞춰야 하는 것은 이 값입니다.
+    여기에 앱의 오늘 V 를 그대로 넣으면 그만큼 더 높아져 주문표가 통째로 어긋납니다.</p>
     <p class="note" style="margin:8px 3px 0">보유수량·평단가는 <b>원장 오늘치</b>를 고칩니다.
     증권사 화면과 다르면 여기서 맞춰 주세요 — 체결 알림을 한 건이라도 놓치면 어긋납니다.
     평단가를 넣으면 매입금액이 <b>수량 × 평단가</b> 로 다시 잡힙니다.</p>
@@ -3386,7 +3538,8 @@ function vrPanel(sl) {
     권장됩니다. <b>밴드</b> 폭은 성과에 미치는 영향이 작습니다 — G 가 훨씬 중요합니다.
     <br><b>주의</b> — 이 계산은 공개 정리 자료로 옮긴 것입니다. 무한매수법처럼 원본과 대조하지
     못했습니다(카페 글은 로그인이 막혀 있고 구글 시트는 권한이 없습니다).
-    <b>원본 시트와 숫자가 다르면 시트가 맞습니다.</b> 시트 내용을 주시면 그대로 옮기고 대조하겠습니다.</p>`;
+    <b>원본 시트와 숫자가 다르면 시트가 맞습니다.</b> 시트 내용을 주시면 그대로 옮기고 대조하겠습니다.</p>`,
+    `G ${fmt(num(cfg.G), 0)} · 밴드 ±${fmt(num(cfg.band), 0)}% · ${fmt(num(cfg.unit), 0)}주`);
 
   return out;
 }
