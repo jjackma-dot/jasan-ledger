@@ -599,7 +599,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-10 09:57';
+const BUILD = '2026-09-10 10:31';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2737,9 +2737,21 @@ function winOf(sl) {
 
    V 는 $6 만 어긋나도 40줄 전부가 2센트를 넘는다. 그러니 "반올림 때문 아니냐" 는
    물음의 답은 아니다 — 1센트는 지금도 통과한다(PX_TOL). */
-function vrCause(sl, pairs) {
+function vrCause(sl, pairs, g) {
   const run = vrRun(sl.k); if (!run) return '';
   const b = num(vrCfg(sl.k).band) / 100, u = Math.max(1, num(run.orders.unit));
+
+  /* **표기 단위부터 본다.** 한 줄이 몇 주냐가 다르면 사다리의 칸 자체가 달라
+     가격도 수량도 전부 어긋난다 — 40줄이 한꺼번에 틀리는 가장 흔한 길이다.
+     2026-09-10 실측: 앱이 124·125·126·127주로 한 주씩 움직이고 있었다(단위 1),
+     우리는 2주였다. 수집기가 '표기 단위' 칸을 2 로 못 바꾼 것이다. */
+  const appU = g ? num(g.unit) : 0;
+  if (appU > 0 && appU !== u) {
+    return `<b>한 줄의 크기가 다릅니다 — 앱은 ${fmt(appU, 0)}주, 이 앱은 ${fmt(u, 0)}주입니다.</b>
+      사다리의 칸 자체가 달라 가격도 수량도 전부 어긋납니다.
+      VR 앱의 <b>표기 단위</b>를 ${fmt(u, 0)}주로 두고 다시 검증하거나,
+      설정의 <b>표기 단위</b>를 ${fmt(appU, 0)}주로 맞춰 주세요.`;
+  }
   const es = pairs.filter(p => p.mine && p.app && !p.ok).map(p => p.mine.side === 'B'
     ? p.dp * (num(p.mine.hold) - u) / (1 - b)
     : p.dp * (num(p.mine.hold) + u) / (1 + b));
@@ -2890,6 +2902,7 @@ function renderGuide(sl) {
       + (g.avg > 0 ? cmpN('평단가', myAvg, g.avg, AVG_TOL, 4) : '')
       + (g.cost > 0 ? cmpN('매입금액', q * myAvg, g.cost, COST_TOL, 2) : '')
       + (isVR && g.V > 0 ? cmpN('기준선 V <span class="u">오늘</span>', num((vrRun(sl.k) || {}).V), g.V, 1, 2) : '')
+      + (isVR && g.unit > 0 ? cmpN('표기 단위 <span class="u">한 줄당 주수</span>', num(vrCfg(sl.k).unit), g.unit, 0, 0) : '')
       + `</table></div>`;
 
     const mine = myOrders(sl), pairs = diffOrders(mine, g.rows, !!sl.vr, winOf(sl));
@@ -2919,7 +2932,7 @@ function renderGuide(sl) {
       ${pairs.near ? `<br>1센트 안팎으로 다른 줄 <b>${fmt(pairs.near, 0)}줄</b> 은 반올림으로 보고 넘겼습니다.` : ''}
       ${g.dup ? `<br>폰이 스크롤하며 <b>같은 줄 ${fmt(g.dup, 0)}개</b>를 두 번 읽어 와 하나로 접었습니다.` : ''}</p>
       ${isVR && pairs.bad >= 3 && pairs.bad === pairs.cmp
-        ? `<p class="note" style="margin:8px 3px 0;color:var(--ink2)">${vrCause(sl, pairs)}</p>` : ''}`;
+        ? `<p class="note" style="margin:8px 3px 0;color:var(--ink2)">${vrCause(sl, pairs, g)}</p>` : ''}`;
   }
   return secD('guide', '앱과 대조', out + '</div>');
 }
@@ -3101,7 +3114,10 @@ function verifyReport(what, txt, at) {
     /* 전 줄이 같은 이유로 틀렸을 때는 줄 수를 말하지 말고 어디를 보라고 말한다.
        VR 40건이 정확히 그 모양이었다 — 40개의 오류가 아니라 기준선 하나다. */
     const allBad = pairs.cmp >= 3 && pairs.bad === pairs.cmp;
-    const why = allBad ? (sl.vr ? '전 줄이 같이 밀렸습니다 — 기준선 V' : '전 줄이 같이 밀렸습니다 — 평단·시드')
+    /* 한 줄의 크기가 다르면 사다리의 칸이 달라 전부 어긋난다. 이것이 먼저다. */
+    const du = sl.vr && num(g.unit) > 0 ? num(g.unit) - num(vrCfg(sl.k).unit) : 0;
+    const why = du !== 0 ? `표기 단위 앱 ${fmt(num(g.unit), 0)}주 / 여기 ${fmt(num(vrCfg(sl.k).unit), 0)}주`
+      : allBad ? (sl.vr ? '전 줄이 같이 밀렸습니다 — 기준선 V' : '전 줄이 같이 밀렸습니다 — 평단·시드')
       : dq !== 0 ? `수량 ${dq > 0 ? '+' : '−'}${fmt(Math.abs(dq), 0)}`
         : Math.abs(da) > AVG_TOL ? `평단 ${da > 0 ? '+' : '−'}$${fmt(Math.abs(da), 4)}`
           : pairs.extra ? `앱에 ${fmt(pairs.extra, 0)}줄 더` : '';
