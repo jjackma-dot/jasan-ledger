@@ -240,6 +240,8 @@ input[type=number],input.num{font-family:"IBM Plex Mono",monospace;font-variant-
 .erow:first-child{border-top:0}
 .erow label{font-size:12.5px;color:var(--ink2);flex:1;min-width:0}
 .erow .u{font-size:10.5px;color:var(--muted);margin-left:4px}
+/* 라벨 안에 또 들어가는 부가 설명 — .u 가 이미 감싼 자리에 겹쳐 쓰지 않으려고 둔다 */
+.erow label .u2{font-size:10.5px;color:var(--muted);margin-left:4px;font-weight:400}
 .erow input{width:118px;flex:none;padding:6px 8px;font-size:12.5px}
 
 /* parsed cards */
@@ -519,8 +521,23 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
       <p class="note" style="margin:8px 3px 0">물가상승률을 제거한 <b>현재가치</b> 기준입니다.
         <b>부동산 순자산</b>은 잔여 대출을 뺀 값, <b>금융</b>은 대출 상환·자녀 정산 전 금액입니다.
         <b>노후자산</b>은 총 순자산에서 자녀증여를 떼어낸, 내 노후에 남는 몫입니다 — 집이 들어 있습니다.
-        <b>은퇴 인출가능</b>은 거기서 다시 <b>집</b>과 <b>국민연금 공백</b>과 <b>기타지출</b>을 뺀,
-        실제로 헐어 쓸 수 있는 금융·DC 자산입니다.</p>
+        <b>은퇴 인출가능</b>은 거기서 다시 <b>집</b>과 <b>국민연금 공백</b>을 뺀,
+        실제로 헐어 쓸 수 있는 금융·DC 자산입니다.
+        <b>기타지출</b>은 여기서 빼지 않습니다 — 모으는 동안 연 저축액을 깎는 방식이라
+        이미 위 금액들에 반영되어 있습니다.</p>
+      <details class="inl bare">
+        <summary style="padding:9px 3px 6px;font-size:11.5px;color:var(--muted)">세금·건강보험료를 어떻게 매기나</summary>
+        <p class="note" style="margin:0 3px 8px">인출액 전액에 <b>16.5% 분리과세</b>를 매기고,
+        건강보험료도 같은 기준으로 인출액 전액을 소득으로 봅니다(사용자 지정).
+        <br>실제로는 금융분(해외주식 양도세 22%·배당 15.4%)과 DC분(연금소득세 5.5~3.3%,
+        퇴직급여는 퇴직소득세 감면)이 재원별로 세목이 다릅니다. 그것을 다 가르려면
+        근속연수·퇴직급여·차익비율까지 받아야 해서 <b>편의상 하나로 통일한 값</b>입니다 —
+        정밀한 세액이 아닙니다.
+        <br><b>보유세</b>는 은퇴후 부동산가에 현행 세제를 적용합니다 — 공시가율 69%,
+        1세대 1주택 공정시장가액비율 45%, 재산세(도시지역분·지방교육세 포함) + 종부세(12억 공제).
+        고령자·장기보유 세액공제는 넣지 않았습니다(안 넣는 쪽이 보수적입니다).
+        <br>세제·보험료는 해마다 바뀝니다. <b>실제 판단 전에 세무·재무 전문가 확인을 권합니다.</b></p>
+      </details>
       <details class="inl bare">
         <summary style="padding:9px 3px 6px;font-size:11.5px;color:var(--muted)">두 가지 월 현금흐름</summary>
         <p class="note" style="margin:0 3px 8px">
@@ -624,7 +641,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-10 19:45';
+const BUILD = '2026-09-10 20:17';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1563,7 +1580,15 @@ function ensurePlan() {
     for (const n of SCN) state.plan.sc[n] = Object.assign({}, d.sc[n], state.plan.sc[n] || {});
     // 아직 값이 없는 개인 수치는 서버에서 받은 기본값으로 채운다
     PLAN_KEYS.forEach(k => { if (!num(state.plan[k])) state.plan[k] = d[k]; });
-    SCN.forEach(n => { if (!num(state.plan.sc[n].pen)) state.plan.sc[n].pen = d.sc[n].pen; });
+    /* 시나리오에 흩어져 있던 국민연금을 공통가정으로 끌어올린다(2026-09-10).
+       옛 모양으로 저장된 값이 있으면 **'현재' 시나리오 것**을 가져온다 — 예상·현재 150,
+       목표 170 처럼 달랐는데 하나를 골라야 하고, 가장 큰 것을 집으면 낙관 쪽으로
+       기운다. 어차피 화면에서 바로 고칠 수 있다. */
+    if (!num(state.plan.pen)) {
+      const old = ['현재', '예상', '목표'].map(n => num((state.plan.sc[n] || {}).pen)).find(v => v > 0);
+      state.plan.pen = old || num(d.pen);
+    }
+    if (state.plan.pen2 === undefined) state.plan.pen2 = num(d.pen2);
   }
   const B = SEED.basis || {}, past = SEED.past || {};
   if (state.reCost == null && B['부동산']) state.reCost = num(B['부동산'].cost);
@@ -3787,6 +3812,11 @@ const PLAN_BASE = {
   infl: 0.023, loanRate: 0.05,
   baseYear: 2026, retireYear: 2042, pensionYear: 2046, crevasseMonths: 53,
   targetRE: 0, re26: 0, save: 0, dcAdd: 0, kidTarget: 0,
+  /* 국민연금은 **공통가정**이다 (2026-09-10, 사용자 요청). 예전에는 시나리오마다
+     따로 뒀는데, 수령액은 가입이력이 정하는 것이지 투자수익률이 정하는 것이 아니다.
+     pen 은 본인, pen2 는 배우자. 실제 값은 국민연금공단 '내 연금 알아보기'
+     (csa.nps.or.kr)에서 각자 조회하는 것이 어림짐작보다 정확하다. */
+  pen: 0, pen2: 0,
   /* 차량·가전 교체처럼 은퇴 후에 **목돈으로 나갈 것**을 현재가치 총액으로 미리 적어 둔다.
      인출가능에서 통째로 빼므로 수익(세전인출)에도 노후생활비(월 현금흐름)에도
      들어가지 않는다 — 이미 쓰기로 정해 둔 돈이기 때문이다.
@@ -3799,9 +3829,9 @@ const PLAN_BASE = {
        배우자 월 100만원이면 월 현금흐름이 90만원 넘게 달라진다(원금 3억어치다).
        실제 값은 국민연금공단 '내 연금 알아보기'(csa.nps.or.kr)에서 각자 조회하는
        것이 어림짐작보다 정확하다. */
-    예상: { fin: 0.023, dc: 0.023, ret: 0.040, pen: 0, pen2: 0 },
-    현재: { fin: 0.080, dc: 0.050, ret: 0.060, pen: 0, pen2: 0 },
-    목표: { fin: 0.120, dc: 0.080, ret: 0.080, pen: 0, pen2: 0 }
+    예상: { fin: 0.023, dc: 0.023, ret: 0.040 },
+    현재: { fin: 0.080, dc: 0.050, ret: 0.060 },
+    목표: { fin: 0.120, dc: 0.080, ret: 0.080 }
   }
 };
 const PLAN_KEYS = ['targetRE', 're26', 'save', 'dcAdd', 'kidTarget'];
@@ -3812,6 +3842,63 @@ const DEPLETE_AGE = 99, PENSION_AGE = 65;
    화면의 월 현금흐름을 견줄 눈금이 없어 "이 숫자가 충분한가" 를 판단할 수가 없었다.
    조사 기준연도에서 기준연도까지 물가로 올려 쓴다. 부부 2인 기준이다. */
 const NEED_COUPLE = { y: 2024, ok: 298.1, min: 216.6 };
+
+/* 판정에 쓰는 세율·요율. 사용자가 정한 것과 현행 제도값이 섞여 있어 한곳에 모은다.
+
+   SEP  인출액에 매기는 분리과세율. 금융분(양도세 22%·배당 15.4%)과 DC분(연금소득세·
+        이연퇴직소득)이 실제로는 섞여 있는데, 사용자 요청대로 **16.5% 하나로 통일**한다.
+        간명함을 택한 것이고 정밀하지 않다 — docs/03 참고.
+   HI   건강보험료. 2026년 요율 7.19% 에 장기요양 가산 13.14% 를 곱한 값이다.
+        예전에는 국민연금 자리에 4% 상수를 썼는데(≈ 50% × 7.19% × 1.1314 = 4.07%),
+        요율이 바뀔 때 한 자리만 고치도록 성분을 드러냈다.
+   공적연금은 지역가입자 소득에 **50%** 만 반영된다. 인출액은 사용자 요청대로
+   같은 기준(전액)으로 본다. */
+const TAX = { sep: 0.165, penInc: 0.035, hi: 0.0719 * 1.1314, penHiRate: 0.5 };
+
+/* 퇴직 후 부동산가에 매기는 연 보유세 — 재산세(도시지역분·지방교육세 포함) + 종부세.
+   입력·출력 모두 만원이다.
+
+   공시가격은 시세반영률 69%(공동주택, 4년째 동결), 공정시장가액비율은 1세대 1주택
+   특례 45%. 공시 9억 이하면 재산세 특례세율을, 넘으면 표준세율을 쓴다.
+   종부세는 1세대 1주택 12억 공제 뒤 공정 60%.
+
+   **고령자·장기보유 세액공제(최대 80%)는 넣지 않았다** — 보유기간·나이에 따라
+   달라져 한 숫자로 못 박을 수 없다. 안 넣는 쪽이 보수적이다.
+   11.5억이면 종부세는 0 이고 재산세만 연 124만원쯤 된다. */
+function propTax(mkt) {
+  const pub = num(mkt) * 0.69;                       // 공시가격
+  if (!(pub > 0)) return 0;
+  const base = pub * 0.45;                           // 재산세 과세표준 (1주택 특례)
+  const spec = pub <= 90000;                         // 공시 9억 이하 → 특례세율
+  /* 누진공제를 따로 외우지 않고 구간별로 쌓는다 — 틀릴 일이 없고 세율만 고치면 된다 */
+  const band = spec
+    ? [[6000, 0.0005], [15000, 0.001], [30000, 0.002], [Infinity, 0.0035]]
+    : [[6000, 0.001], [15000, 0.0015], [30000, 0.0025], [Infinity, 0.004]];
+  let low = 0, main = 0;
+  for (const [cap, rate] of band) {
+    const hi = Math.min(base, cap);
+    if (hi > low) main += (hi - low) * rate;
+    low = cap;
+    if (base <= cap) break;
+  }
+  const city = base * 0.0014;                        // 도시지역분
+  const edu = main * 0.2;                            // 지방교육세
+  let jong = 0;
+  if (pub > 120000) {                                // 1세대 1주택 12억 공제
+    const jb = (pub - 120000) * 0.6;
+    const jband = [[30000, 0.005], [60000, 0.007], [120000, 0.010], [250000, 0.013],
+                   [500000, 0.015], [940000, 0.020], [Infinity, 0.027]];
+    let jl = 0;
+    for (const [cap, rate] of jband) {
+      const hi = Math.min(jb, cap);
+      if (hi > jl) jong += (hi - jl) * rate;
+      jl = cap;
+      if (jb <= cap) break;
+    }
+    jong *= 1.2;                                     // 농어촌특별세 20%
+  }
+  return main + city + edu + jong;
+}
 
 /* DC 연 불입액은 **현재가치**로 입력한다. 매년 같은 금액을 더하는 것은
    명목으로 물가상승률만큼 매년 늘어나는 것과 같다 — 이 모델이 전부 현재가치로
@@ -3845,6 +3932,18 @@ function simulate(name) {
   const fr = s.fin - P.infl, dr = s.dc - P.infl, rr = s.ret - P.infl;
   const nYears = P.retireYear - P.baseYear;                  // 2026 → 2042
 
+  /* 기타지출은 **모으는 동안 저축을 깎는** 방식이다 (2026-09-10, 사용자 요청).
+
+     예전에는 은퇴 시점의 인출가능에서 총액을 통째로 뺐다. 그러면 그 돈이 16년 동안
+     불어난 것처럼 계산된 뒤에 빠져나가는 셈이라 실제보다 유리하게 잡힌다.
+     사용자 말대로 "기타지출 1.8억 = 18년간 연 저축액 0.1억 차감" 으로 본다 —
+     안 모은 돈은 불어나지도 않는다.
+
+     나누는 햇수는 모으는 기간(기준연도 → 은퇴연도)이다. 저축보다 크면 저축이
+     0 이 될 뿐 음수로 가지 않는다. */
+  const miscYr = nYears > 0 ? num(P.misc) / nYears : 0;
+  const save = Math.max(0, P.save - miscYr);
+
   /* 26년말 부동산가로 무엇을 넣든 총자산이 부풀지 않게 한다.
      예전에는 이 값을 '대출 뺀 순자산' 으로만 보고 대출을 아예 안 잡아서,
      총 집값(96,828)을 넣으면 실제 순자산(84,155)과의 차이인 12,673 만큼
@@ -3854,12 +3953,12 @@ function simulate(name) {
   const reNet0 = calc(latest()).reT;
   const carried = reNet0 > 0 ? Math.max(0, num(P.re26) - reNet0) : 0;
 
-  const B = [carried], C = [0], D = [P.save], E = [S.a], F = [S.c], G = [S.b];
-  const rows = [{ y: P.baseYear, B: carried, C: 0, D: P.save, E: S.a, F: S.c, G: S.b }];
+  const B = [carried], C = [0], D = [save], E = [S.a], F = [S.c], G = [S.b];
+  const rows = [{ y: P.baseYear, B: carried, C: 0, D: save, E: S.a, F: S.c, G: S.b }];
 
   // 27년: 부동산 잔금에서 대출 발생 (기존 대출에 얹는다)
   const gap = P.targetRE - P.re26;
-  const pool = E[0] * (1 + fr) + P.save;
+  const pool = E[0] * (1 + fr) + save;
   B.push(carried + Math.max(0, gap - pool));
   C.push(0); D.push(0);
   E.push(Math.max(0, pool - gap));
@@ -3871,10 +3970,10 @@ function simulate(name) {
   for (let i = 2; i < nYears; i++) {
     const pb = B[i - 1];
     let c = 0;
-    if (pb > 0) c = (name === '목표') ? pmt(P.loanRate, 30, loan0) : Math.min(pb * (1 + P.loanRate), P.save);
+    if (pb > 0) c = (name === '목표') ? pmt(P.loanRate, 30, loan0) : Math.min(pb * (1 + P.loanRate), save);
     B.push(Math.max(0, pb * (1 + P.loanRate) - c));
-    C.push(c); D.push(P.save - c);
-    E.push(E[i - 1] * (1 + fr) + (P.save - c));
+    C.push(c); D.push(save - c);
+    E.push(E[i - 1] * (1 + fr) + (save - c));
     F.push(F[i - 1] * (1 + dr) + num(P.dcAdd));
     G.push(G[i - 1] * (1 + fr));
     rows.push({ y: P.baseYear + i, B: B[i], C: C[i], D: D[i], E: E[i], F: F[i], G: G[i] });
@@ -3885,28 +3984,39 @@ function simulate(name) {
   const g = G[i - 1] * (1 + fr);
   const f = F[i - 1] * (1 + dr) + num(P.dcAdd);
   const kidSettle = g - P.kidTarget;
-  const e = E[i - 1] * (1 + fr) + P.save - loanLeft + kidSettle;
-  rows.push({ y: P.retireYear, B: 0, C: 0, D: P.save, E: e, F: f, G: g });
+  const e = E[i - 1] * (1 + fr) + save - loanLeft + kidSettle;
+  rows.push({ y: P.retireYear, B: 0, C: 0, D: save, E: e, F: f, G: g });
 
   // 요약
   /* 가구 연금 = 본인 + 배우자. 크레바스도 가구 기준으로 뗀다 — 둘 다 그 기간에는
      연금이 없다고 보는 쪽이 보수적이다. 배우자 개시 시기가 다르면 그만큼 여유다. */
-  const penH = num(s.pen) + num(s.pen2);
+  const penH = num(P.pen) + num(P.pen2);
   const crevasse = penH * P.crevasseMonths;
-  const misc = num(P.misc);
-  /* 기타지출은 **인출가능에서 먼저 뺀다.** 수익도 생활비도 그 뒤의 돈으로 센다 —
-     차를 바꾸려고 떼어 둔 돈에서 매달 생활비가 나온다고 치면 두 번 쓰는 셈이다. */
-  const avail = e + f - crevasse - misc;
+  const avail = e + f - crevasse;
   const dcShare = (e + f) ? f / (e + f) : 0;
+  const taxProp = propTax(P.targetRE);                       // 재산세 + 종부세 (연)
 
-  /* 인출액에 붙는 공제. 자산유지·자산소진 둘 다 같은 규칙이라 함수로 뺀다. */
+  /* 인출액에 붙는 공제. 자산유지·자산소진 둘 다 같은 규칙이라 함수로 뺀다.
+
+     ── 세금을 16.5% 하나로 통일했다 (2026-09-10, 사용자 요청) ──────────
+     실제로는 금융분(해외주식 양도세 22%·배당 15.4%)과 DC분(연금소득세 5.5~3.3%,
+     이연퇴직소득은 퇴직소득세 감면)이 섞여 있고 재원별로 세목이 다르다.
+     그것을 다 따지려면 근속연수·퇴직급여·차익비율·해외국내비중을 받아야 한다.
+     사용자가 **편의상 16.5% 분리과세로 통일**하기로 정했다. 간명함을 택한 것이고
+     정밀하지 않다는 것은 화면과 docs/03 에 적어 둔다.
+     건강보험료도 같은 기준 — 인출액 전액을 소득으로 본다. */
   const after = drawX => {
-    const dcDraw = drawX * dcShare;
-    const taxDc = Math.min(dcDraw, 2000) * 0.055 + Math.max(0, dcDraw - 2000) * 0.165;
-    const taxInc = penH * 12 * 0.035;
-    const health = (60 + 13 * (P.targetRE / 10000)) + penH * 12 * 0.04;
-    const deduct = taxDc + taxInc + health;
-    return { draw: drawX, dcDraw, taxDc, taxInc, health, deduct, cashM: (drawX + penH * 12 - deduct) / 12 };
+    const taxDraw = drawX * TAX.sep;
+    const taxInc = penH * 12 * TAX.penInc;
+    /* 건보료 = 재산분 + 연금분(50% 반영) + 인출분(전액). 장기요양 가산 포함 */
+    const health = (60 + 13 * (P.targetRE / 10000))
+      + penH * 12 * TAX.penHiRate * TAX.hi
+      + drawX * TAX.hi;
+    const deduct = taxDraw + taxInc + health + taxProp;
+    return {
+      draw: drawX, dcDraw: drawX * dcShare, taxDc: taxDraw, taxInc, health,
+      deduct, cashM: (drawX + penH * 12 - deduct) / 12
+    };
   };
 
   // ㉠ 자산유지 — 실질수익만 쓰고 원금은 그대로 둔다 (예전부터 있던 계산)
@@ -3928,10 +4038,10 @@ function simulate(name) {
     net: P.targetRE + e + f + P.kidTarget,                   // 총 순자산
     later: P.targetRE + e + f,                               // 노후자산 = 총 순자산 − 자녀증여
     kidShort: kidSettle,
-    crevasse, misc, avail, nDep,
+    crevasse, misc: num(P.misc), miscYr, save, taxProp, avail, nDep,
     draw: keep.draw, dcDraw: keep.dcDraw, taxDc: keep.taxDc,
     taxInc: keep.taxInc, health: keep.health, deduct: keep.deduct,
-    pen: s.pen, pen2: num(s.pen2), penH,
+    pen: num(P.pen), pen2: num(P.pen2), penH,
     cashM: keep.cashM, drawM: keep.cashM - penH,
     drawUse: use.draw, cashMUse: use.cashM, drawMUse: use.cashM - penH,
     /* 견줄 기준선. 국민연금연구원 국민노후보장패널 10차(2024) 부부 기준
@@ -4020,10 +4130,9 @@ function renderPlan() {
     ['자녀자산', s => s.G, '억', 0],
     ['자녀증여 부족분', s => s.kidShort, '억', 0],
     ['노후자산 <span class="u">자녀증여 차감 후</span>', s => s.later, '억', 1],
-    ['기타지출 <span class="u">차량·가전 등</span>', s => -s.misc, '억', 0],
     ['은퇴 인출가능', s => s.avail, '억', 1],
-    ['국민연금(월) <span class="u">본인</span>', s => s.pen, '만', 0],
-    ['국민연금(월) <span class="u">배우자</span>', s => s.pen2, '만', 0],
+    ['국민연금(월) <span class="u">본인+배우자</span>', s => s.penH, '만', 0],
+    ['보유세 <span class="u">재산·종부세 · 연</span>', s => -s.taxProp, '만', 0],
     ['세후 월 인출액', s => s.drawM, '만', 0],
     ['월 현금흐름 <span class="u">자산유지</span>', s => s.cashM, '만', 1],
     [`월 현금흐름 <span class="u">자산소진 · ${DEPLETE_AGE}세</span>`, s => s.cashMUse, '만', 1],
@@ -4041,6 +4150,11 @@ function renderPlan() {
 
   /* ── 설정 ── */
   const pct = v => (v * 100).toFixed(1);
+  /* 기타지출이 실제로 연 얼마를 깎는지 화면이 직접 말하게 한다 — 사용자가 머릿속으로
+     잡은 햇수(18년)와 모으는 기간(16년)이 다를 수 있어서다. */
+  const nAcc = Math.max(1, P.retireYear - P.baseYear);
+  const miscYrNow = num(P.misc) / nAcc;
+  /* 라벨 안에 <span class="u"> 를 또 넣으면 바깥 span 과 겹쳐 보이므로 u2 로 쓴다 */
   $('#planCommon').innerHTML = [
     ['infl', '물가상승률', '%', pct(P.infl), 0.1],
     ['targetRE', '은퇴후 부동산가', '만원', P.targetRE, 1000],
@@ -4050,6 +4164,8 @@ function renderPlan() {
     ['dcAdd', 'DC 연 불입액', '만원', P.dcAdd, 50],
     ['kidTarget', '자녀증여', '만원', P.kidTarget, 1000],
     ['misc', '기타지출', '만원 · 차량·가전 등', num(P.misc), 1000],
+    ['pen', '국민연금 <span class="u2">본인</span>', '만원/월', num(P.pen), 5],
+    ['pen2', '국민연금 <span class="u2">배우자</span>', '만원/월', num(P.pen2), 5],
     ['retireYear', '은퇴 연도', '년', P.retireYear, 1],
     ['crevasseMonths', '연금 공백', '개월', P.crevasseMonths, 1]
   ].map(([k, l, u, v, st]) =>
@@ -4059,9 +4175,15 @@ function renderPlan() {
        연 저축액·DC 연 불입액은 매년 같은 값을 넣는데, 이는 명목으로 물가상승률만큼
        매년 늘어난다는 뜻입니다. <b>연금 공백</b>은 은퇴 후 국민연금을 받기 전까지의
        기간으로, 그만큼을 미리 떼어 두고 인출액을 계산합니다.
-       <br><b>기타지출</b>은 차량·가전처럼 은퇴 후에 목돈으로 나갈 것을 미리 적어 두는 칸입니다.
-       인출가능에서 통째로 빼므로 <b>수익에도 노후생활비에도 들어가지 않습니다</b> —
-       이미 쓰기로 정해 둔 돈이기 때문입니다. 시나리오와 무관하게 같은 값을 씁니다.</p>`;
+       <br><b>기타지출</b>은 차량·가전처럼 목돈으로 나갈 것을 미리 적어 두는 칸입니다.
+       <b>모으는 동안 연 저축액을 그만큼 깎는</b> 방식입니다 — 안 모은 돈은 불어나지도
+       않으므로, 은퇴 시점에 총액만 빼는 것보다 정직합니다.
+       지금 값은 <b>${fmt(num(P.misc), 0)}만원 ÷ ${fmt(nAcc, 0)}년 = 연 ${fmt(miscYrNow, 0)}만원</b>
+       이고, 연 저축액이 ${fmt(num(P.save), 0)} → <b>${fmt(Math.max(0, num(P.save) - miscYrNow), 0)}만원</b>이 됩니다.
+       (모으는 햇수는 기준연도 ${P.baseYear} → 은퇴연도 ${P.retireYear} 입니다)
+       <br><b>국민연금</b>은 시나리오가 아니라 여기 있습니다 — 수령액은 가입이력이 정하는
+       것이지 투자수익률이 정하는 것이 아닙니다. 실제 값은
+       국민연금공단 <b>내 연금 알아보기</b>(csa.nps.or.kr)에서 부부 각자 조회하세요.</p>`;
 
   $('#planSc').innerHTML = SCN.map(n => {
     const s = P.sc[n];
@@ -4069,10 +4191,7 @@ function renderPlan() {
       + [['fin', '금융 수익률'], ['dc', 'DC 수익률'], ['ret', '은퇴 후 수익률']].map(([k, l]) =>
         `<div class="erow"><label>${l} <span class="u">%</span></label>
          <input class="num" type="number" step="0.1" data-ps="${n}|${k}" value="${pct(s[k])}"></div>`).join('')
-      + `<div class="erow"><label>국민연금 <span class="u">본인 · 만원/월</span></label>
-         <input class="num" type="number" step="5" data-ps="${n}|pen" value="${s.pen}"></div>
-        <div class="erow"><label>국민연금 <span class="u">배우자 · 만원/월</span></label>
-         <input class="num" type="number" step="5" data-ps="${n}|pen2" value="${num(s.pen2)}"></div>`;
+      ;
   }).join('');
 
   const S = startAssets();
