@@ -599,7 +599,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-10 13:25';
+const BUILD = '2026-09-10 13:42';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2609,7 +2609,7 @@ function parseGuide(text) {
        VR 가격은 밴드경계 ÷ 보유수량 하나뿐이라 V 가 밀리면 전 줄이 같이 밀린다. */
     'V 값': 'V', 'V값': 'V', '기준선 V': 'V', '밴드': 'band'
   };
-  let side = null, typ = null, tag = '', rowPx = 0, pend = null;
+  let side = null, typ = null, tag = '', rowPx = 0, pend = null, prevBare = 0;
   /* VR 표는 유형 줄이 없다. 수량 → 가격 → Pool 순으로 와서 다음 수량 줄에 마감한다. */
   let vr = null;
   const flushVR = () => {
@@ -2622,7 +2622,7 @@ function parseGuide(text) {
     typ = null; tag = ''; rowPx = 0;
   };
 
-  lines.forEach(l => {
+  const step = l => {
     let m;
     if (/^\[?\s*매수\s*(표)?\s*\]?$/.test(l)) { flushVR(); side = 'B'; typ = null; tag = ''; rowPx = 0; pend = null; return; }
     if (/^\[?\s*매도\s*(표)?\s*\]?$/.test(l)) { flushVR(); side = 'S'; typ = null; tag = ''; rowPx = 0; pend = null; return; }
@@ -2647,9 +2647,15 @@ function parseGuide(text) {
       const k = LBL[m[1].replace(/\s+/g, ' ')];
       if (k) { out[k] = gNum(m[2]); if (k === 'unit') out.kind = 'vr'; pend = null; return; }
     }
-    /* 라벨만 있는 줄 — 값은 다음 줄 */
+    /* 라벨만 있는 줄 — 값은 다음 줄.
+
+       ── 값이 먼저 오기도 한다 (2026-09-10) ──────────────────────────
+       VR 앱 화면을 접근성 트리 순서로 읽으면 `2` · `표기 단위` · `주` 로 온다.
+       값이 라벨보다 **앞**이다. 그래서 표기 단위를 못 읽고 0 으로 뒀다.
+       바로 앞 줄이 **맨 숫자**였으면 그것을 일단 받아 둔다. 다음 줄에 진짜 값이
+       오면 그때 덮어쓰므로, 라벨이 먼저인 화면도 그대로 돈다. */
     const key = LBL[l.replace(/\s+/g, ' ')];
-    if (key) { pend = key; return; }
+    if (key) { pend = key; if (prevBare > 0 && !out[key]) { out[key] = prevBare; if (key === 'unit') out.kind = 'vr'; } return; }
     if (pend) {
       const v = gNum(l);
       if (v) { out[pend] = v; if (pend === 'unit') out.kind = 'vr'; }
@@ -2683,6 +2689,12 @@ function parseGuide(text) {
     if (typ && /^[-+]?[\d.]*%$|^평단/.test(l)) { tag = l; return; }
     /* 티커만 있는 줄 */
     if (/^[A-Z]{2,6}$/.test(l) && !out.tick) { out.tick = l; out.kind = out.kind || 'ib'; return; }
+  };
+  /* 한 줄을 처리한 **뒤에** '맨 숫자였나' 를 기억한다. step 안에는 return 이 많아
+     안에서 갱신할 수가 없다. */
+  lines.forEach(l => {
+    step(l);
+    prevBare = /^[\d,]+(\.\d+)?$/.test(l) ? gNum(l) : 0;
   });
   flushVR();
 
@@ -2704,14 +2716,46 @@ function parseGuide(text) {
     out.dup = n0 - out.rows.length;
   }
 
-  /* VR 은 표에 '한 줄당 주문 수량' 이 없다. 보유수량이 표기 단위씩 움직이므로 그걸로 낸다. */
-  if (out.kind === 'vr') {
-    const hs = out.rows.map(r => r.hold).filter(v => v > 0);
-    const step = out.unit > 0 ? out.unit : (hs.length > 1 ? Math.abs(hs[1] - hs[0]) : 0);
-    out.unit = step;
-    out.rows.forEach(r => { if (!r.qty) r.qty = step; });
+  /* VR 은 표에 '한 줄당 주문 수량' 이 없다. 보유수량이 표기 단위씩 움직이므로 그걸로 낸다.
+
+     ── kind 로 판단하지 않는다 (2026-09-10) ────────────────────────────
+     예전에는 `out.kind === 'vr'` 일 때만 이 블록을 돌렸다. 그런데 화면 글자에
+     하단 탭 이름 **'VR'** 이 섞여 들어오자 `^[A-Z]{2,6}$` 가 그것을 티커로 읽고
+     `kind` 를 **'ib'** 로 굳혀 버렸다. 그래서 수량이 0 인 채로 남았고, 가격이 한
+     푼도 안 틀렸는데 40줄 전부가 '수량 +2주' 로 불일치가 됐다.
+
+     이름표 대신 **모양**으로 가른다. 보유수량(hold)을 든 줄이 VR 줄이다.
+     무매 표에는 그 값이 없다. */
+  const vrRows = out.rows.filter(r => num(r.hold) > 0);
+  if (vrRows.length) {
+    const hs = vrRows.map(r => num(r.hold));
+    const gaps = hs.slice(1).map((v, i) => Math.abs(v - hs[i])).filter(v => v > 0);
+    /* 매수표 끝과 매도표 첫 줄 사이에는 큰 턱이 있다. **가장 작은 간격**이 단위다 */
+    out.unit = out.unit > 0 ? out.unit : (gaps.length ? Math.min(...gaps) : 0);
+    vrRows.forEach(r => { if (!r.qty) r.qty = out.unit; });
+    out.kind = 'vr';
   }
   return out;
+}
+
+/* VR 앱 표의 **매매구분을 다시 매긴다.**
+
+   ── 머리줄을 믿을 수 없다 (2026-09-10) ─────────────────────────────
+   수집기가 읽어 오는 글자에는 **고정 크롬**(하단 탭·버튼)이 섞인다. 거기에
+   '매도표' 라는 **버튼**이 있고, parseGuide 는 그 줄을 구획 머리줄로 읽는다.
+   그래서 매수표 안에서 side 가 'S' 로 뒤집혀 **앱 줄이 전부 매도**가 됐다 —
+   우리 매수 20줄이 짝을 못 찾아 그대로 20건 불일치로 떴다.
+
+   머리줄에 기대지 않는 길이 있다. 그 줄이 체결된 뒤의 보유수량이 **지금보다
+   많으면 산 것이고 적으면 판 것**이다. 표가 그 값을 이미 들고 있으므로
+   버튼이든 탭이든 섞여 들어와도 흔들리지 않는다. */
+function vrSides(rows, q) {
+  if (!(q > 0)) return rows;
+  rows.forEach(r => {
+    const h = num(r.hold);
+    if (h > q) r.side = 'B'; else if (h > 0 && h < q) r.side = 'S';
+  });
+  return rows;
 }
 
 /* 대조 범위 — 오버레이에 보내는 것과 같은 기준이다(NEAR_PCT).
@@ -2952,6 +2996,7 @@ function renderGuide(sl) {
       + (isVR && g.unit > 0 ? cmpN('표기 단위 <span class="u">한 줄당 주수</span>', num(vrCfg(sl.k).unit), g.unit, 0, 0) : '')
       + `</table></div>`;
 
+    if (isVR) vrSides(g.rows, num(latest()[sl.g][sl.s].q));
     const mine = myOrders(sl), pairs = diffOrders(mine, g.rows, !!sl.vr, winOf(sl));
     const bad = pairs.bad;
     const cell = r => r ? `${r.typ} <b class="mn">$${fmt(r.px, 2)}</b> × ${fmt(r.qty, 0)}주` : '<span style="color:var(--muted)">—</span>';
@@ -3148,8 +3193,10 @@ function verifyReport(what, txt, at) {
     const t = parts[sl.k];
     if (!t) { html += `<div class="row"><div class="nm">${esc(sl.n)}</div>
       <div class="vals"><div class="v num fl">앱 화면에 없음</div></div></div>`; return; }
-    const g = parseGuide(t), mine = myOrders(sl), pairs = diffOrders(mine, g.rows, !!sl.vr, winOf(sl));
+    const g = parseGuide(t), mine = myOrders(sl);
     const x = latest(), q = num(x[sl.g][sl.s].q);
+    if (sl.vr) vrSides(g.rows, q);
+    const pairs = diffOrders(mine, g.rows, !!sl.vr, winOf(sl));
     let avg = q > 0 ? num(x[sl.g][sl.s].c) / q : 0;
     if (!sl.vr) { const r = ibRun(sl.k); if (r && r.st) avg = num(r.st.avg); }
     const dq = g.qty > 0 ? q - g.qty : 0, da = g.avg > 0 ? avg - g.avg : 0;
@@ -3202,7 +3249,7 @@ function verifyReport(what, txt, at) {
       앱은 ±20%(SOXL·VR 30%) 밖의 줄까지 보여 주는데 그건 오늘 걸 주문이 아니라 판정에서 뺍니다.
       <br>보유수량·평단가가 먼저 어긋나면 주문줄은 따라 어긋납니다.
       자세한 줄별 차이는 아래 <b>앱과 대조</b> 에 붙여 보세요 —
-      <button class="ghost" id="vfyPaste" data-t="${esc(btoa(unescape(encodeURIComponent(txt))))}"
+      <button class="ghost" id="vfyPaste" data-w="${what === 'vr' ? 'vr' : 'ib'}" data-t="${esc(btoa(unescape(encodeURIComponent(txt))))}"
         style="padding:3px 8px;font-size:11.5px">읽은 글자 넣기</button></p>
     </details>`;
 }
@@ -3238,6 +3285,13 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
   const pb = e.target.closest('#vfyPaste');
   if (pb) {
     try { guideText = decodeURIComponent(escape(atob(pb.dataset.t))); } catch (err) { guideText = ''; }
+    /* VR 글자를 무매 자리에 붙이면 아홉 줄이 통째로 '앱에 없음' 으로 뜬다.
+       그 검증이 본 자리로 데려간다. */
+    if (pb.dataset.w === 'vr' && UI.ib !== 'vr.T') {
+      UI.ib = 'vr.T';
+      $$('#ibSeg button').forEach(c => c.setAttribute('aria-pressed', c.dataset.v === 'vr.T'));
+    }
+    UI.ibOpen = UI.ibOpen || {}; UI.ibOpen.guide = true;
     renderIB();
     const el = $('#guideIn'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     return;
