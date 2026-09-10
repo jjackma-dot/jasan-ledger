@@ -516,7 +516,22 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
       <div id="planWarn"></div>
       <h2 class="sec"><span id="retTitle">2042년말 은퇴 요약</span> <span class="tag" style="margin-left:6px">현재가치</span></h2>
       <div class="card pad scroll"><table class="tbl rt" id="retTbl"></table></div>
-      <p class="note" style="margin:8px 3px 0">물가상승률을 제거한 현재가치 기준. <b>부동산 순자산</b>은 잔여 대출을 뺀 값, <b>금융</b>은 대출 상환·자녀 정산 전 금액입니다. <b>은퇴 인출가능</b>은 대출을 갚고 자녀 목표액을 떼어준 뒤 국민연금 공백 53개월분까지 뺀, 실제로 쓸 수 있는 돈입니다.</p>
+      <p class="note" style="margin:8px 3px 0">물가상승률을 제거한 <b>현재가치</b> 기준입니다.
+        <b>부동산 순자산</b>은 잔여 대출을 뺀 값, <b>금융</b>은 대출 상환·자녀 정산 전 금액입니다.
+        <b>노후자산</b>은 총 순자산에서 자녀증여를 떼어낸, 내 노후에 남는 몫입니다 — 집이 들어 있습니다.
+        <b>은퇴 인출가능</b>은 거기서 다시 <b>집</b>과 <b>국민연금 공백</b>과 <b>기타지출</b>을 뺀,
+        실제로 헐어 쓸 수 있는 금융·DC 자산입니다.</p>
+      <details class="inl bare">
+        <summary style="padding:9px 3px 6px;font-size:11.5px;color:var(--muted)">두 가지 월 현금흐름</summary>
+        <p class="note" style="margin:0 3px 8px">
+        <b>자산유지</b>는 실질수익만 꺼내 쓰고 원금은 그대로 두는 경우입니다. 물려줄 몫이 남고,
+        오래 살아도 돈이 마르지 않습니다. 대신 매달 쓸 수 있는 돈이 적습니다.
+        <br><b>자산소진</b>은 인출가능 원금을 99세까지 다 쓰는 경우입니다. 매달 더 쓰지만
+        99세에 금융자산이 0 이 됩니다(집은 남습니다). 실제 생활은 대개 이 둘 사이입니다.
+        <br>99세까지의 햇수는 <b>국민연금 개시를 만 65세</b>로 보고 되짚은 나이로 셉니다 —
+        연금 개시 연도를 고치면 함께 움직입니다.
+        <br>두 값 모두 세금·건강보험료를 뺀 뒤이고, 국민연금을 더한 금액입니다.</p>
+      </details>
 
       <h2 class="sec">연도별 자산</h2>
       <div class="card hero" style="margin-top:0;padding-top:14px">
@@ -599,7 +614,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-10 13:42';
+const BUILD = '2026-09-10 14:27';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -3762,6 +3777,11 @@ const PLAN_BASE = {
   infl: 0.023, loanRate: 0.05,
   baseYear: 2026, retireYear: 2042, pensionYear: 2046, crevasseMonths: 53,
   targetRE: 0, re26: 0, save: 0, dcAdd: 0, kidTarget: 0,
+  /* 차량·가전 교체처럼 은퇴 후에 **목돈으로 나갈 것**을 현재가치 총액으로 미리 적어 둔다.
+     인출가능에서 통째로 빼므로 수익(세전인출)에도 노후생활비(월 현금흐름)에도
+     들어가지 않는다 — 이미 쓰기로 정해 둔 돈이기 때문이다.
+     시나리오와 무관하게 같은 값을 쓴다(수익률이 달라진다고 차를 덜 바꾸지는 않는다). */
+  misc: 30000,
   useLive: true, a: 0, b: 0, c: 0,
   sc: {
     예상: { fin: 0.023, dc: 0.023, ret: 0.040, pen: 0 },
@@ -3770,6 +3790,9 @@ const PLAN_BASE = {
   }
 };
 const PLAN_KEYS = ['targetRE', 're26', 'save', 'dcAdd', 'kidTarget'];
+/* 99세까지 쓴다고 볼 때의 나이 셈. 국민연금 개시를 만 65세로 보고 태어난 해를
+   되짚는다 — 따로 생년을 받지 않으려는 것이다. 개시 연도를 고치면 함께 움직인다. */
+const DEPLETE_AGE = 99, PENSION_AGE = 65;
 
 /* DC 연 불입액은 **현재가치**로 입력한다. 매년 같은 금액을 더하는 것은
    명목으로 물가상승률만큼 매년 늘어나는 것과 같다 — 이 모델이 전부 현재가치로
@@ -3848,15 +3871,32 @@ function simulate(name) {
 
   // 요약
   const crevasse = s.pen * P.crevasseMonths;
-  const avail = e + f - crevasse;
-  const draw = avail * rr;
+  const misc = num(P.misc);
+  /* 기타지출은 **인출가능에서 먼저 뺀다.** 수익도 생활비도 그 뒤의 돈으로 센다 —
+     차를 바꾸려고 떼어 둔 돈에서 매달 생활비가 나온다고 치면 두 번 쓰는 셈이다. */
+  const avail = e + f - crevasse - misc;
   const dcShare = (e + f) ? f / (e + f) : 0;
-  const dcDraw = draw * dcShare;
-  const taxDc = Math.min(dcDraw, 2000) * 0.055 + Math.max(0, dcDraw - 2000) * 0.165;
-  const taxInc = s.pen * 12 * 0.035;
-  const health = (60 + 13 * (P.targetRE / 10000)) + s.pen * 12 * 0.04;
-  const deduct = taxDc + taxInc + health;
-  const cashM = (draw + s.pen * 12 - deduct) / 12;
+
+  /* 인출액에 붙는 공제. 자산유지·자산소진 둘 다 같은 규칙이라 함수로 뺀다. */
+  const after = drawX => {
+    const dcDraw = drawX * dcShare;
+    const taxDc = Math.min(dcDraw, 2000) * 0.055 + Math.max(0, dcDraw - 2000) * 0.165;
+    const taxInc = s.pen * 12 * 0.035;
+    const health = (60 + 13 * (P.targetRE / 10000)) + s.pen * 12 * 0.04;
+    const deduct = taxDc + taxInc + health;
+    return { draw: drawX, dcDraw, taxDc, taxInc, health, deduct, cashM: (drawX + s.pen * 12 - deduct) / 12 };
+  };
+
+  // ㉠ 자산유지 — 실질수익만 쓰고 원금은 그대로 둔다 (예전부터 있던 계산)
+  const keep = after(avail * rr);
+
+  /* ㉡ 자산소진 — 99세까지 원금을 다 쓰는 경우.
+     은퇴 시점 나이 = 연금개시연도 − 65 로 되짚은 생년에서 구한다.
+     실질수익률이 0 이하면 연금식이 성립하지 않으므로 그냥 나눠 쓴다. */
+  const bornY = P.pensionYear - PENSION_AGE;
+  const nDep = Math.max(1, (bornY + DEPLETE_AGE) - P.retireYear);
+  const drawDep = rr > 1e-9 ? pmt(rr, nDep, avail) : avail / nDep;
+  const use = after(drawDep);
 
   return {
     name, rows, loanLeft, kidSettle,
@@ -3864,9 +3904,13 @@ function simulate(name) {
     reNet: P.targetRE - loanLeft,                            // 부동산 순자산 (대출 차감)
     finDisp: e + loanLeft - kidSettle,                       // 대출·자녀정산 전 금융
     net: P.targetRE + e + f + P.kidTarget,                   // 총 순자산
+    later: P.targetRE + e + f,                               // 노후자산 = 총 순자산 − 자녀증여
     kidShort: kidSettle,
-    avail, draw, dcDraw, taxDc, taxInc, health, deduct,
-    pen: s.pen, cashM, drawM: cashM - s.pen
+    crevasse, misc, avail, nDep,
+    draw: keep.draw, dcDraw: keep.dcDraw, taxDc: keep.taxDc,
+    taxInc: keep.taxInc, health: keep.health, deduct: keep.deduct,
+    pen: s.pen, cashM: keep.cashM, drawM: keep.cashM - s.pen,
+    drawUse: use.draw, cashMUse: use.cashM, drawMUse: use.cashM - s.pen
   };
 }
 
@@ -3948,10 +3992,13 @@ function renderPlan() {
     ['DC', s => s.F, '억', 0],
     ['자녀자산', s => s.G, '억', 0],
     ['자녀증여 부족분', s => s.kidShort, '억', 0],
+    ['노후자산 <span class="u">자녀증여 차감 후</span>', s => s.later, '억', 1],
+    ['기타지출 <span class="u">차량·가전 등</span>', s => -s.misc, '억', 0],
     ['은퇴 인출가능', s => s.avail, '억', 1],
     ['국민연금(월)', s => s.pen, '만', 0],
     ['세후 월 인출액', s => s.drawM, '만', 0],
-    ['월 현금흐름', s => s.cashM, '만', 1]
+    ['월 현금흐름 <span class="u">자산유지</span>', s => s.cashM, '만', 1],
+    [`월 현금흐름 <span class="u">자산소진 · ${DEPLETE_AGE}세</span>`, s => s.cashMUse, '만', 1]
   ];
   $('#retTbl').innerHTML =
     `<tr><th>항목</th>${SCN.map(n => `<th>${n}</th>`).join('')}</tr>`
@@ -3972,6 +4019,7 @@ function renderPlan() {
     ['save', '연 저축액', '만원', P.save, 100],
     ['dcAdd', 'DC 연 불입액', '만원', P.dcAdd, 50],
     ['kidTarget', '자녀증여', '만원', P.kidTarget, 1000],
+    ['misc', '기타지출', '만원 · 차량·가전 등', num(P.misc), 1000],
     ['retireYear', '은퇴 연도', '년', P.retireYear, 1],
     ['crevasseMonths', '연금 공백', '개월', P.crevasseMonths, 1]
   ].map(([k, l, u, v, st]) =>
@@ -3980,7 +4028,10 @@ function renderPlan() {
     + `<p class="note" style="padding:4px 15px 0">금액은 모두 <b>현재가치</b>입니다.
        연 저축액·DC 연 불입액은 매년 같은 값을 넣는데, 이는 명목으로 물가상승률만큼
        매년 늘어난다는 뜻입니다. <b>연금 공백</b>은 은퇴 후 국민연금을 받기 전까지의
-       기간으로, 그만큼을 미리 떼어 두고 인출액을 계산합니다.</p>`;
+       기간으로, 그만큼을 미리 떼어 두고 인출액을 계산합니다.
+       <br><b>기타지출</b>은 차량·가전처럼 은퇴 후에 목돈으로 나갈 것을 미리 적어 두는 칸입니다.
+       인출가능에서 통째로 빼므로 <b>수익에도 노후생활비에도 들어가지 않습니다</b> —
+       이미 쓰기로 정해 둔 돈이기 때문입니다. 시나리오와 무관하게 같은 값을 씁니다.</p>`;
 
   $('#planSc').innerHTML = SCN.map(n => {
     const s = P.sc[n];
