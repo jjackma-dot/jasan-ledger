@@ -530,7 +530,17 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         99세에 금융자산이 0 이 됩니다(집은 남습니다). 실제 생활은 대개 이 둘 사이입니다.
         <br>99세까지의 햇수는 <b>국민연금 개시를 만 65세</b>로 보고 되짚은 나이로 셉니다 —
         연금 개시 연도를 고치면 함께 움직입니다.
-        <br>두 값 모두 세금·건강보험료를 뺀 뒤이고, 국민연금을 더한 금액입니다.</p>
+        <br>두 값 모두 세금·건강보험료를 뺀 뒤이고, 국민연금(본인+배우자)을 더한 금액입니다.
+        <br><b>자산유지가 보장은 아닙니다.</b> 매년 수익률이 가정대로 나온다는 전제이고,
+        실제로는 오르내립니다 — 은퇴 초반에 크게 빠지면 원금이 줄어든 채로 회복하지 못할 수 있습니다.</p>
+      </details>
+      <details class="inl bare">
+        <summary style="padding:9px 3px 6px;font-size:11.5px;color:var(--muted)">필요생활비 기준선은 어디서 왔나</summary>
+        <p class="note" style="margin:0 3px 8px">국민연금연구원 <b>국민노후보장패널조사 10차 부가조사</b>(2024)의
+        <b>부부 기준</b> 값입니다 — 적정 298.1만원 / 최소 216.6만원. 표에는 조사연도부터 기준연도까지
+        물가로 올린 값을 적습니다.
+        <br>주의할 것 — 이 조사값에는 <b>주택 관리비·공과금이 이미 들어 있고</b>, 재산세·간병비·
+        자녀 결혼 지원 같은 것은 들어 있지 않습니다. 위 <b>기타지출</b> 칸과 겹치지 않게 보세요.</p>
       </details>
 
       <h2 class="sec">연도별 자산</h2>
@@ -614,7 +624,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-10 14:27';
+const BUILD = '2026-09-10 19:45';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -3784,15 +3794,24 @@ const PLAN_BASE = {
   misc: 30000,
   useLive: true, a: 0, b: 0, c: 0,
   sc: {
-    예상: { fin: 0.023, dc: 0.023, ret: 0.040, pen: 0 },
-    현재: { fin: 0.080, dc: 0.050, ret: 0.060, pen: 0 },
-    목표: { fin: 0.120, dc: 0.080, ret: 0.080, pen: 0 }
+    /* pen 은 **본인** 국민연금, pen2 는 배우자 몫이다. 기본 0 이라 넣기 전에는
+       예전과 똑같이 돈다. 부부 수령이 통째로 빠져 있던 것을 메우려고 나눴다 —
+       배우자 월 100만원이면 월 현금흐름이 90만원 넘게 달라진다(원금 3억어치다).
+       실제 값은 국민연금공단 '내 연금 알아보기'(csa.nps.or.kr)에서 각자 조회하는
+       것이 어림짐작보다 정확하다. */
+    예상: { fin: 0.023, dc: 0.023, ret: 0.040, pen: 0, pen2: 0 },
+    현재: { fin: 0.080, dc: 0.050, ret: 0.060, pen: 0, pen2: 0 },
+    목표: { fin: 0.120, dc: 0.080, ret: 0.080, pen: 0, pen2: 0 }
   }
 };
 const PLAN_KEYS = ['targetRE', 're26', 'save', 'dcAdd', 'kidTarget'];
 /* 99세까지 쓴다고 볼 때의 나이 셈. 국민연금 개시를 만 65세로 보고 태어난 해를
    되짚는다 — 따로 생년을 받지 않으려는 것이다. 개시 연도를 고치면 함께 움직인다. */
 const DEPLETE_AGE = 99, PENSION_AGE = 65;
+/* 부부 노후 필요생활비 — 국민연금연구원 국민노후보장패널조사 10차 부가조사(2024).
+   화면의 월 현금흐름을 견줄 눈금이 없어 "이 숫자가 충분한가" 를 판단할 수가 없었다.
+   조사 기준연도에서 기준연도까지 물가로 올려 쓴다. 부부 2인 기준이다. */
+const NEED_COUPLE = { y: 2024, ok: 298.1, min: 216.6 };
 
 /* DC 연 불입액은 **현재가치**로 입력한다. 매년 같은 금액을 더하는 것은
    명목으로 물가상승률만큼 매년 늘어나는 것과 같다 — 이 모델이 전부 현재가치로
@@ -3870,7 +3889,10 @@ function simulate(name) {
   rows.push({ y: P.retireYear, B: 0, C: 0, D: P.save, E: e, F: f, G: g });
 
   // 요약
-  const crevasse = s.pen * P.crevasseMonths;
+  /* 가구 연금 = 본인 + 배우자. 크레바스도 가구 기준으로 뗀다 — 둘 다 그 기간에는
+     연금이 없다고 보는 쪽이 보수적이다. 배우자 개시 시기가 다르면 그만큼 여유다. */
+  const penH = num(s.pen) + num(s.pen2);
+  const crevasse = penH * P.crevasseMonths;
   const misc = num(P.misc);
   /* 기타지출은 **인출가능에서 먼저 뺀다.** 수익도 생활비도 그 뒤의 돈으로 센다 —
      차를 바꾸려고 떼어 둔 돈에서 매달 생활비가 나온다고 치면 두 번 쓰는 셈이다. */
@@ -3881,10 +3903,10 @@ function simulate(name) {
   const after = drawX => {
     const dcDraw = drawX * dcShare;
     const taxDc = Math.min(dcDraw, 2000) * 0.055 + Math.max(0, dcDraw - 2000) * 0.165;
-    const taxInc = s.pen * 12 * 0.035;
-    const health = (60 + 13 * (P.targetRE / 10000)) + s.pen * 12 * 0.04;
+    const taxInc = penH * 12 * 0.035;
+    const health = (60 + 13 * (P.targetRE / 10000)) + penH * 12 * 0.04;
     const deduct = taxDc + taxInc + health;
-    return { draw: drawX, dcDraw, taxDc, taxInc, health, deduct, cashM: (drawX + s.pen * 12 - deduct) / 12 };
+    return { draw: drawX, dcDraw, taxDc, taxInc, health, deduct, cashM: (drawX + penH * 12 - deduct) / 12 };
   };
 
   // ㉠ 자산유지 — 실질수익만 쓰고 원금은 그대로 둔다 (예전부터 있던 계산)
@@ -3909,8 +3931,13 @@ function simulate(name) {
     crevasse, misc, avail, nDep,
     draw: keep.draw, dcDraw: keep.dcDraw, taxDc: keep.taxDc,
     taxInc: keep.taxInc, health: keep.health, deduct: keep.deduct,
-    pen: s.pen, cashM: keep.cashM, drawM: keep.cashM - s.pen,
-    drawUse: use.draw, cashMUse: use.cashM, drawMUse: use.cashM - s.pen
+    pen: s.pen, pen2: num(s.pen2), penH,
+    cashM: keep.cashM, drawM: keep.cashM - penH,
+    drawUse: use.draw, cashMUse: use.cashM, drawMUse: use.cashM - penH,
+    /* 견줄 기준선. 국민연금연구원 국민노후보장패널 10차(2024) 부부 기준
+       적정 298.1 / 최소 216.6 만원을 기준연도 현재가치로 올린 값이다. */
+    needOk: NEED_COUPLE.ok * Math.pow(1 + P.infl, P.baseYear - NEED_COUPLE.y),
+    needMin: NEED_COUPLE.min * Math.pow(1 + P.infl, P.baseYear - NEED_COUPLE.y)
   };
 }
 
@@ -3995,10 +4022,13 @@ function renderPlan() {
     ['노후자산 <span class="u">자녀증여 차감 후</span>', s => s.later, '억', 1],
     ['기타지출 <span class="u">차량·가전 등</span>', s => -s.misc, '억', 0],
     ['은퇴 인출가능', s => s.avail, '억', 1],
-    ['국민연금(월)', s => s.pen, '만', 0],
+    ['국민연금(월) <span class="u">본인</span>', s => s.pen, '만', 0],
+    ['국민연금(월) <span class="u">배우자</span>', s => s.pen2, '만', 0],
     ['세후 월 인출액', s => s.drawM, '만', 0],
     ['월 현금흐름 <span class="u">자산유지</span>', s => s.cashM, '만', 1],
-    [`월 현금흐름 <span class="u">자산소진 · ${DEPLETE_AGE}세</span>`, s => s.cashMUse, '만', 1]
+    [`월 현금흐름 <span class="u">자산소진 · ${DEPLETE_AGE}세</span>`, s => s.cashMUse, '만', 1],
+    ['필요생활비 <span class="u">부부 적정</span>', s => s.needOk, '만', 0],
+    ['<span style="color:var(--muted)">└ 자산유지 − 적정</span>', s => s.cashM - s.needOk, '만', 0]
   ];
   $('#retTbl').innerHTML =
     `<tr><th>항목</th>${SCN.map(n => `<th>${n}</th>`).join('')}</tr>`
@@ -4039,8 +4069,10 @@ function renderPlan() {
       + [['fin', '금융 수익률'], ['dc', 'DC 수익률'], ['ret', '은퇴 후 수익률']].map(([k, l]) =>
         `<div class="erow"><label>${l} <span class="u">%</span></label>
          <input class="num" type="number" step="0.1" data-ps="${n}|${k}" value="${pct(s[k])}"></div>`).join('')
-      + `<div class="erow"><label>국민연금 <span class="u">만원/월</span></label>
-         <input class="num" type="number" step="5" data-ps="${n}|pen" value="${s.pen}"></div>`;
+      + `<div class="erow"><label>국민연금 <span class="u">본인 · 만원/월</span></label>
+         <input class="num" type="number" step="5" data-ps="${n}|pen" value="${s.pen}"></div>
+        <div class="erow"><label>국민연금 <span class="u">배우자 · 만원/월</span></label>
+         <input class="num" type="number" step="5" data-ps="${n}|pen2" value="${num(s.pen2)}"></div>`;
   }).join('');
 
   const S = startAssets();
@@ -4276,7 +4308,7 @@ document.getElementById('p-plan').addEventListener('change', e => {
   }
   if (t.dataset.ps) {
     const [n, k] = t.dataset.ps.split('|');
-    P.sc[n][k] = (k === 'pen') ? +t.value : +t.value / 100;
+    P.sc[n][k] = (k === 'pen' || k === 'pen2') ? +t.value : +t.value / 100;
     planSave(); return;
   }
   if (t.dataset.abc) { P[t.dataset.abc] = +t.value; planSave(); return; }
