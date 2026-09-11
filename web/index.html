@@ -643,7 +643,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-11 09:58';
+const BUILD = '2026-09-11 13:45';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2002,16 +2002,35 @@ function ibCfg(k) {
    사들였다면, 우리가 못 맞춘 것이지 안 산 것이 아니다. 그때는 +1.0 으로 본다 —
    T 가 조용히 멈춰 사이클이 영영 안 끝나는 쪽이 훨씬 나쁘다.
    (대폭락 1주는 1회 투자금의 몇 %라 이 그물에 걸리지 않는다.) */
+/* LOC 가 체결됐는지 보는 여유. **ibMatch 의 PLAN_TOL(1%) 을 여기 쓰면 안 된다.**
+
+   PLAN_TOL 은 '들어온 체결 알림이 계획한 주문인가' 를 볼 때의 여유다. 체결가는
+   계획가보다 낮을 수 있고 반올림·슬리피지도 있으니 1% 를 둔다.
+   그런데 **LOC 가 체결됐는가는 부등식 하나**다 — 종가 ≤ 지정가. 여유가 없다.
+   1% 를 갖다 쓰면 지정가보다 1% 위에서 끝난 날까지 '체결' 로 친다.
+
+   2026-09-10 이 정확히 그랬다. 무매 TQQQ 평단 $71.3789, 그날 종가 $71.55 —
+   평단 LOC 는 **체결되지 않았다**(앱 거래내역도 그날을 한 건 +0.5 로 적었다).
+   그런데 71.3789 × 1.01 = $72.09 안이라 우리는 체결로 봤고, T 가 +1.0 올라
+   앱보다 정확히 **0.5 높아졌다.** 그 0.5 가 Star 값(1.82 vs 2.19)과
+   1회 투자금($1,898 vs $1,857)을 거쳐 다음 날 주문표까지 밀었다.
+
+   센트 반올림만 감안해 반 센트만 둔다. */
+const FILL_EPS = 0.005;
 function buyT(cfg, prev, cur) {
   const close = num(cur.close);
   const plan = ibOrders(cfg, prev);
   const mains = ((plan.buy && plan.buy.legs) || []).filter(l => num(l.qty) > 0);
   if (!mains.length) return { add: 0, why: '계획된 본 매수 없음' };
-  const hit = mains.filter(l => close <= num(l.px) * (1 + PLAN_TOL));
+  const hit = mains.filter(l => close <= num(l.px) + FILL_EPS);
   if (!hit.length) {
+    /* 본 다리가 하나도 안 걸렸는데 매수가 있었다면 그것은 아래 깔아 둔 LOC(대폭락)다.
+       앱도 그 줄을 **+0** 으로 적는다(2026-09-11 거래내역 '매수 +0' 1주).
+       다만 1회 투자금만큼 사들였다면 우리가 다리를 못 맞춘 것이지 안 산 것이 아니다 —
+       T 가 조용히 멈춰 사이클이 영영 안 끝나는 쪽이 훨씬 나쁘다. */
     const amt = num(plan.amt), got = num(cur.boughtAmt);
-    if (amt > 0 && got >= amt * 0.9) return { add: 1, why: `본 매수 다리는 안 걸렸으나 1회 투자금만큼 매수(${ibU(got, 0)})` };
-    return { add: 0, why: `본 매수 다리 미체결 — 대폭락 등 (종가 ${ibU(close)} > ${ibU(Math.max(...mains.map(l => num(l.px))))})` };
+    if (amt > 0 && got >= amt * 0.9) return { add: 1, why: `본 다리 미체결이나 1회 투자금만큼 매수(${ibU(got, 0)})` };
+    return { add: 0, why: `대폭락 LOC 만 체결 +0 (종가 ${ibU(close)} > 본 다리 ${ibU(Math.max(...mains.map(l => num(l.px))))})` };
   }
   const per = 1 / mains.length;
   /* 쓰던 앱과 T 가 다를 때 필요한 것은 '얼마 올랐나' 가 아니라 **무엇을 한 회차로
@@ -2041,19 +2060,34 @@ function ibStep(cfg, prev, cur) {
 
   const action = q < oldQ ? 'SELL' : q > oldQ ? 'BUY' : 'NONE';
 
-  if (action === 'SELL') {
-    const qQty = Math.floor(oldQ * 0.25);
-    if (q <= 0) T = 0;                                  // 100% 매도 → 사이클 종료
-    else if (q <= oldQ * 0.60) {                        // 3/4 지정가가 체결된 날
-      if (q > qQty) T = close > oldAvg ? T * 0.25 + 0.5 : T * 0.25 + 1.0;
-      else T = T * 0.25;
-    } else {                                            // 1/4 쿼터 LOC 매도
-      T = (mode === 'NORMAL') ? T * 0.75 : T * (1 - 2 / n);
-    }
-  } else if (action === 'BUY') {
-    if (mode === 'REVERSE') { T = T + (n - T) * 0.25; tAdd = (n - prev.T) * 0.25; tWhy = '리버스'; }
-    else { const b = buyT(cfg, prev, cur); T = T + b.add; tAdd = b.add; tWhy = b.why; }
+  /* ── 매도와 매수를 **따로** 세고, 매도를 먼저 적용한다 (2026-09-11) ──────
+     예전에는 하루 순증감 하나로 SELL / BUY 를 갈랐다. 그래서 같은 날 쿼터매도와
+     매수가 함께 일어나면 **둘 중 하나만** T 에 반영됐다 — 순매수로 끝난 날은
+     ×0.75 가 통째로 빠지고, 순매도로 끝난 날은 그날 매수분이 통째로 빠진다.
+     원문 2.(4)("지정가매도 후 loc 매수되는 경우는 ×0.25+1 or ×0.25+0.5")가
+     말하는 것이 곱한 뒤 더하는 이 순서다. 쿼터매도도 같은 모양이다:
+       신규 T = (직전 T × 0.75) + 당일 매수분
+     체결 목록이 있으면 매도·매수 수량을 그대로 쓰고, 없으면 순증감으로 떨어진다
+     (그때는 예전과 똑같이 한쪽만 잡힌다 — 되살릴 근거가 없다). */
+  const soldQ = cur.soldQty != null ? num(cur.soldQty) : Math.max(0, oldQ - q);
+  const boughtQ = cur.boughtQty != null ? num(cur.boughtQty) : Math.max(0, q - oldQ);
+  const tFrom = T;
+
+  if (soldQ > 0) {
+    if (q <= 0) { T = 0; tWhy = '전량 매도 — 사이클 종료'; }
+    else if (mode === 'REVERSE') { T = T * (1 - 2 / n); tWhy = `리버스 매도 ×${fmt(1 - 2 / n, 2)}`; }
+    /* 매도는 둘뿐이다 — 보유의 1/4 을 별지점 LOC(쿼터매도), 나머지 3/4 을 지정가.
+       절반을 넘겨 팔았으면 지정가 쪽이다. */
+    else if (soldQ >= oldQ * 0.5) { T = T * 0.25; tWhy = '지정가매도 ×0.25'; }
+    else { T = T * 0.75; tWhy = '쿼터매도 ×0.75'; }
   }
+  if (q > 0 && boughtQ > 0) {
+    let bw;
+    if (mode === 'REVERSE') { const a = (n - T) * 0.25; T = T + a; bw = `리버스 쿼터매수 +${fmt(a, 3)}`; }
+    else { const b = buyT(cfg, prev, cur); T = T + b.add; bw = b.why; }
+    tWhy = tWhy ? `${tWhy} → ${bw}` : bw;
+  }
+  tAdd = T - tFrom;
   /* 실현손익. 원본은 어느 다리가 체결됐는지 몰라 체결가를 추정하지만 여기는
      실제 체결금액을 안다(의도된 차이 ①).
 
@@ -2066,7 +2100,7 @@ function ibStep(cfg, prev, cur) {
   if (grossSold > 0) profit = num(cur.proceeds) - oldAvg * grossSold;
   const realized = num(prev.realized) + profit;
 
-  const cycleEnd = (q <= 0 && action === 'SELL');
+  const cycleEnd = (q <= 0 && soldQ > 0);
   if (cycleEnd) { mode = 'CYCLE_END'; T = 0; }
   else if (mode === 'NORMAL' && T > n - 1) mode = 'REVERSE';
   else if (mode === 'REVERSE' && close > avg * (1 - ty / 100)) mode = 'NORMAL';
@@ -2202,15 +2236,15 @@ function ibRun(key) {
        정확하다. 원장 수량과 맞아떨어질 때만 쓴다 — 손으로 수량을 고쳤거나
        목록이 반쪽이면 믿을 수 없다. */
     const trs = (r.tr || []).filter(t => t.g === sl.g && t.s === sl.s);
-    let soldQty = null, boughtAmt = 0;
+    let soldQty = null, boughtQty = null, boughtAmt = 0;
     if (trs.length) {
-      let tq = st.q, ta = st.avg, pr = 0, sq = 0, ba = 0;
+      let tq = st.q, ta = st.avg, pr = 0, sq = 0, bq = 0, ba = 0;
       trs.forEach(t => {
         const tqty = num(t.qty), tamt = num(t.amt);
-        if (t.side === 'B') { const nq = tq + tqty; ta = nq > 0 ? (ta * tq + tamt) / nq : 0; tq = nq; ba += tamt; }
+        if (t.side === 'B') { const nq = tq + tqty; ta = nq > 0 ? (ta * tq + tamt) / nq : 0; tq = nq; bq += tqty; ba += tamt; }
         else { pr += tamt; sq += tqty; tq -= tqty; if (tq <= 0) ta = 0; }
       });
-      if (Math.abs(tq - q) < 1e-6) { avg = ta; proceeds = pr; soldQty = sq; boughtAmt = ba; exact = true; }
+      if (Math.abs(tq - q) < 1e-6) { avg = ta; proceeds = pr; soldQty = sq; boughtQty = bq; boughtAmt = ba; exact = true; }
     }
 
     /* ② 목록이 없으면 일별 증감으로 되짚는다. 매입금액이 차감법이라 절대값은
@@ -2227,7 +2261,7 @@ function ibRun(key) {
       } else if (dq < 0) { proceeds = -dc; if (q <= 0) avg = 0; }
     }
     st = ibStep(cfg, st, {
-      q, avg, proceeds, soldQty, boughtAmt,
+      q, avg, proceeds, soldQty, boughtQty, boughtAmt,
       close: num(r.px[sl.px]) || st.close,
       sma5: num(r.sma && r.sma[sl.px])
     });
@@ -2486,7 +2520,7 @@ function renderIB() {
       <div class="big num"><span>${fmt(pct, 1)}</span><span class="unit">% 진행도</span></div>
       <div class="delta fl"><span style="color:${modeC};font-weight:600">${modeL}</span>
         <span class="pill">T ${st.T.toFixed(4)} / ${fmt(n, 0)}</span>
-        ${num(st.tAdd) ? `<span class="pill" title="${esc(st.tWhy)}">오늘 T +${fmt(st.tAdd, 2)}</span>` : ''}
+        ${st.tWhy ? `<span class="pill" title="${esc(st.tWhy)}">오늘 ${num(st.tAdd) >= 0 ? '+' : ''}${fmt(st.tAdd, 2)}</span>` : ''}
         <span class="pill">${fmt(tPct, 1)}%</span>
         ${st.mode === 'NORMAL' ? `<span class="pill">별 ${fmt(st.P, 2)}%</span>` : ''}</div>
       <div class="bar" style="width:100%;margin:9px 0 2px"><i style="width:${pct}%;background:${modeC}"></i></div>
@@ -2494,7 +2528,7 @@ function renderIB() {
         평단가 <b>${ibU(st.avg, 4)}</b> ·
         사용한 시드 <b>${ibU(used, 0)}</b> / ${ibU(num(cfg.seed), 0)}
         <span class="u">현재가 ${ibU(close)}</span></div>
-      ${st.tWhy ? `<div class="note" style="margin-top:4px">T 변화 <b>+${fmt(num(st.tAdd), 2)}</b> — ${esc(st.tWhy)}</div>` : ''}
+      ${st.tWhy ? `<div class="note" style="margin-top:4px">T 변화 <b>${fmt(st.T - num(st.tAdd), 4)} → ${fmt(st.T, 4)}</b> — ${esc(st.tWhy)}</div>` : ''}
     </div>`;
 
     if (o.done) {
