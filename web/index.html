@@ -643,7 +643,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-11 09:39';
+const BUILD = '2026-09-11 09:58';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2014,10 +2014,15 @@ function buyT(cfg, prev, cur) {
     return { add: 0, why: `본 매수 다리 미체결 — 대폭락 등 (종가 ${ibU(close)} > ${ibU(Math.max(...mains.map(l => num(l.px))))})` };
   }
   const per = 1 / mains.length;
+  /* 쓰던 앱과 T 가 다를 때 필요한 것은 '얼마 올랐나' 가 아니라 **무엇을 한 회차로
+     봤나** 다. 계획 다리의 수량과 그날 1회 투자금을 함께 적어 둔다 — 앱의 회차
+     크기와 바로 견줄 수 있다. */
+  const planQty = mains.reduce((a, l) => a + num(l.qty), 0);
   return {
     add: hit.length * per,
     why: hit.map(l => `${l.tag || l.typ} ${fmt(per, 1)}`).join(' + ')
       + (hit.length < mains.length ? ` (${mains.length - hit.length}다리 미체결)` : '')
+      + ` · 계획 ${fmt(planQty, 0)}주 · 1회 투자금 ${ibU(num(plan.amt), 0)}`
   };
 }
 
