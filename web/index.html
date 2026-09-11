@@ -281,6 +281,8 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
 .tbl th{text-align:right;font-weight:600;color:var(--muted);font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;padding:0 0 6px}
 .tbl th:first-child{text-align:left}
 .tbl td{padding:6px 0;border-top:1px solid var(--line);text-align:right;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+/* 합해서 윗줄(또는 아랫줄)이 되는 구성 항목. 들여쓰기로 묶음을 보이게 한다 */
+.sub2{display:inline-block;padding-left:11px}
 .tbl td:first-child{text-align:left;font-family:inherit;color:var(--ink2)}
 .scroll{overflow-x:auto}
 .mn{font-family:"IBM Plex Mono",monospace}
@@ -641,7 +643,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-11 09:22';
+const BUILD = '2026-09-11 09:39';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1977,6 +1979,48 @@ function ibCfg(k) {
   return c;
 }
 
+/* 그날 매수로 T 가 얼마나 오르는가. 함께 그 근거를 말로 돌려준다.
+
+   ── 종가 어림을 실제 다리로 바꿨다 (2026-09-11, 사용자 지적) ──────────
+   시트는 `종가 > 평단 ? +0.5 : +1.0` 하나로 처리한다. 전반전 두 다리
+   (평단▲ 큰수·별% / 평단▼)가 둘 다 LOC 라, 종가가 평단 아래면 둘 다 걸리고
+   위면 위 다리만 걸린다는 성질을 이용한 어림이다. 보통 날에는 정확히 맞는다.
+
+   맞지 않는 날이 있다. **대폭락 티어만 걸린 날**이다. 티어는 본 매수가 아니라
+   훨씬 아래에 1주씩 깔아 두는 보험인데, 원장에는 똑같이 '매수' 로 찍힌다.
+   어림은 그것을 보고 본 매수가 걸린 줄 알고 +0.5(또는 +1.0)를 얹는다.
+   **본 매수 다리 위에서 끝난 날**도 같다 — 한 다리도 안 걸렸는데 +0.5 가 붙는다.
+   사용자가 "어떤 매수 건의 T 가 과도반영된 것 아닌가" 라고 물은 자리가 여기다.
+
+   사용자가 정한 규칙 그대로 센다:
+     전반전 평단매수 0.5 · 큰수매수 0.5 · **대폭락매수 0** · 후반전 한 다리 1.0
+   즉 **그날 계획한 본 매수 다리 중 실제로 걸린 비율**이다. LOC 는 종가가 걸어 둔
+   값 이하일 때 체결되므로, 어느 다리가 걸렸는지는 종가로 정확히 갈린다.
+   보통 날에는 어림과 같은 값이 나온다 — 달라지는 것은 위 두 경우뿐이다.
+
+   안전망 하나. 한 다리도 안 걸렸다고 판정했는데 그날 실제로 **1회 투자금만큼**
+   사들였다면, 우리가 못 맞춘 것이지 안 산 것이 아니다. 그때는 +1.0 으로 본다 —
+   T 가 조용히 멈춰 사이클이 영영 안 끝나는 쪽이 훨씬 나쁘다.
+   (대폭락 1주는 1회 투자금의 몇 %라 이 그물에 걸리지 않는다.) */
+function buyT(cfg, prev, cur) {
+  const close = num(cur.close);
+  const plan = ibOrders(cfg, prev);
+  const mains = ((plan.buy && plan.buy.legs) || []).filter(l => num(l.qty) > 0);
+  if (!mains.length) return { add: 0, why: '계획된 본 매수 없음' };
+  const hit = mains.filter(l => close <= num(l.px) * (1 + PLAN_TOL));
+  if (!hit.length) {
+    const amt = num(plan.amt), got = num(cur.boughtAmt);
+    if (amt > 0 && got >= amt * 0.9) return { add: 1, why: `본 매수 다리는 안 걸렸으나 1회 투자금만큼 매수(${ibU(got, 0)})` };
+    return { add: 0, why: `본 매수 다리 미체결 — 대폭락 등 (종가 ${ibU(close)} > ${ibU(Math.max(...mains.map(l => num(l.px))))})` };
+  }
+  const per = 1 / mains.length;
+  return {
+    add: hit.length * per,
+    why: hit.map(l => `${l.tag || l.typ} ${fmt(per, 1)}`).join(' + ')
+      + (hit.length < mains.length ? ` (${mains.length - hit.length}다리 미체결)` : '')
+  };
+}
+
 /* 하루치 계산. 시트의 updateDaily() 본체다. */
 function ibStep(cfg, prev, cur) {
   const n = num(cfg.n), ty = num(cfg.ty), seed = num(cfg.seed);
@@ -1988,6 +2032,7 @@ function ibStep(cfg, prev, cur) {
   const prevMode = prev.mode === 'CYCLE_END' ? 'NORMAL' : prev.mode;
   let mode = prevMode, T = prev.mode === 'CYCLE_END' ? 0 : num(prev.T);
   let profit = 0;
+  let tAdd = 0, tWhy = '';                 // 그날 T 가 얼마나·왜 움직였나 (화면용)
 
   const action = q < oldQ ? 'SELL' : q > oldQ ? 'BUY' : 'NONE';
 
@@ -2001,10 +2046,8 @@ function ibStep(cfg, prev, cur) {
       T = (mode === 'NORMAL') ? T * 0.75 : T * (1 - 2 / n);
     }
   } else if (action === 'BUY') {
-    if (mode === 'REVERSE') T = T + (n - T) * 0.25;
-    else if (oldQ === 0) T = T + 1.0;
-    else if (T < n / 2) T = close > oldAvg ? T + 0.5 : T + 1.0;
-    else T = T + 1.0;
+    if (mode === 'REVERSE') { T = T + (n - T) * 0.25; tAdd = (n - prev.T) * 0.25; tWhy = '리버스'; }
+    else { const b = buyT(cfg, prev, cur); T = T + b.add; tAdd = b.add; tWhy = b.why; }
   }
   /* 실현손익. 원본은 어느 다리가 체결됐는지 몰라 체결가를 추정하지만 여기는
      실제 체결금액을 안다(의도된 차이 ①).
@@ -2026,6 +2069,7 @@ function ibStep(cfg, prev, cur) {
   const P = mode === 'NORMAL' ? ty - (ty / (n / 2)) * T : 0;
   return {
     q, avg, close, sma5, T, mode, prevMode, realized, profit, P, cycleEnd, action,
+    tAdd, tWhy,
     balance: seed + realized - q * avg
   };
 }
@@ -2153,15 +2197,15 @@ function ibRun(key) {
        정확하다. 원장 수량과 맞아떨어질 때만 쓴다 — 손으로 수량을 고쳤거나
        목록이 반쪽이면 믿을 수 없다. */
     const trs = (r.tr || []).filter(t => t.g === sl.g && t.s === sl.s);
-    let soldQty = null;
+    let soldQty = null, boughtAmt = 0;
     if (trs.length) {
-      let tq = st.q, ta = st.avg, pr = 0, sq = 0;
+      let tq = st.q, ta = st.avg, pr = 0, sq = 0, ba = 0;
       trs.forEach(t => {
         const tqty = num(t.qty), tamt = num(t.amt);
-        if (t.side === 'B') { const nq = tq + tqty; ta = nq > 0 ? (ta * tq + tamt) / nq : 0; tq = nq; }
+        if (t.side === 'B') { const nq = tq + tqty; ta = nq > 0 ? (ta * tq + tamt) / nq : 0; tq = nq; ba += tamt; }
         else { pr += tamt; sq += tqty; tq -= tqty; if (tq <= 0) ta = 0; }
       });
-      if (Math.abs(tq - q) < 1e-6) { avg = ta; proceeds = pr; soldQty = sq; exact = true; }
+      if (Math.abs(tq - q) < 1e-6) { avg = ta; proceeds = pr; soldQty = sq; boughtAmt = ba; exact = true; }
     }
 
     /* ② 목록이 없으면 일별 증감으로 되짚는다. 매입금액이 차감법이라 절대값은
@@ -2172,12 +2216,13 @@ function ibRun(key) {
     if (!exact) {
       if (dq > 0) {
         avg = q > 0 ? (st.avg * st.q + dc) / q : 0;
+        boughtAmt = dc;                                  // 체결 목록이 없으면 순증감으로 본다
         const unit = dc / dq, close = num(r.px[sl.px]) || st.close;
         if (close > 0 && (unit < close * 0.5 || unit > close * 1.5)) mixed.push(d);
       } else if (dq < 0) { proceeds = -dc; if (q <= 0) avg = 0; }
     }
     st = ibStep(cfg, st, {
-      q, avg, proceeds, soldQty,
+      q, avg, proceeds, soldQty, boughtAmt,
       close: num(r.px[sl.px]) || st.close,
       sma5: num(r.sma && r.sma[sl.px])
     });
@@ -2436,6 +2481,7 @@ function renderIB() {
       <div class="big num"><span>${fmt(pct, 1)}</span><span class="unit">% 진행도</span></div>
       <div class="delta fl"><span style="color:${modeC};font-weight:600">${modeL}</span>
         <span class="pill">T ${st.T.toFixed(4)} / ${fmt(n, 0)}</span>
+        ${num(st.tAdd) ? `<span class="pill" title="${esc(st.tWhy)}">오늘 T +${fmt(st.tAdd, 2)}</span>` : ''}
         <span class="pill">${fmt(tPct, 1)}%</span>
         ${st.mode === 'NORMAL' ? `<span class="pill">별 ${fmt(st.P, 2)}%</span>` : ''}</div>
       <div class="bar" style="width:100%;margin:9px 0 2px"><i style="width:${pct}%;background:${modeC}"></i></div>
@@ -2443,6 +2489,7 @@ function renderIB() {
         평단가 <b>${ibU(st.avg, 4)}</b> ·
         사용한 시드 <b>${ibU(used, 0)}</b> / ${ibU(num(cfg.seed), 0)}
         <span class="u">현재가 ${ibU(close)}</span></div>
+      ${st.tWhy ? `<div class="note" style="margin-top:4px">T 변화 <b>+${fmt(num(st.tAdd), 2)}</b> — ${esc(st.tWhy)}</div>` : ''}
     </div>`;
 
     if (o.done) {
@@ -4114,6 +4161,13 @@ function simulate(name) {
     net: P.targetRE + e + f + P.kidTarget,                   // 총 순자산
     later: P.targetRE + e + f,                               // 노후자산 = 총 순자산 − 자녀증여
     kidShort: kidSettle,
+    /* 표에 적는 자녀증여는 **입력값 그대로**다 (2026-09-10 → 09-11 변경).
+       예전에는 '부족분'(자녀자산 − 증여목표)을 적었는데, 그 숫자는 시나리오마다
+       달라져 "내가 정한 3억" 이 화면 어디에도 안 보였다. 부족분은 이미 금융(finDisp)
+       안에서 정산돼 있으므로, 표는 입력값을 빼는 모양이 맞다:
+         부동산 순자산 + 금융 + DC + 자녀자산 − 자녀증여 = 노후자산
+       (항등식이다. finDisp 가 kidSettle 을 되돌려 놓고, 자녀자산 G 가 그만큼 크다.) */
+    kidGift: num(P.kidTarget),
     crevasse, misc: num(P.misc), miscYr, save, taxProp, avail, nDep,
     draw: keep.draw, dcDraw: keep.dcDraw, taxDc: keep.taxDc,
     taxInc: keep.taxInc, health: keep.health, deduct: keep.deduct,
@@ -4203,12 +4257,14 @@ function renderPlan() {
   const eok1 = v => (v / 10000).toFixed(1);
   const ROWS = [
     ['총 순자산', s => s.net, '억', 1],
-    ['부동산 순자산', s => s.reNet, '억', 0],
-    ['금융', s => s.finDisp, '억', 0],
-    ['DC', s => s.F, '억', 0],
-    ['자녀자산', s => s.G, '억', 0],
-    ['자녀증여 부족분', s => s.kidShort, '억', 0],
-    ['노후자산 <span class="u">자녀증여 차감 후</span>', s => s.later, '억', 1],
+    /* 아래 다섯 줄은 더하면 노후자산이 된다. 들여쓰기로 그 묶음을 보이게 한다
+       (2026-09-11, 사용자 요청). 자녀증여는 부족분이 아니라 **입력값**이다. */
+    ['<span class="sub2">부동산 순자산</span>', s => s.reNet, '억', 0],
+    ['<span class="sub2">금융</span>', s => s.finDisp, '억', 0],
+    ['<span class="sub2">DC</span>', s => s.F, '억', 0],
+    ['<span class="sub2">자녀자산</span>', s => s.G, '억', 0],
+    ['<span class="sub2">자녀증여 <span class="u">입력값</span></span>', s => -s.kidGift, '억', 1],
+    ['노후자산 <span class="u">위 다섯 줄의 합</span>', s => s.later, '억', 1],
     ['은퇴 인출가능', s => s.avail, '억', 1],
     ['국민연금(월) <span class="u">부부 합산</span>', s => s.penH, '만', 0],
     ['보유세 <span class="u">재산·종부세 · 연</span>', s => -s.taxProp, '만', 0],
