@@ -23,7 +23,7 @@
   --bg:#F1F2F5; --surf:#FFFFFF; --surf2:#F7F8FA; --surf3:#EDEFF3;
   --ink:#14181F; --ink2:#48515F; --muted:#7C8593; --line:#E1E4EA; --line2:#D2D7DF;
   --brass:#8A6420; --brass-soft:#F2E7D2; --on-brass:#FFFFFF;
-  --up:#C93A34; --down:#2B5FC0;
+  --up:#C93A34; --down:#2B5FC0; --pos:#1B7F4E;
   /* c1~c3 은 색각 검증을 통과한 3계열 팔레트다. 누적 그래프가 5계열이라 c4·c5 를 더했다.
      띠가 서로 붙어 있어 선 그래프보다 구분이 쉽지만, 색만으로 읽게 두지 말고
      범례와 툴팁의 이름을 항상 함께 보여줄 것. */
@@ -36,7 +36,7 @@
     --bg:#0E1116; --surf:#171B22; --surf2:#1C212A; --surf3:#232935;
     --ink:#E9ECF1; --ink2:#AFB7C3; --muted:#79828F; --line:#262C36; --line2:#333B48;
     --brass:#D6A24A; --brass-soft:#2A2418; --on-brass:#151009; --on-brass:#151009;
-    --up:#EC6259; --down:#6C9BEE;
+    --up:#EC6259; --down:#6C9BEE; --pos:#4FC38A;
     --c1:#C28722; --c2:#1BA07C; --c3:#7078DE; --c4:#D07A9C; --c5:#93A0B0;
     --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.25);
   }
@@ -45,7 +45,7 @@
   --bg:#0E1116; --surf:#171B22; --surf2:#1C212A; --surf3:#232935;
   --ink:#E9ECF1; --ink2:#AFB7C3; --muted:#79828F; --line:#262C36; --line2:#333B48;
   --brass:#D6A24A; --brass-soft:#2A2418; --on-brass:#151009;
-  --up:#EC6259; --down:#6C9BEE;
+  --up:#EC6259; --down:#6C9BEE; --pos:#4FC38A;
   --c1:#C28722; --c2:#1BA07C; --c3:#7078DE; --c4:#D07A9C; --c5:#93A0B0;
   --shadow:0 1px 2px rgba(0,0,0,.3),0 4px 14px rgba(0,0,0,.25);
 }
@@ -214,6 +214,9 @@ table.rt tr.hi td{background:var(--surf2);font-weight:600;color:var(--ink)}
 table.rt tr.hi td:first-child{color:var(--ink);border-radius:6px 0 0 6px;padding-left:7px}
 table.rt tr.hi td:last-child{border-radius:0 6px 6px 0;padding-right:7px}
 table.rt td.neg{color:var(--down)}
+/* 부호가 곧 판정인 줄 — 모자라면 빨강, 남으면 녹색. 파랑(neg)과 달리 '좋다/나쁘다' 를 말한다 */
+table.rt td.sgn-neg{color:var(--up);font-weight:600}
+table.rt td.sgn-pos{color:var(--pos);font-weight:600}
 table.rt .u{font-size:9.5px;color:var(--muted);margin-left:2px;font-family:"IBM Plex Sans KR",sans-serif}
 
 /* generic */
@@ -643,7 +646,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-11 13:59';
+const BUILD = '2026-09-11 14:46';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1595,6 +1598,14 @@ function ensurePlan() {
     /* 잠깐 있었던 배우자 칸을 합계로 접는다 — 쓰는 곳은 합계뿐이었다 */
     if (num(state.plan.pen2)) { state.plan.pen = num(state.plan.pen) + num(state.plan.pen2); }
     delete state.plan.pen2;
+    /* 3인 총액(kidTarget) → 인당(kidGift) 으로 옮긴다 (2026-09-11).
+       서버·다른 기기에 옛 모양이 남아 있을 수 있다. 3억이면 인당 1억이 된다. */
+    if (!num(state.plan.kidGift)) {
+      const old = num(state.plan.kidTarget) || num(d.kidTarget) || num((SEED.plan || {}).kidTarget);
+      state.plan.kidGift = old > 0 ? Math.round(old / KID_N) : d.kidGift;
+    }
+    delete state.plan.kidTarget;
+    if (!Array.isArray(state.plan.kidY) || state.plan.kidY.length !== KID_N) state.plan.kidY = d.kidY.slice();
   }
   const B = SEED.basis || {}, past = SEED.past || {};
   if (state.reCost == null && B['부동산']) state.reCost = num(B['부동산'].cost);
@@ -2619,7 +2630,9 @@ function renderIB() {
 
   /* T 내역. 쓰던 앱과 T 가 다를 때 **어느 날** 갈라졌는지가 유일하게 필요한 정보다.
      예전에는 오늘 한 줄만 보여 줘서, 차이가 과거에서 왔으면 짚을 방법이 없었다. */
-  const th = run.hist.filter(h => h.tWhy).slice(-14).reverse();
+  /* run 이 null 일 수 있다 — 무매를 안 켰거나 시드가 0 이면 ibRun 이 null 을 준다.
+     이 자리는 `if (run)` 블록 **밖**이라 그대로 두면 탭이 통째로 안 그려진다. */
+  const th = run ? run.hist.filter(h => h.tWhy).slice(-14).reverse() : [];
   if (th.length) {
     out += secD('thist', 'T 내역', `<div class="card pad"><div class="scroll"><table class="tbl">
       <tr><th>날짜</th><th>체결</th><th>T</th></tr>`
@@ -4011,7 +4024,11 @@ document.getElementById('p-ib')?.addEventListener('change', e => {
 const PLAN_BASE = {
   infl: 0.023, loanRate: 0.05,
   baseYear: 2026, retireYear: 2042, pensionYear: 2046, crevasseMonths: 53,
-  targetRE: 0, re26: 0, save: 0, dcAdd: 0, kidTarget: 0,
+  targetRE: 0, re26: 0, save: 0, dcAdd: 0,
+  /* 자녀증여는 **인당 현재가치**다 (2026-09-11, 사용자 요청). 예전에는 3인 총액을
+     은퇴 시점에 한 번 빼는 모양이었는데, 실제로는 각자 스무 살이 되는 해에 따로 나간다.
+     kidY 가 그 연도 셋이다 — 생년 + 20. 화면에서 고칠 수 있다. */
+  kidGift: 10000, kidY: [2032, 2035, 2038],
   /* 국민연금은 **공통가정**이고 **부부 합산 한 칸**이다 (2026-09-10, 사용자 요청).
      예전에는 시나리오마다 따로 뒀는데, 수령액은 가입이력이 정하는 것이지 투자수익률이
      정하는 것이 아니다. 본인·배우자를 나눠 받아 봐야 쓰는 곳은 합계뿐이라 한 칸으로 둔다.
@@ -4031,10 +4048,12 @@ const PLAN_BASE = {
     목표: { fin: 0.120, dc: 0.080, ret: 0.080 }
   }
 };
-const PLAN_KEYS = ['targetRE', 're26', 'save', 'dcAdd', 'kidTarget'];
+const PLAN_KEYS = ['targetRE', 're26', 'save', 'dcAdd'];
 /* 99세까지 쓴다고 볼 때의 나이 셈. 국민연금 개시를 만 65세로 보고 태어난 해를
    되짚는다 — 따로 생년을 받지 않으려는 것이다. 개시 연도를 고치면 함께 움직인다. */
 const DEPLETE_AGE = 99, PENSION_AGE = 65;
+/* 자녀 수. kidY(20세가 되는 연도)의 길이와 같다 — 한곳에서만 고치면 되게 상수로 둔다. */
+const KID_N = 3;
 /* 부부 노후 필요생활비 — 국민연금연구원 국민노후보장패널조사 10차 부가조사(2024).
    화면의 월 현금흐름을 견줄 눈금이 없어 "이 숫자가 충분한가" 를 판단할 수가 없었다.
    조사 기준연도에서 기준연도까지 물가로 올려 쓴다. 부부 2인 기준이다. */
@@ -4141,6 +4160,39 @@ function simulate(name) {
   const miscYr = nYears > 0 ? num(P.misc) / nYears : 0;
   const save = Math.max(0, P.save - miscYr);
 
+  /* ── 자녀증여 (2026-09-11, 사용자 요청) ────────────────────────────────
+     각자 스무 살이 되는 해에 **현재가치 kidGift** 를 준다. 그 해 자녀 계좌에 있는
+     돈(원금 + 수익)을 먼저 쓰고 **부족분만 부모가 채운다.** 반대로 자녀 계좌가
+     증여액보다 많으면 남는 것은 부모 쪽으로 돌아온다 — 예전 모델의
+     `kidSettle = 자녀자산 − 목표액` 과 같은 처리이고, 다만 **은퇴 시점 한 번이
+     아니라 각자의 스무 살에** 일어난다는 것이 다르다.
+
+     증여가 끝난 자녀 몫은 가계 자산에서 **빠져나간다.** 그 돈은 이제 자녀 것이다.
+     그래서 총자산 그래프도 그 해에 kidGift 만큼 내려간다 — 실제로 나간 돈이다.
+
+     계좌를 자녀별로 따로 받지 않으므로 시작 자산은 **균등하게 셋으로 나눈다.**
+     합계로 보면 결국 같은 주머니라, 나누는 방식이 총액을 바꾸지 않는다. */
+  const kidY = (P.kidY || []).map(v => num(v)).filter(v => v > 0);
+  const kidGift = num(P.kidGift);
+  let kids = kidY.map(() => (kidY.length ? S.b / kidY.length : 0));
+  const kidGrow = () => { kids = kids.map(v => v == null ? null : v * (1 + fr)); };
+  const kidSum = () => kids.reduce((a, v) => a + (v || 0), 0);
+  /* 그 해 증여로 **부모 금융에서** 나가는 돈. 자녀 몫은 kids 에서 지운다. */
+  const giveAt = y => {
+    let out = 0;
+    kidY.forEach((gy, j) => {
+      if (gy !== y || kids[j] == null) return;
+      out += kidGift - kids[j];          // 부족분(양수) 또는 잉여 회수(음수)
+      kids[j] = null;
+    });
+    return out;
+  };
+  /* 기타지출 때문에 **덜 쌓인 금액**을 해마다 같이 굴린다. 은퇴 시점에 그만큼이
+     비어 있고, 표에는 그 값을 적는다. 닫힌 식(연금 미래가치)을 쓰지 않는 것은
+     대출 상환·부동산 잔금 때문에 저축이 그대로 안 들어가는 해가 있어서다. */
+  let miscAcc = 0;
+  const miscTick = () => { miscAcc = miscAcc * (1 + fr) + miscYr; };
+
   /* 26년말 부동산가로 무엇을 넣든 총자산이 부풀지 않게 한다.
      예전에는 이 값을 '대출 뺀 순자산' 으로만 보고 대출을 아예 안 잡아서,
      총 집값(96,828)을 넣으면 실제 순자산(84,155)과의 차이인 12,673 만큼
@@ -4158,9 +4210,10 @@ function simulate(name) {
   const pool = E[0] * (1 + fr) + save;
   B.push(carried + Math.max(0, gap - pool));
   C.push(0); D.push(0);
-  E.push(Math.max(0, pool - gap));
+  kidGrow(); miscTick();
+  E.push(Math.max(0, pool - gap) - giveAt(P.baseYear + 1));
   F.push(F[0] * (1 + dr) + num(P.dcAdd));
-  G.push(G[0] * (1 + fr));
+  G.push(kidSum());
   rows.push({ y: P.baseYear + 1, B: B[1], C: C[1], D: D[1], E: E[1], F: F[1], G: G[1] });
 
   const loan0 = B[1];                                        // 원리금균등 기준 원금
@@ -4170,19 +4223,32 @@ function simulate(name) {
     if (pb > 0) c = (name === '목표') ? pmt(P.loanRate, 30, loan0) : Math.min(pb * (1 + P.loanRate), save);
     B.push(Math.max(0, pb * (1 + P.loanRate) - c));
     C.push(c); D.push(save - c);
-    E.push(E[i - 1] * (1 + fr) + (save - c));
+    kidGrow(); miscTick();
+    E.push(E[i - 1] * (1 + fr) + (save - c) - giveAt(P.baseYear + i));
     F.push(F[i - 1] * (1 + dr) + num(P.dcAdd));
-    G.push(G[i - 1] * (1 + fr));
+    G.push(kidSum());
     rows.push({ y: P.baseYear + i, B: B[i], C: C[i], D: D[i], E: E[i], F: F[i], G: G[i] });
   }
   // 은퇴 연도: 잔여 대출 일시 상환 + 자녀 목표액 정산
   const i = nYears;
   const loanLeft = B[i - 1] * (1 + P.loanRate);
-  const g = G[i - 1] * (1 + fr);
+  kidGrow(); miscTick();
+  const giveLast = giveAt(P.retireYear);
+  const g = kidSum();                                        // 아직 스무 살이 안 된 자녀 몫
   const f = F[i - 1] * (1 + dr) + num(P.dcAdd);
-  const kidSettle = g - P.kidTarget;
-  const e = E[i - 1] * (1 + fr) + save - loanLeft + kidSettle;
+  const e = E[i - 1] * (1 + fr) + save - loanLeft - giveLast;
   rows.push({ y: P.retireYear, B: 0, C: 0, D: save, E: e, F: f, G: g });
+
+  /* 표에 적는 자녀증여는 **은퇴 시점 값**이다. 2032년에 나간 1억은 은퇴(2042)까지
+     불어났을 돈이므로, 은퇴 시점 장부에서 비어 있는 자리는 1억이 아니라 그 미래가치다.
+
+     증여를 아예 안 했다면 가계에 남았을 금액과 정확히 같다 —
+       (부모가 채운 부족분 + 자녀 계좌에 있던 몫) × (1+fr)^(은퇴연도 − 증여연도)
+       = kidGift × (1+fr)^(은퇴연도 − 증여연도)
+     둘로 나뉘어 있던 것이 합쳐지면 인당 kidGift 하나로 떨어진다.
+     스무 살이 은퇴 뒤인 자녀가 있으면 지수가 음수가 되어 **할인**된다 — 그것도 맞다. */
+  const kidRet = kidY.reduce((a, gy) => a + kidGift * Math.pow(1 + fr, P.retireYear - gy), 0);
+  const miscRet = miscAcc;
 
   // 요약
   /* 가구 연금 = 본인 + 배우자. 크레바스도 가구 기준으로 뗀다 — 둘 다 그 기간에는
@@ -4227,21 +4293,19 @@ function simulate(name) {
   const drawDep = rr > 1e-9 ? pmt(rr, nDep, avail) : avail / nDep;
   const use = after(drawDep);
 
+  /* 표는 **은퇴 시점 기준 폭포**다 (2026-09-11, 사용자 요청).
+       부동산 순자산 + 금융 + DC            = 총 순자산   (증여·기타지출 전)
+         − 자녀증여 − 기타지출              = 노후자산   (실제로 노후에 쓸 것)
+     금융(finDisp)이 증여·기타지출을 **되돌려 놓은** 값이라 항등식이 성립한다.
+     자녀자산 줄은 없앴다 — 은퇴 시점에는 셋 다 증여가 끝나 0 이다. */
   return {
-    name, rows, loanLeft, kidSettle,
+    name, rows, loanLeft,
     E: e, F: f, G: g,
     reNet: P.targetRE - loanLeft,                            // 부동산 순자산 (대출 차감)
-    finDisp: e + loanLeft - kidSettle,                       // 대출·자녀정산 전 금융
-    net: P.targetRE + e + f + P.kidTarget,                   // 총 순자산
-    later: P.targetRE + e + f,                               // 노후자산 = 총 순자산 − 자녀증여
-    kidShort: kidSettle,
-    /* 표에 적는 자녀증여는 **입력값 그대로**다 (2026-09-10 → 09-11 변경).
-       예전에는 '부족분'(자녀자산 − 증여목표)을 적었는데, 그 숫자는 시나리오마다
-       달라져 "내가 정한 3억" 이 화면 어디에도 안 보였다. 부족분은 이미 금융(finDisp)
-       안에서 정산돼 있으므로, 표는 입력값을 빼는 모양이 맞다:
-         부동산 순자산 + 금융 + DC + 자녀자산 − 자녀증여 = 노후자산
-       (항등식이다. finDisp 가 kidSettle 을 되돌려 놓고, 자녀자산 G 가 그만큼 크다.) */
-    kidGift: num(P.kidTarget),
+    finDisp: e + loanLeft + kidRet + miscRet,                // 대출·증여·기타지출 전 금융
+    net: P.targetRE + e + f + kidRet + miscRet,              // 총 순자산 (증여·기타지출 전)
+    later: P.targetRE + e + f,                               // 노후자산 (실제)
+    kidRet, miscRet, kidGift, kidY,
     crevasse, misc: num(P.misc), miscYr, save, taxProp, avail, nDep,
     draw: keep.draw, dcDraw: keep.dcDraw, taxDc: keep.taxDc,
     taxInc: keep.taxInc, health: keep.health, deduct: keep.deduct,
@@ -4330,14 +4394,16 @@ function renderPlan() {
   $('#retTitle').textContent = `${P.retireYear}년말 은퇴 요약`;
   const eok1 = v => (v / 10000).toFixed(1);
   const ROWS = [
-    ['총 순자산', s => s.net, '억', 1],
-    /* 아래 다섯 줄은 더하면 노후자산이 된다. 들여쓰기로 그 묶음을 보이게 한다
-       (2026-09-11, 사용자 요청). 자녀증여는 부족분이 아니라 **입력값**이다. */
+    ['총 순자산 <span class="u">증여·기타지출 전</span>', s => s.net, '억', 1],
+    /* 은퇴 시점 기준 폭포. 위 셋을 더하면 총 순자산, 다섯 줄을 더하면 노후자산이다.
+       자녀증여·기타지출은 **은퇴 시점으로 환산한 값**이다 — 2032년에 나간 1억은
+       은퇴까지 불어났을 돈이라, 은퇴 장부에서 비어 있는 자리는 1억이 아니다.
+       자녀자산 줄은 없앴다(2026-09-11, 사용자 요청) — 은퇴 시점엔 셋 다 증여가 끝나 0 이다. */
     ['<span class="sub2">부동산 순자산</span>', s => s.reNet, '억', 0],
-    ['<span class="sub2">금융</span>', s => s.finDisp, '억', 0],
+    ['<span class="sub2">금융 <span class="u">증여·기타지출 전</span></span>', s => s.finDisp, '억', 0],
     ['<span class="sub2">DC</span>', s => s.F, '억', 0],
-    ['<span class="sub2">자녀자산</span>', s => s.G, '억', 0],
-    ['<span class="sub2">자녀증여 <span class="u">입력값</span></span>', s => -s.kidGift, '억', 1],
+    [`<span class="sub2">자녀증여 <span class="u">${KID_N}인 합산 · 은퇴시점</span></span>`, s => -s.kidRet, '억', 1],
+    ['<span class="sub2">기타지출 <span class="u">은퇴시점</span></span>', s => -s.miscRet, '억', 1],
     ['노후자산 <span class="u">위 다섯 줄의 합</span>', s => s.later, '억', 1],
     ['은퇴 인출가능', s => s.avail, '억', 1],
     ['국민연금(월) <span class="u">부부 합산</span>', s => s.penH, '만', 0],
@@ -4346,15 +4412,18 @@ function renderPlan() {
     ['월 현금흐름 <span class="u">자산유지</span>', s => s.cashM, '만', 1],
     [`월 현금흐름 <span class="u">자산소진 · ${DEPLETE_AGE}세</span>`, s => s.cashMUse, '만', 1],
     ['필요생활비 <span class="u">부부 적정</span>', s => s.needOk, '만', 0],
-    ['<span style="color:var(--muted)">└ 자산유지 − 적정</span>', s => s.cashM - s.needOk, '만', 0]
+    /* 다섯째 값 'sgn' — 부호가 곧 판정인 줄이다. 모자라면 빨강, 남으면 녹색.
+       다른 줄의 마이너스(파랑)는 '빼는 항목' 일 뿐 나쁘다는 뜻이 아니라 색을 달리 한다. */
+    ['└ 자산유지 − 적정', s => s.cashM - s.needOk, '만', 0, 'sgn']
   ];
   $('#retTbl').innerHTML =
     `<tr><th>항목</th>${SCN.map(n => `<th>${n}</th>`).join('')}</tr>`
-    + ROWS.map(([lbl, fn, unit, hi]) =>
+    + ROWS.map(([lbl, fn, unit, hi, sgn]) =>
       `<tr class="${hi ? 'hi' : ''}"><td>${lbl}</td>` + sims.map(s => {
         const v = fn(s);
         const txt = unit === '억' ? eok1(v) : fmt(v, 0);
-        return `<td class="${v < 0 ? 'neg' : ''}">${txt}<span class="u">${unit}</span></td>`;
+        const cls = sgn ? (v < 0 ? 'sgn-neg' : 'sgn-pos') : (v < 0 ? 'neg' : '');
+        return `<td class="${cls}">${txt}<span class="u">${unit}</span></td>`;
       }).join('') + `</tr>`).join('');
 
   /* ── 설정 ── */
@@ -4371,7 +4440,7 @@ function renderPlan() {
     ['loanRate', '대출 금리', '%', pct(P.loanRate), 0.1],
     ['save', '연 저축액', '만원', P.save, 100],
     ['dcAdd', 'DC 연 불입액', '만원', P.dcAdd, 50],
-    ['kidTarget', '자녀증여', '만원', P.kidTarget, 1000],
+    ['kidGift', '자녀증여', '인당 · 만원 · 20세', num(P.kidGift), 1000],
     ['misc', '기타지출', '만원 · 차량·가전 등', num(P.misc), 1000],
     ['pen', '국민연금 <span class="u2">부부 합산</span>', '만원/월', num(P.pen), 5],
     ['retireYear', '은퇴 연도', '년', P.retireYear, 1],
@@ -4379,6 +4448,12 @@ function renderPlan() {
   ].map(([k, l, u, v, st]) =>
     `<div class="erow"><label>${l} <span class="u">${u}</span></label>
      <input class="num" type="number" step="${st}" data-pc="${k}" value="${v}"></div>`).join('')
+    /* 자녀가 스무 살이 되는 해 셋. 생년 + 20 이다. 한 줄에 나란히 둔다 —
+       따로 세 줄을 만들면 공통가정이 길어져 아래가 안 보인다. */
+    + `<div class="erow"><label>자녀 20세 <span class="u">증여 연도</span></label>
+       <div style="display:flex;gap:5px;flex:none">${(P.kidY || []).map((y, j) =>
+      `<input class="num" type="number" step="1" data-ky="${j}" value="${num(y)}"
+        style="width:66px;text-align:center">`).join('')}</div></div>`
     + `<p class="note" style="padding:4px 15px 0">금액은 모두 <b>현재가치</b>입니다.
        연 저축액·DC 연 불입액은 매년 같은 값을 넣는데, 이는 명목으로 물가상승률만큼
        매년 늘어난다는 뜻입니다. <b>연금 공백</b>은 은퇴 후 국민연금을 받기 전까지의
@@ -4389,6 +4464,13 @@ function renderPlan() {
        지금 값은 <b>${fmt(num(P.misc), 0)}만원 ÷ ${fmt(nAcc, 0)}년 = 연 ${fmt(miscYrNow, 0)}만원</b>
        이고, 연 저축액이 ${fmt(num(P.save), 0)} → <b>${fmt(Math.max(0, num(P.save) - miscYrNow), 0)}만원</b>이 됩니다.
        (모으는 햇수는 기준연도 ${P.baseYear} → 은퇴연도 ${P.retireYear} 입니다)
+       <br><b>자녀증여</b>는 <b>인당</b> 금액입니다. 각자 스무 살이 되는 해
+       (${(P.kidY || []).map(y => fmt(num(y), 0)).join(' · ')})에 그 자녀 계좌의 돈
+       (원금 + 그때까지의 수익)을 먼저 쓰고 <b>모자라는 만큼만 보태</b> 현재가치
+       ${fmt(num(P.kidGift), 0)}만원을 채워 줍니다. 계좌가 더 많으면 남는 것은 되돌아옵니다.
+       증여가 끝난 몫은 가계 자산에서 빠지므로 총자산 그래프도 그 해에 내려갑니다.
+       요약표의 자녀증여는 <b>은퇴 시점으로 환산한 ${KID_N}인 합산</b>입니다 —
+       일찍 나간 돈일수록 은퇴까지 불어났을 금액이 커서 ${fmt(num(P.kidGift) * KID_N, 0)}만원보다 큽니다.
        <br><b>국민연금</b>은 시나리오가 아니라 여기 있고, <b>부부 합산 한 칸</b>입니다 —
        수령액은 가입이력이 정하는 것이지 투자수익률이 정하는 것이 아닙니다.
        국민연금공단 <b>내 연금 알아보기</b>(csa.nps.or.kr)에서 부부 각자 조회해
@@ -4458,13 +4540,12 @@ function renderPlan() {
   const reNow = calc(latest()).reT;
   const re26 = num(P.re26) || reNow, reTarget = num(P.targetRE) || reNow;
   const reAt = y => y <= P.baseYear ? re26 : reTarget;
-  /* 은퇴 연도에는 자녀 계좌를 목표액으로 본다.
-     simulate() 가 그 해에 kidSettle = G − kidTarget 을 금융자산 E 에 이미 넣었다.
-     정산 뒤 자녀 계좌가 들고 있는 건 kidTarget 이다. 여기서 G 를 그대로 더하면
-     부족분이 두 번 빠져 2042년이 2041년보다 작아진다(예상 −21,047, 현재 −10,270).
-     이렇게 고치면 은퇴 요약표의 net 과 정확히 같아진다. */
-  const totalOf = r => reAt(r.y) + r.E + r.F
-    + (r.y === P.retireYear ? num(P.kidTarget) : r.G) - r.B;   // 대출은 부채라 뺀다
+  /* 자녀 몫은 **증여 전까지만** 가계 자산이다 (2026-09-11).
+     simulate() 가 각자 스무 살이 되는 해에 그 몫을 G 에서 지우고 부족분을 E 에서
+     빼므로, 여기서는 G 를 그대로 더하면 된다 — 증여한 해에 딱 그만큼 내려간다.
+     예전에는 은퇴 연도만 kidTarget 으로 갈아끼우는 예외가 있었다. 증여가 은퇴 시점
+     한 번이 아니게 되면서 그 예외가 필요 없어졌다. */
+  const totalOf = r => reAt(r.y) + r.E + r.F + r.G - r.B;      // 대출은 부채라 뺀다
 
   const series = SCN.map((n, i) => {
     const pts = pastYs.map(y => ({
@@ -4633,6 +4714,11 @@ document.getElementById('p-plan').addEventListener('change', e => {
     const k = t.dataset.pc;
     P[k] = (k === 'infl' || k === 'loanRate') ? +t.value / 100 : +t.value;
     planSave(); return;
+  }
+  if (t.dataset.ky) {
+    const j = +t.dataset.ky;
+    if (!Array.isArray(P.kidY)) P.kidY = [];
+    P.kidY[j] = +t.value; planSave(); return;
   }
   if (t.dataset.ps) {
     const [n, k] = t.dataset.ps.split('|');
