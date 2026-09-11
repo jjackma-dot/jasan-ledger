@@ -643,7 +643,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-11 13:45';
+const BUILD = '2026-09-11 13:59';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2018,7 +2018,18 @@ function ibCfg(k) {
    센트 반올림만 감안해 반 센트만 둔다. */
 const FILL_EPS = 0.005;
 function buyT(cfg, prev, cur) {
-  const close = num(cur.close);
+  /* 어느 다리가 걸렸는지는 **그날 실제로 산 가격**으로 가른다.
+
+     ── 원장의 종가 칸을 믿으면 안 된다 (2026-09-11) ─────────────────
+     `cur.close` 는 원장 `px` 칸이고, 그건 시세 워커가 마지막으로 써 둔 값이다.
+     그날 미국장 종가일 수도 있고, 장중 값이거나 **전날 값이 이월(carry)** 된 것일
+     수도 있다. 하루만 어긋나도 다리 판정이 통째로 뒤집힌다.
+
+     그런데 우리는 더 확실한 것을 갖고 있다 — **체결가 그 자체**다.
+     무매 매수는 전부 LOC 라 종가에 체결된다. 즉 그날 매수 체결가 = 그날 종가다.
+     값이 여럿이면 가장 높은 것을 쓴다. 그보다 낮은 지정가는 걸릴 수가 없다.
+     체결이 없는 날은 T 가 안 움직이므로 이 함수가 불리지도 않는다. */
+  const close = num(cur.buyPx) > 0 ? num(cur.buyPx) : num(cur.close);
   const plan = ibOrders(cfg, prev);
   const mains = ((plan.buy && plan.buy.legs) || []).filter(l => num(l.qty) > 0);
   if (!mains.length) return { add: 0, why: '계획된 본 매수 없음' };
@@ -2236,15 +2247,19 @@ function ibRun(key) {
        정확하다. 원장 수량과 맞아떨어질 때만 쓴다 — 손으로 수량을 고쳤거나
        목록이 반쪽이면 믿을 수 없다. */
     const trs = (r.tr || []).filter(t => t.g === sl.g && t.s === sl.s);
-    let soldQty = null, boughtQty = null, boughtAmt = 0;
+    let soldQty = null, boughtQty = null, boughtAmt = 0, buyPx = 0;
     if (trs.length) {
-      let tq = st.q, ta = st.avg, pr = 0, sq = 0, bq = 0, ba = 0;
+      let tq = st.q, ta = st.avg, pr = 0, sq = 0, bq = 0, ba = 0, bp = 0;
       trs.forEach(t => {
         const tqty = num(t.qty), tamt = num(t.amt);
-        if (t.side === 'B') { const nq = tq + tqty; ta = nq > 0 ? (ta * tq + tamt) / nq : 0; tq = nq; bq += tqty; ba += tamt; }
-        else { pr += tamt; sq += tqty; tq -= tqty; if (tq <= 0) ta = 0; }
+        if (t.side === 'B') {
+          const nq = tq + tqty; ta = nq > 0 ? (ta * tq + tamt) / nq : 0; tq = nq; bq += tqty; ba += tamt;
+          bp = Math.max(bp, num(t.px) > 0 ? num(t.px) : (tqty > 0 ? tamt / tqty : 0));
+        } else { pr += tamt; sq += tqty; tq -= tqty; if (tq <= 0) ta = 0; }
       });
-      if (Math.abs(tq - q) < 1e-6) { avg = ta; proceeds = pr; soldQty = sq; boughtQty = bq; boughtAmt = ba; exact = true; }
+      if (Math.abs(tq - q) < 1e-6) {
+        avg = ta; proceeds = pr; soldQty = sq; boughtQty = bq; boughtAmt = ba; buyPx = bp; exact = true;
+      }
     }
 
     /* ② 목록이 없으면 일별 증감으로 되짚는다. 매입금액이 차감법이라 절대값은
@@ -2256,17 +2271,18 @@ function ibRun(key) {
       if (dq > 0) {
         avg = q > 0 ? (st.avg * st.q + dc) / q : 0;
         boughtAmt = dc;                                  // 체결 목록이 없으면 순증감으로 본다
+        buyPx = dc / dq;                                 // 그날 실제 단가 (순증감 기준)
         const unit = dc / dq, close = num(r.px[sl.px]) || st.close;
         if (close > 0 && (unit < close * 0.5 || unit > close * 1.5)) mixed.push(d);
       } else if (dq < 0) { proceeds = -dc; if (q <= 0) avg = 0; }
     }
     st = ibStep(cfg, st, {
-      q, avg, proceeds, soldQty, boughtQty, boughtAmt,
+      q, avg, proceeds, soldQty, boughtQty, boughtAmt, buyPx,
       close: num(r.px[sl.px]) || st.close,
       sma5: num(r.sma && r.sma[sl.px])
     });
     prevC = c;
-    hist.push({ d, ...st });
+    hist.push({ d, ...st, buyPx, boughtQty: boughtQty != null ? boughtQty : Math.max(0, dq), soldQ: soldQty != null ? soldQty : Math.max(0, -dq) });
   }
   return { cfg, sl, st, hist, mixed, orders: ibOrders(cfg, st) };
 }
@@ -2599,6 +2615,25 @@ function renderIB() {
             <td style="color:var(--${h.profit >= 0 ? 'up' : 'down'})">${ibSgn(h.profit)}</td></tr>`).join('')
         + `</table></div></div>`;
     }
+  }
+
+  /* T 내역. 쓰던 앱과 T 가 다를 때 **어느 날** 갈라졌는지가 유일하게 필요한 정보다.
+     예전에는 오늘 한 줄만 보여 줘서, 차이가 과거에서 왔으면 짚을 방법이 없었다. */
+  const th = run.hist.filter(h => h.tWhy).slice(-14).reverse();
+  if (th.length) {
+    out += secD('thist', 'T 내역', `<div class="card pad"><div class="scroll"><table class="tbl">
+      <tr><th>날짜</th><th>체결</th><th>T</th></tr>`
+      + th.map(h => `<tr><td style="text-align:left">${h.d.slice(5)}
+          <div class="note" style="margin:2px 0 0">${esc(h.tWhy)}</div></td>
+        <td>${h.boughtQty ? '+' + fmt(h.boughtQty, 0) : ''}${h.soldQ ? '−' + fmt(h.soldQ, 0) : ''}주
+          <div class="note" style="margin:2px 0 0">${h.buyPx > 0 ? ibU(h.buyPx) : ibU(h.close)}</div></td>
+        <td style="font-weight:600">${fmt(h.T, 4)}</td></tr>`).join('')
+      + `</table></div>
+      <p class="note" style="margin-top:9px">체결가는 그날 실제로 산 값입니다. 무매 매수는 전부 LOC 라
+      <b>체결가 = 그날 종가</b>이고, 어느 다리가 걸렸는지를 이 값으로 가릅니다 —
+      원장의 시세 칸은 장중 값이거나 전날 값이 이월됐을 수 있어 쓰지 않습니다.
+      쓰던 앱과 T 가 다르면 <b>이 표에서 갈라지는 날</b>을 찾아 그 줄의 체결가·평단을 보세요.</p></div>`,
+      `${fmt(th.length, 0)}일`);
   }
 
   const lg = (state.ibLog || []).filter(l => l.k === sl.k).slice(-8).reverse();
