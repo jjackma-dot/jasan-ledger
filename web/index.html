@@ -641,7 +641,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-10 20:31';
+const BUILD = '2026-09-11 09:09';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2157,10 +2157,30 @@ function ibRun(key) {
 }
 
 /* 들어온 체결이 오늘 계획한 주문인가.
-   가격은 1% 안, 수량은 계획 수량 이내면 계획대로 본다. LOC 는 종가로 체결되므로
-   걸어 둔 값과 딱 떨어지지 않는다 — 그래서 폭을 준다.
    null 을 주면 '이 종목은 무한매수법을 안 쓴다'는 뜻이고, 그때는 지금까지처럼
-   파싱만 맞으면 자동 반영한다. */
+   파싱만 맞으면 자동 반영한다.
+
+   ── 가격 판정을 '±1% 안' 에서 '지정가 이하/이상' 으로 바꿨다 (2026-09-11) ──
+   예전 규칙은 `|체결가 − 계획가| ÷ 계획가 ≤ 1%` 였다. 주석에는 "LOC 는 종가로
+   체결되므로 걸어 둔 값과 딱 떨어지지 않는다 — 그래서 폭을 준다" 라고 적혀
+   있었는데, **폭의 방향과 크기를 둘 다 잘못 잡았다.**
+
+   무매 매수 주문은 전부 LOC 다 (ibOrders 의 legs·tiers 가 모두 typ:'LOC').
+   LOC 매수는 **종가가 걸어 둔 값 이하일 때 종가로** 체결된다. 그러니 체결가가
+   계획가보다 얼마나 낮은지는 그날 종가가 얼마나 밀렸는지일 뿐, 계획과 어긋난 것이
+   아니다. 낙폭에는 상한이 없으므로 1% 든 5% 든 어떤 고정 폭을 줘도 언젠가 터진다.
+   대폭락 티어는 아예 large 보다 **한참 아래**에 깔아 두는 주문이라 더 그렇다.
+
+   2026-09-11 에 이것이 터졌다. TQQQ 26주(1+12+13)와 SOXL 5주(1+2+2)가 각각
+   $69.21 · $115.76 **한 가격**으로 들어왔다 — 전형적인 LOC 종가 체결이다
+   (여러 다리가 같은 값으로 찍히는 것은 종가 체결 말고는 나오기 어렵다).
+   전부 계획대로 걸어 둔 주문인데 계획가와 몇 % 떨어져 있다는 이유로 여섯 건이
+   통째로 검토 대기로 갔다.
+
+   지정가 주문이 보장하는 것은 부등식 하나다:
+     매수는 **계획가 이하**, 매도는 **계획가 이상**.
+   그대로 쓴다. 반대 방향으로는 1%만 봐준다(양쪽이 각자 반올림하고, LOC 가
+   시장가로 흘렀을 때의 슬리피지도 그 안이다). 수량 상한과 원장 대조는 그대로다. */
 function ibMatch(p) {
   const r = ibRun(p.grp + '.' + p.slot);
   if (!r || !r.orders || r.orders.done) return null;
@@ -2170,11 +2190,32 @@ function ibMatch(p) {
     : [o.sell1, o.sell2].filter(s => s && num(s.qty) > 0);
   if (!legs.length) return { ok: false, why: `오늘 계획된 ${p.side === 'B' ? '매수' : '매도'} 주문이 없습니다` };
   const priced = legs.filter(l => num(l.px) > 0);
-  const hit = priced.find(l => Math.abs(p.price - l.px) / l.px <= 0.01);
-  if (!hit && priced.length) return { ok: false, why: `계획가 ${priced.map(l => '$' + fmt(l.px, 2)).join(' / ')} 와 다릅니다` };
+  const fits = l => p.side === 'B'
+    ? p.price <= num(l.px) * (1 + PLAN_TOL)      // 매수 — 계획가 이하면 정상
+    : p.price >= num(l.px) * (1 - PLAN_TOL);     // 매도 — 계획가 이상이면 정상
+  // 맞는 줄이 여럿이면 체결가에 가장 가까운 줄을 짚는다. 사람이 읽을 사유가 된다
+  const hit = priced.filter(fits)
+    .sort((a, b) => Math.abs(p.price - num(a.px)) - Math.abs(p.price - num(b.px)))[0];
+  if (!hit && priced.length) {
+    const lim = p.side === 'B'
+      ? Math.max(...priced.map(l => num(l.px)))
+      : Math.min(...priced.map(l => num(l.px)));
+    return {
+      ok: false,
+      why: `체결가 $${fmt(p.price, 2)} 가 계획 ${p.side === 'B' ? '상한' : '하한'} `
+        + `$${fmt(lim, 2)} 를 ${p.side === 'B' ? '넘습니다' : '밑돕니다'}`
+    };
+  }
   const totQty = legs.reduce((a, l) => a + num(l.qty), 0);
   if (p.qty > totQty) return { ok: false, why: `계획 수량 ${fmt(totQty, 0)}주를 넘습니다` };
-  return { ok: true, why: hit ? `계획 ${hit.typ} $${fmt(hit.px, 2)} 와 일치` : '계획 범위 안' };
+  return {
+    ok: true,
+    why: hit
+      ? `계획 ${hit.typ} $${fmt(hit.px, 2)}${hit.tag ? ' · ' + hit.tag : ''} `
+        + (Math.abs(p.price - num(hit.px)) < 0.005
+          ? '와 일치' : `${p.side === 'B' ? '이하로' : '이상으로'} 체결`)
+      : '계획 범위 안'
+  };
 }
 /* 오늘의 주문표를 수집 앱이 읽을 수 있게 서버에 올린다.
    앱에서 다시 계산하지 않는다 — 같은 식을 두 곳에 두면 언젠가 갈라진다.
@@ -2237,6 +2278,11 @@ const NEAR_PCT = { 'mm.T': 0.20, 'mm.S': 0.30, 'vr.T': 0.30 };
    avg : 평단. 앱은 소수 넷째 자리까지 보여 준다.
    qty : 수량은 양쪽 다 정수다. 반올림이 만들 수 있는 차이가 0 이라 허용오차가 없다. */
 const PX_TOL = 0.02, AVG_TOL = 0.01, COST_TOL = 1;
+/* 체결가가 계획가를 **반대 방향으로** 넘었을 때 봐주는 폭 (ibMatch).
+   매수가 계획가보다 비싸게, 매도가 싸게 체결되는 것은 정상이 아니지만, 양쪽이
+   각자 반올림하고 LOC 가 시장가로 흐를 수도 있어 1% 는 둔다. 같은 방향(매수가 더
+   싸게 · 매도가 더 비싸게)으로는 폭을 두지 않는다 — 지정가가 보장하는 것이 그거다. */
+const PLAN_TOL = 0.01;
 
 function near(rows, sl) {
   const close = num(latest().px[sl.px]);
@@ -4634,6 +4680,46 @@ function takeDup(have, sig) {
   return true;
 }
 
+/* 카카오는 같은 대화방 알림을 **갱신**한다. 체결이 하나 더 오면 그 방에 쌓인
+   메시지를 전부 이어 붙인 본문으로 다시 올라오고, 수집 앱의 지문은 내용이 아니라
+   알림의 신원(pkg·key·postTime)이라 별개 행으로 저장된다. 그래서 체결 여섯 건이면
+   **1건짜리·2건짜리 … 6건짜리 여섯 행**이 남는다. 여기까지는 설계대로다.
+
+   자동 반영되는 길에서는 원장 대조(다리 단위)가 앞 다섯 행을 걸러 낸다.
+   그런데 **검토로 빠지면** 소비 카운트를 확정하지 않는다 — 그것이 맞다.
+   반영하지도 않은 행이 원장 카운트를 축내면 그다음 진짜 중복이 통과해 버린다.
+   대신 그 대가로, 검토 대기에는 여섯 장이 그대로 쌓인다.
+   2026-09-11 에 사용자가 본 것이 이것이다 (6건·5건·4건·3건·2건·1건, 원문
+   67줄·56줄·45줄·34줄·23줄·12줄 — 정확히 11줄씩 자란 같은 대화의 여섯 판).
+
+   앞선 행의 체결 목록이 나중 행의 **앞부분과 그대로 같으면** 같은 알림의 옛 판이다.
+   그럴 때만 접는다:
+     · 부분집합이 아니라 **접두사**여야 한다 (순서까지 같아야 한다)
+     · 계좌·매매구분·수량·가격이 전부 같아야 한다 (tradeSig)
+     · 같은 앱에서, 24시간 안에 온 것이어야 한다
+     · 하나라도 못 읽은 행은 접지 않는다 — 못 읽은 것을 없는 것으로 치면 안 된다
+   이보다 느슨하게 잡으면 우연히 앞자리가 겹친 **진짜 다른 알림**을 지운다. */
+const FOLD_H = 24;
+function legSigs(r) {
+  const ps = r.parsed || parseKakao(r.raw);
+  if (!ps.length || ps.some(p => p.errs.length || !p.grp || !p.slot)) return null;
+  return ps.map(p => tradeSig(p));
+}
+function supersededIds(rows) {
+  const out = new Set();
+  const info = rows.map(r => ({ r, sig: legSigs(r), t: new Date(r.received_at).getTime() }));
+  info.forEach(a => {
+    if (!a.sig) return;
+    const big = info.find(b => b.r.id !== a.r.id && b.sig
+      && b.sig.length > a.sig.length
+      && (b.r.pkg || '') === (a.r.pkg || '')
+      && Math.abs(b.t - a.t) <= FOLD_H * 3600e3
+      && a.sig.every((g, i) => b.sig[i] === g));
+    if (big) out.add(a.r.id);
+  });
+  return out;
+}
+
 /* 최근 반영분에서 서명 집합을 뽑는다. 조회 실패는 조용히 빈 집합으로 넘어간다 —
    중복 판정을 못 하면 검토 대기로 돌아갈 뿐이니, 여기서 막혀도 데이터가 새지 않는다. */
 async function recentTradeSigs(hours) {
@@ -4660,8 +4746,11 @@ async function recentTradeSigs(hours) {
 async function sbDrainInbox() {
   if (!SB || !sbTok) return 0;
   let rows = [];
-  try { rows = await sbReq('/rest/v1/inbox?status=eq.pending&select=id,raw,received_at&order=received_at.asc&limit=100'); }
+  try { rows = await sbReq('/rest/v1/inbox?status=eq.pending&select=id,raw,received_at,pkg&order=received_at.asc&limit=100'); }
   catch (e) { await fetchReview(); return 0; }
+  /* 같은 대화가 쌓이며 올라온 옛 판은 여기서 접는다. 검토까지 가기 전에 접어야
+     계획 대조 로그에도 같은 체결이 다섯 번 적히지 않는다. */
+  const folded = supersededIds(rows);
   /* 원장에 이미 있는 체결과 대조한다. 다른 기기가 방금 반영해 아직 원장이 안
      내려온 경우까지 보려고 inbox 쪽도 얹는다. */
   const have = rows.length ? ledgerSigCounts(DUP_DAYS) : new Map();
@@ -4672,6 +4761,7 @@ async function sbDrainInbox() {
   const x = latest(); let n = 0, logged = 0; const doneIds = [], reviewIds = [], dupIds = [];
   rows.forEach(r => {
     if (state.applied[r.id]) { doneIds.push(r.id); return; }
+    if (folded.has(r.id)) { dupIds.push(r.id); return; }   // 뒤 행이 통째로 품고 있다
     const ps = parseKakao(r.raw);
     const ok = ps.filter(p => !p.errs.length);
     if (!ps.length || ok.length !== ps.length) { reviewIds.push(r.id); return; }
@@ -4963,6 +5053,17 @@ async function fetchReview() {
        parseKakao 는 값을 다 채운 **뒤에** errs 를 붙이므로, 못 읽은 항목도
        종목·매매구분·수량은 대개 나온다. 그것만 보여도 두 알림을 구별할 수 있다. */
     reviewInbox = rows.map(r => ({ ...r, parsed: parseKakao(r.raw) }));
+    /* 이미 검토에 쌓여 있던 옛 판도 접는다. 배출 때 접히지 못한 것들이 여기 있다 —
+       앞 판이 먼저 검토로 넘어간 뒤에 뒤 판이 올라오면 한 배치에서 못 만난다.
+       서버에도 'duplicate' 로 못박아 다시 뜨지 않게 한다. */
+    const folded = supersededIds(reviewInbox);
+    if (folded.size) {
+      reviewInbox = reviewInbox.filter(r => !folded.has(r.id));
+      sbReq('/rest/v1/inbox?id=in.(' + [...folded].join(',') + ')', {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ status: 'duplicate' })
+      }).catch(() => { });
+    }
   } catch (e) { /* 다음 주기에 다시 시도된다 */ }
   renderReviewBadge();
   if (UI.tab === 'in') renderReviewList();
@@ -5032,14 +5133,23 @@ function renderReviewList() {
       : `<div class="note" style="margin-top:6px;color:var(--up)">체결 내용을 찾지 못했습니다. 아래 원문을 확인해 주세요.</div>`;
 
     /* 왜 검토로 왔는지 지금 기준으로 다시 따져 한 줄로 적는다. 판정 당시의 사유는
-       서버에 남지 않으므로(inbox 에 열이 없다) '지금 기준' 이라고 밝혀 둔다. */
+       서버에 남지 않으므로(inbox 에 열이 없다) '지금 기준' 이라고 밝혀 둔다.
+
+       ── 마지막 줄을 짐작에서 실제 판정으로 바꿨다 (2026-09-11) ──────────
+       예전에는 앞의 네 가지에 안 걸리면 무조건 '오늘 계획한 주문과 달라' 라고
+       적었다. 소거법으로 찍은 문장이라 **무엇이 어떻게 달랐는지는 한 글자도**
+       말해 주지 않았다. 사용자가 "어제 검증한 대로 입력했는데 왜 계획과 다르냐"
+       고 물은 것이 이것이다 — 화면이 답을 갖고 있으면서 안 보여 줬다.
+       ibMatch() 를 여기서 다시 돌려 그 사유를 그대로 적는다. */
     const age = Date.now() - new Date(r.received_at).getTime();
+    const miss = ps.filter(p => !p.errs.length).map(p => ibMatch(p)).find(m => m && !m.ok);
     const why = ps.length && okN !== ps.length ? '일부를 읽지 못했습니다'
       : nDup && nDup === okN ? '같은 체결이 원장에 이미 있습니다'
         : age > STALE_H * 3600e3 ? `${STALE_H}시간이 지난 알림입니다`
           : ps.some(p => !p.errs.length && fixedAt(p.grp, p.slot) > new Date(r.received_at).getTime())
             ? '이 자리를 손으로 고친 뒤에 온 알림입니다'
-            : '오늘 계획한 주문과 달라 확인이 필요합니다';
+            : miss ? `계획과 다릅니다 — ${miss.why}`
+              : '오늘 계획한 주문과 달라 확인이 필요합니다';
 
     return `<div class="row" style="align-items:stretch;flex-direction:column;gap:7px">
       <div class="nm" style="width:100%;display:flex;align-items:center;gap:6px">
