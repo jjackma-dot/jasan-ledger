@@ -659,7 +659,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-11 17:20';
+const BUILD = '2026-09-13 08:18';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -4037,7 +4037,8 @@ document.getElementById('p-ib')?.addEventListener('change', e => {
 const PLAN_BASE = {
   infl: 0.023, loanRate: 0.05,
   baseYear: 2026, retireYear: 2042, pensionYear: 2046, crevasseMonths: 53,
-  targetRE: 0, re26: 0, save: 0, dcAdd: 0,
+  /* 26년말 부동산가(re26)는 2026-09-13 에 없앴다 — 장부의 부동산 순자산을 쓴다(simulate 참고) */
+  targetRE: 0, save: 0, dcAdd: 0,
   /* 자녀증여는 **인당 현재가치**다 (2026-09-11, 사용자 요청). 예전에는 3인 총액을
      은퇴 시점에 한 번 빼는 모양이었는데, 실제로는 각자 스무 살이 되는 해에 따로 나간다.
      kidY 가 그 연도 셋이다 — 생년 + 20. 화면에서 고칠 수 있다. */
@@ -4063,7 +4064,7 @@ const PLAN_BASE = {
     목표: { fin: 0.120, dc: 0.080, ret: 0.080 }
   }
 };
-const PLAN_KEYS = ['targetRE', 're26', 'save', 'dcAdd'];
+const PLAN_KEYS = ['targetRE', 'save', 'dcAdd'];
 /* 자산소진 기본 나이와 연금 개시 나이. 생년은 따로 받지 않고 **국민연금 개시를 만 65세**로
    보고 되짚는다 — 개시 연도를 고치면 은퇴 시점 나이도 함께 움직인다.
    소진 나이는 이제 화면에서 고칠 수 있다(P.depleteAge). 이 상수는 기본값이다. */
@@ -4254,22 +4255,27 @@ function simulate(name) {
   let miscAcc = 0;
   const miscTick = () => { miscAcc = miscAcc * (1 + fr) + miscYr; };
 
-  /* 26년말 부동산가로 무엇을 넣든 총자산이 부풀지 않게 한다.
-     예전에는 이 값을 '대출 뺀 순자산' 으로만 보고 대출을 아예 안 잡아서,
-     총 집값(96,828)을 넣으면 실제 순자산(84,155)과의 차이인 12,673 만큼
-     없던 재산이 생겼다. 집값을 올려 적을수록 자산이 늘어나는 셈이었다.
-     넣은 값이 실제 부동산 순자산보다 크면 그 차이는 갚아야 할 빚으로 잡는다.
-     장부에 부동산이 없으면(reNet0 = 0) 대조할 기준이 없으니 그대로 둔다. */
+  /* ── 27년 잔금 = 은퇴후 부동산가 − 장부의 부동산 순자산 (2026-09-13, 사용자 결정) ──
+     엑셀 원래 규칙 그대로다: "11.5억 − 26년 부동산 − 27년 금융자산 = 대출금".
+     순자산(reT = 시세 + 대출(음수))에는 지금 대출이 이미 빠져 있으므로, 지금 대출도
+     같은 규칙으로 **27년 금융자산부터 쓰고 모자라는 만큼만** 대출로 남는다.
+
+     예전에는 '26년말 부동산가' 를 따로 받았다. 그 값이 순자산보다 크면 차이를
+     '기존 대출' 로 잡아 27년 금융자산으로 갚지 않았다(2026-09-04). 그러면 넣은 값에
+     따라 **같은 3.08억이** '금융을 굴리며 안고 가는 빚' 과 '금융으로 먼저 치르는 잔금'
+     으로 갈렸다. 금융 수익률이 대출이자보다 높은 시나리오에서는 집값을 높게 적을수록
+     현금흐름이 늘었고(목표: 11.5억 → 8.5억 에서 월 −114만), 순자산보다 낮게 적으면 그
+     차이가 사라졌다. 입력칸을 없애고 장부 값을 쓴다 — 무엇을 넣어야 맞는지 고민할
+     칸이 아예 없다. 은퇴후 부동산가가 순자산보다 낮으면(줄여 가면) 남는 돈이 금융으로 온다. */
   const reNet0 = calc(latest()).reT;
-  const carried = reNet0 > 0 ? Math.max(0, num(P.re26) - reNet0) : 0;
 
-  const B = [carried], C = [0], D = [save], E = [S.a], F = [S.c], G = [S.b];
-  const rows = [{ y: P.baseYear, B: carried, C: 0, D: save, E: S.a, F: S.c, G: S.b }];
+  const B = [0], C = [0], D = [save], E = [S.a], F = [S.c], G = [S.b];
+  const rows = [{ y: P.baseYear, B: 0, C: 0, D: save, E: S.a, F: S.c, G: S.b }];
 
-  // 27년: 부동산 잔금에서 대출 발생 (기존 대출에 얹는다)
-  const gap = P.targetRE - P.re26;
+  // 27년: 부동산 잔금 — 금융자산부터 쓰고 모자라면 대출
+  const gap = P.targetRE - reNet0;
   const pool = E[0] * (1 + fr) + save;
-  B.push(carried + Math.max(0, gap - pool));
+  B.push(Math.max(0, gap - pool));
   C.push(0); D.push(0);
   kidGrow(); miscTick();
   E.push(Math.max(0, pool - gap) - giveAt(P.baseYear + 1));
@@ -4523,7 +4529,6 @@ function renderPlan() {
   $('#planCommon').innerHTML = [
     ['infl', '물가상승률', '%', pct(P.infl), 0.1],
     ['targetRE', '은퇴후 부동산가', '만원', P.targetRE, 1000],
-    ['re26', '26년말 부동산가', '만원', P.re26, 1000],
     ['loanRate', '대출 금리', '%', pct(P.loanRate), 0.1],
     ['save', '연 저축액', '만원', P.save, 100],
     ['dcAdd', 'DC 연 불입액', '만원', P.dcAdd, 50],
@@ -4546,6 +4551,10 @@ function renderPlan() {
        연 저축액·DC 연 불입액은 매년 같은 값을 넣는데, 이는 명목으로 물가상승률만큼
        매년 늘어난다는 뜻입니다. <b>연금 공백</b>은 은퇴 후 국민연금을 받기 전까지의
        기간으로, 그만큼을 미리 떼어 두고 인출액을 계산합니다.
+       <br><b>부동산 잔금</b>은 은퇴후 부동산가 − 장부의 <b>부동산 순자산</b>(대출 뺀 값,
+       지금 ${fmt(calc(latest()).reT, 0)}만원) = <b>${fmt(num(P.targetRE) - calc(latest()).reT, 0)}만원</b>이고,
+       ${P.baseYear + 1}년에 <b>금융자산부터 쓰고 모자라는 만큼만 대출</b>합니다. 지금 대출도 이 안에
+       들어 있습니다. 장부의 부동산 시세나 대출을 고치면 잔금도 따라 움직입니다.
        <br><b>기타지출</b>은 차량·가전처럼 목돈으로 나갈 것을 미리 적어 두는 칸입니다.
        <b>모으는 동안 연 저축액을 그만큼 깎는</b> 방식입니다 — 안 모은 돈은 불어나지도
        않으므로, 은퇴 시점에 총액만 빼는 것보다 정직합니다.
@@ -4621,19 +4630,19 @@ function renderPlan() {
   const gainAt = y => run > 0 ? cumStock * (expo[y] / run) : 0;
 
   // sims 는 위 은퇴 요약표에서 이미 만들어 둔 것을 그대로 쓴다 (SCN 순서 그대로)
-  /* 계획값이 비어 있으면 지금 부동산으로 대신한다.
-     PLAN_BASE 의 targetRE·re26 은 0 이고 실제 값은 서버에서 온다. 로그인 전이거나
-     설정이 비면 0 이 되는데, 그대로 쓰면 27년부터 부동산이 통째로 빠져 12억이
-     4억으로 떨어지는 절벽이 생긴다. 값이 없다고 자산이 사라질 수는 없다. */
-  const reNow = calc(latest()).reT;
-  const re26 = num(P.re26) || reNow, reTarget = num(P.targetRE) || reNow;
-  const reAt = y => y <= P.baseYear ? re26 : reTarget;
+  /* 부동산은 simulate() 와 **같은 값**을 쓴다 — 그리는 점은 기준연도 다음 해부터라
+     (아래 filter) 늘 은퇴후 부동산가다.
+     예전에는 은퇴후 부동산가가 비면(0) 지금 부동산으로 대신 그렸다. 27년부터 부동산이
+     통째로 빠지는 절벽을 막으려던 것인데, 2026-09-13 부터 simulate() 가 잔금을
+     `은퇴후 부동산가 − 장부 순자산` 으로 내므로 0 이면 집값이 **금융으로 넘어간다.**
+     절벽은 이제 생기지 않고, 대신 채우면 집값이 두 번 더해진다(리뷰에서 확인). */
+  const reTarget = num(P.targetRE);
   /* 자녀 몫은 **증여 전까지만** 가계 자산이다 (2026-09-11).
      simulate() 가 각자 스무 살이 되는 해에 그 몫을 G 에서 지우고 부족분을 E 에서
      빼므로, 여기서는 G 를 그대로 더하면 된다 — 증여한 해에 딱 그만큼 내려간다.
      예전에는 은퇴 연도만 kidTarget 으로 갈아끼우는 예외가 있었다. 증여가 은퇴 시점
      한 번이 아니게 되면서 그 예외가 필요 없어졌다. */
-  const totalOf = r => reAt(r.y) + r.E + r.F + r.G - r.B;      // 대출은 부채라 뺀다
+  const totalOf = r => reTarget + r.E + r.F + r.G - r.B;       // 대출은 부채라 뺀다
 
   const series = SCN.map((n, i) => {
     const pts = pastYs.map(y => ({
