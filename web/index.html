@@ -659,7 +659,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-13 08:18';
+const BUILD = '2026-09-13 08:30';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -4203,6 +4203,16 @@ function startAssets(scenario) {
 function simulate(name) {
   const P = state.plan, s = P.sc[name], S = startAssets(name);
   const fr = s.fin - P.infl, dr = s.dc - P.infl, rr = s.ret - P.infl;
+  /* ── 대출 금리도 실질로 쓴다 (2026-09-13, 사용자 결정) ─────────────────
+     이 장부는 전부 현재가치다. 수익률은 `명목 − 물가` 로 쓰는데 대출만 명목 5% 그대로
+     불렸다(엑셀 설정 시트에서도 대출 금리만 실질 줄이 없었다). 대출은 **금액이 고정된
+     명목 빚**이라 물가가 오르는 만큼 실제 부담이 준다 — 2042년에 남은 1억은 오늘 돈
+     6,950만원이다. 투자 쪽만 물가를 빼고 빚 쪽은 안 빼면, 빚을 끼고 투자하는 효과를
+     해마다 물가만큼 불리하게 본다(1억·15년 예시: 정답 순이익 7,773만 → 모델 2,179만).
+     입력은 **은행 금리(명목) 그대로** 받고 여기서 물가를 뺀다 — 수익률 입력과 같은 방식.
+     빼는 방식도 수익률과 같은 뺄셈이다(정확한 나눗셈 1.05/1.023−1 = 2.64% 와 0.06%p 차이).
+     엑셀 기준값 대조는 retire.py 의 명목 경로(loan_real=False)로 계속 돌린다. */
+  const lr = num(P.loanRate) - P.infl;
   const nYears = P.retireYear - P.baseYear;                  // 2026 → 2042
 
   /* 기타지출은 **모으는 동안 저축을 깎는** 방식이다 (2026-09-10, 사용자 요청).
@@ -4236,8 +4246,8 @@ function simulate(name) {
   /* 금융이 **마이너스**가 되면 그건 투자자산이 아니라 빚이다 (2026-09-11, 사용자 지정).
      증여가 몰린 해에 저축보다 많이 나가면 그럴 수 있는데, 예전에는 그 음수에도
      금융 수익률(fr)을 곱해 **빚이 저절로 줄어드는** 모양이 됐다.
-     이제 음수 구간은 **대출 금리**로 불린다 — 입력한 그 값을 그대로 쓴다. */
-  const grow = v => v >= 0 ? v * (1 + fr) : v * (1 + num(P.loanRate));
+     이제 음수 구간은 **대출 금리**로 불린다 — 대출 시계열 B 와 같은 실질 금리(lr)다. */
+  const grow = v => v >= 0 ? v * (1 + fr) : v * (1 + lr);
   const kidSum = () => kids.reduce((a, v) => a + (v || 0), 0);
   /* 그 해 증여로 **부모 금융에서** 나가는 돈. 자녀 몫은 kids 에서 지운다. */
   const giveAt = y => {
@@ -4284,11 +4294,15 @@ function simulate(name) {
   rows.push({ y: P.baseYear + 1, B: B[1], C: C[1], D: D[1], E: E[1], F: F[1], G: G[1] });
 
   const loan0 = B[1];                                        // 원리금균등 기준 원금
+  /* 목표는 30년 원리금균등. 실질 금리가 0 이면 PMT 식이 0/0 이 되므로 그냥 나눈다
+     (명목 금리 = 물가일 때다). 실질로 부르면 상환액이 **실질로 일정**하다 — 실제 명목 고정
+     상환액은 해마다 실질로 조금씩 줄지만, 같은 원금을 같은 기간에 갚는다는 점은 같다. */
+  const loanPay = Math.abs(lr) > 1e-9 ? pmt(lr, 30, loan0) : loan0 / 30;
   for (let i = 2; i < nYears; i++) {
     const pb = B[i - 1];
     let c = 0;
-    if (pb > 0) c = (name === '목표') ? pmt(P.loanRate, 30, loan0) : Math.min(pb * (1 + P.loanRate), save);
-    B.push(Math.max(0, pb * (1 + P.loanRate) - c));
+    if (pb > 0) c = (name === '목표') ? loanPay : Math.min(pb * (1 + lr), save);
+    B.push(Math.max(0, pb * (1 + lr) - c));
     C.push(c); D.push(save - c);
     kidGrow(); miscTick();
     E.push(grow(E[i - 1]) + (save - c) - giveAt(P.baseYear + i));
@@ -4298,7 +4312,7 @@ function simulate(name) {
   }
   // 은퇴 연도: 잔여 대출 일시 상환 + 자녀 목표액 정산
   const i = nYears;
-  const loanLeft = B[i - 1] * (1 + P.loanRate);
+  const loanLeft = B[i - 1] * (1 + lr);
   kidGrow(); miscTick();
   const giveLast = giveAt(P.retireYear);
   const g = kidSum();                                        // 아직 스무 살이 안 된 자녀 몫
@@ -4529,7 +4543,7 @@ function renderPlan() {
   $('#planCommon').innerHTML = [
     ['infl', '물가상승률', '%', pct(P.infl), 0.1],
     ['targetRE', '은퇴후 부동산가', '만원', P.targetRE, 1000],
-    ['loanRate', '대출 금리', '%', pct(P.loanRate), 0.1],
+    ['loanRate', '대출 금리', '% · 은행 금리', pct(P.loanRate), 0.1],
     ['save', '연 저축액', '만원', P.save, 100],
     ['dcAdd', 'DC 연 불입액', '만원', P.dcAdd, 50],
     ['kidGift', '자녀증여', '인당 · 만원 · 20세', num(P.kidGift), 1000],
@@ -4555,6 +4569,9 @@ function renderPlan() {
        지금 ${fmt(calc(latest()).reT, 0)}만원) = <b>${fmt(num(P.targetRE) - calc(latest()).reT, 0)}만원</b>이고,
        ${P.baseYear + 1}년에 <b>금융자산부터 쓰고 모자라는 만큼만 대출</b>합니다. 지금 대출도 이 안에
        들어 있습니다. 장부의 부동산 시세나 대출을 고치면 잔금도 따라 움직입니다.
+       <br><b>대출 금리</b>는 은행 금리(명목)를 넣습니다. 계산에서는 수익률처럼 물가를 빼
+       <b>실질 ${pct(num(P.loanRate) - P.infl)}%</b>로 불립니다 — 대출은 금액이 고정된 돈이라
+       물가가 오르는 만큼 실제 부담이 줄기 때문입니다. 금융이 마이너스인 해에도 이 금리입니다.
        <br><b>기타지출</b>은 차량·가전처럼 목돈으로 나갈 것을 미리 적어 두는 칸입니다.
        <b>모으는 동안 연 저축액을 그만큼 깎는</b> 방식입니다 — 안 모은 돈은 불어나지도
        않으므로, 은퇴 시점에 총액만 빼는 것보다 정직합니다.
