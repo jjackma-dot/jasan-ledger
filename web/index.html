@@ -659,7 +659,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-13 08:42';
+const BUILD = '2026-09-14 12:29';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2398,7 +2398,12 @@ function ibPlanPayload() {
       side: l.side, typ: l.typ, px: +num(l.px).toFixed(2),
       qty: Math.round(num(l.qty)), tag: l.tag || ''
     }));
-    out.slots.push({ k: sl.k, n: sl.n, sn: sl.sn || sl.n, tick: SYM[sl.px] || sl.px, acct: sl.acct || '', rows: near(rows, sl) });
+    /* cyc — 이번 사이클 첫날·마지막 영업일 (2026-09-14). 수집 앱이 메리츠 **예약주문(기간잔량)의
+       종료일**을 이 날짜로 맞춘다. 마지막 날은 다음 사이클 시작 바로 앞 **영업일**이다 —
+       하루 전(addDays −1)으로 두면 일요일이 되어 예약 종료일로 쓸 수 없다. */
+    out.slots.push({ k: sl.k, n: sl.n, sn: sl.sn || sl.n, tick: SYM[sl.px] || sl.px, acct: sl.acct || '',
+      cyc: { from: r.cycFrom, to: prevBiz(r.nextCycle), next: r.nextCycle },
+      rows: near(rows, sl) });
   });
   return out;
 }
@@ -3639,6 +3644,12 @@ function vrCfg(k) {
   return c;
 }
 const addDays = (s, n) => { const d = parseISO(s); d.setDate(d.getDate() + n); return iso(d); };
+/* 주말을 건너뛰며 바로 앞 영업일 — 사이클 마지막 날(다음 사이클 시작의 앞 영업일)에 쓴다 */
+const prevBiz = s => {
+  const d = parseISO(s);
+  do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0 || d.getDay() === 6);
+  return iso(d);
+};
 /* 주말을 건너뛰며 n 영업일 뒤 */
 const addBiz = (s, n) => {
   const d = parseISO(s);
@@ -3907,7 +3918,7 @@ function vrPanel(sl) {
       + cs.map(c => `<tr><td>${c.d} <span class="u">${esc(c.kind)}${c.flow ? ' ' + ibSgn(c.flow) : ''}</span></td>
           <td>${ibU(c.V, 0)}</td><td>${ibU(c.pool, 0)}</td></tr>`).join('')
       + `</table></div>
-      <p class="note" style="margin-top:9px">이번 사이클 <b>${run.cycFrom} ~ ${addDays(run.nextCycle, -1)}</b>
+      <p class="note" style="margin-top:9px">이번 사이클 <b>${run.cycFrom} ~ ${prevBiz(run.nextCycle)}</b>
       · 다음 갱신 <b>${run.nextCycle}</b> (${fmt(num(cfg.days), 0)} 영업일).
       갱신 때 <b>다음 V = 현재 V + Pool ÷ ${fmt(num(cfg.G), 0)}
       ${cfg.mode === '적립' ? '+ ' + ibU(num(cfg.flow), 0) : cfg.mode === '인출' ? '− (평가금+Pool)×0.5%' : ''}</b> 로 오릅니다.
