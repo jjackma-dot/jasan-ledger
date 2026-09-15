@@ -659,7 +659,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-14 12:29';
+const BUILD = '2026-09-16 04:02';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1832,6 +1832,14 @@ async function applyPending() {
   const have = toApply.length ? ledgerSigCounts(DUP_DAYS) : new Map();
   if (toApply.length) (await recentTradeSigs(6)).forEach(g => { if (!have.has(g)) have.set(g, 1); });
   let n = 0, dup = 0; const okSigs = new Set();
+  /* 체결일(fd)의 기준 시각 — 검토 대기에서 불러온 것은 알림이 들어온 시각이고,
+     손으로 붙여넣은 것은 지금이다. 사흘 묵은 검토 건을 오늘 기준으로 읽으면
+     연도·20시 규칙이 엉뚱한 날을 고를 수 있다. */
+  const revRow = reviewLoadedId != null ? reviewInbox.find(r => r.id === reviewLoadedId) : null;
+  /* 불러온 검토 항목의 **글자 그대로**일 때만 그 수신 시각을 쓴다(리뷰). 지우기 없이 다른 알림을 붙여넣으면
+     reviewLoadedId 는 남아 있어, 새 체결이 사흘 전 기준으로 읽혀 체결일이 밀릴 수 있었다. */
+  const sameText = revRow && ($('#ktIn').value || '').trim() === String(revRow.raw || '').trim();
+  const refMs = sameText && revRow.received_at ? new Date(revRow.received_at).getTime() : Date.now();
   toApply.forEach(p => {
     const sig = tradeSig(p);
     if (takeDup(have, sig)) { dup++; return; }
@@ -1841,7 +1849,7 @@ async function applyPending() {
     tgt.q = +(num(tgt.q) + sign * p.qty).toFixed(4);
     tgt.c = +(num(tgt.c) + sign * p.amt).toFixed(2);
     x.usd = +(num(x.usd) - sign * p.amt).toFixed(2);
-    ibRecord(x, p, reviewLoadedId, 'hand');
+    ibRecord(x, p, reviewLoadedId, 'hand', refMs);
     n++;
   });
   /* ── 뒷정리를 renderAll 앞으로 옮겼다 (2026-09-11) ──────────────────
@@ -1961,9 +1969,60 @@ document.getElementById('p-in')?.addEventListener('click', async e => {
    받아** 거기서부터 이동평균법으로 직접 굴린다(매수는 가중평균, 매도는 유지).
    증권사 앱의 평단과 벌어지면 '시작점 맞추기'로 다시 맞추면 된다. */
 
+/* 체결의 **미국(뉴욕) 거래일** 'YYYY-MM-DD' (2026-09-15).
+   VR 사이클 경계를 반영일이 아니라 체결일로 가르려고 tr 에 적는다(vrRun 참고).
+
+   알림톡의 체결일자는 연도 없는 'MM/DD' 이고 **뉴욕 날짜**다 — 실측:
+   '09/14' 가 화 09/15 05:01 KST(= 월 09/14 16:01 ET, LOC 종가 체결)에,
+   '09/02' 가 수 09/02 17:41 KST(= 04:41 ET, 장전)에 왔다. 한국 날짜로 읽으면 하루 밀린다.
+   연도는 **기준 시각의 뉴욕 날짜 + 1일을 넘지 않는 가장 늦은 해**로 고른다
+   — 1월 2일에 반영한 '12/31' 은 작년이다. 하루 여유는 20시 이후 체결(아래) 몫이다.
+   기준 시각은 알림이 서버에 들어온 시각(received_at)이고, 붙여넣기는 지금이다.
+
+   체결일자가 없으면(메리츠 앱 자체 알림 등) 기준 시각의 뉴욕 날짜를 쓰되
+   **20시 이후는 다음 날**로 친다 — 그날 장은 시간외까지 끝났고, 그 뒤 체결은
+   다음 거래일 몫이다.
+
+   고른 날짜가 기준보다 **한 달 넘게 앞서면** 믿지 않고 위 시각 규칙으로 간다.
+   연도를 거꾸로 고르는 식이라, 시계가 어긋나 기준보다 이틀 뒤 날짜가 오면 **작년**이
+   된다. 그런 날짜가 박히면 그 뒤 모든 경계의 V 가 소급해 바뀐다. 한 달 넘게 묵은
+   알림을 붙여넣은 경우도 여기에 걸리는데, 그때는 반영한 날 체결로 치는 예전 동작이 된다. */
+function usTradeDay(dateStr, refMs) {
+  const ref = new Date(num(refMs) > 0 ? num(refMs) : Date.now());
+  let et;
+  try {
+    const parts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+      hour: '2-digit', hourCycle: 'h23'
+    }).formatToParts(ref);
+    const g = t => +(parts.find(x => x.type === t) || {}).value;
+    et = { y: g('year'), m: g('month'), d: g('day'), h: g('hour') % 24 };
+  } catch (e) { return ''; }
+  if (!(et.y > 0 && et.m > 0 && et.d > 0)) return '';
+  const ymd = (y, m, d) => y + '-' + pad2(m) + '-' + pad2(d);
+  const shift = (s, n) => { const t = new Date(s + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + n); return t.toISOString().slice(0, 10); };
+  const today = ymd(et.y, et.m, et.d);
+  const byTime = et.h >= 20 ? shift(today, 1) : today;
+
+  const m = String(dateStr || '').match(/(?:(\d{4})\s*[\/.\-]\s*)?(\d{1,2})\s*[\/.\-]\s*(\d{1,2})/);
+  if (!m) return byTime;
+  const mo = +m[2], da = +m[3], limit = shift(today, 1);
+  const valid = y => { const t = new Date(Date.UTC(y, mo - 1, da)); return t.getUTCMonth() === mo - 1 && t.getUTCDate() === da; };
+  let pick = '';
+  if (m[1]) { if (valid(+m[1])) pick = ymd(+m[1], mo, da); }
+  else {
+    const y0 = +limit.slice(0, 4);
+    for (const y of [y0, y0 - 1, y0 - 2]) {
+      if (valid(y) && ymd(y, mo, da) <= limit) { pick = ymd(y, mo, da); break; }
+    }
+  }
+  if (!pick || pick < shift(today, -31) || pick > limit) return byTime;
+  return pick;
+}
+
 /* 그날 체결을 원장에 남긴다. 일별 수량·매입금액만으로는 같은 날 매수와 매도가
    섞였을 때 둘을 도로 가를 수 없어 평단 재구성이 틀어진다(ibRun 참고). */
-function ibRecord(x, p, src, by) {
+function ibRecord(x, p, src, by, refMs) {
   /* src 는 이 체결이 들어온 알림(inbox)의 id 다. 나중에 "이건 잘못 반영됐다" 며
      되돌릴 때 그 알림을 함께 '무시' 로 넘기기 위한 것이다.
      px 를 따로 두는 이유는 amt/qty 로 되돌리면 반올림 때문에 서명이 어긋날 수 있어서다.
@@ -1972,11 +2031,16 @@ function ibRecord(x, p, src, by) {
      '반영하기' 를 누른 것. 화면이 '자동 반영' 이라고 뭉뚱그려 말하던 것을 바로잡으려고
      넣었다. 목록의 아홉 줄 중 실제로 자동인 것이 몇 줄인지 사람이 볼 수 있어야 한다.
      옛 줄에는 이 값이 없고, 없으면 화면에 아무 배지도 붙이지 않는다 —
-     추측해서 붙이면 그것이 또 거짓이 된다. */
+     추측해서 붙이면 그것이 또 거짓이 된다.
+
+     fd 는 **미국 체결일**이다(2026-09-15, usTradeDay). 원장 날짜는 반영한 날이라
+     체결일과 다를 수 있다 — VR 사이클 경계는 이 값으로 가른다.
+     refMs 는 체결일자의 연도·시각을 가를 기준 시각(알림 received_at, 없으면 지금). */
+  const fd = usTradeDay(p.date, refMs);
   (x.tr = x.tr || []).push({
     g: p.grp, s: p.slot, side: p.side, qty: num(p.qty), amt: num(p.amt),
     px: num(p.price), t: Date.now(), src: src == null ? null : src,
-    by: by === 'auto' ? 'auto' : 'hand'
+    by: by === 'auto' ? 'auto' : 'hand', ...(fd ? { fd } : {})
   });
 }
 
@@ -3629,10 +3693,17 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
    해 두고, 사이클 기록을 그대로 보여 준다 — 시트와 한 줄씩 맞춰 볼 수 있어야 한다.
            */
 
-/* days 는 **영업일**이다. 사용자의 VR 앱이 사이클을 08.31 ~ 09.11 로 잡는데,
-   그 사이 평일이 정확히 10일이다(주말만 건너뛴다 — 미국 휴장일은 세지 않는다).
-   달력 14일로 잡으면 사이클 경계가 조금씩 밀린다. */
-const VR_BASE = { on: false, V: 0, G: 10, band: 15, mode: '거치', flow: 0, pool: 0, d0: '', days: 10, unit: 2 };
+/* ── 사이클 길이는 달력 일수다 (2026-09-15, 사용자 결정) ────────────────────
+   예전 칸(days)은 **영업일**이었다. 사용자의 VR 앱이 08.31 ~ 09.11 로 잡는 사이클이
+   평일 10일이라 그렇게 뒀는데, 사용자는 "2주" 를 떠올리고 14 를 넣었다 — 그러면
+   영업일 14일이라 오버레이에 9/14 ~ **10/1** 이 떴다(맞는 값은 9/14 ~ 9/25).
+   사용자: 주말 포함 달력 2주가 "더 직관적". 그래서 새 칸 cyc(달력 일수, 기본 14)를 둔다.
+   평일에 시작하면 영업일 10일과 달력 14일은 경계가 같다 — 미국 휴장일은 어차피
+   세지 않았다.
+
+   옛 days 는 **지우지 않는다.** 캐시된 옛 클라이언트가 meta 를 올려도 그 칸만 쓰고
+   cyc 는 건드리지 않으니 서로 망가뜨리지 않는다. 옮기는 규칙은 vrCfg() 에 있다. */
+const VR_BASE = { on: false, V: 0, G: 10, band: 15, mode: '거치', flow: 0, pool: 0, d0: '', days: 10, cyc: 14, unit: 2 };
 const VR_CAP = { '적립': 0.75, '거치': 0.50, '인출': 0.25 };
 const VR_MODES = ['적립', '거치', '인출'];
 
@@ -3640,20 +3711,23 @@ function vrCfg(k) {
   if (!state.vr) state.vr = {};
   if (!state.vr[k]) state.vr[k] = { ...VR_BASE };
   const c = state.vr[k];
+  /* cyc 가 없는 옛 설정 — VR_BASE 로 채우기 **전에** 옛 days 에서 옮긴다.
+     5 의 배수면 영업일로 넣은 주 단위다(10 → 14, 15 → 21). 아니면 사용자가 이미
+     달력 일수를 떠올리고 넣은 것이다(사용자가 넣은 14 → 14). */
+  if (c.cyc === undefined) {
+    const d = num(c.days);
+    c.cyc = d > 0 && d % 5 === 0 ? d * 7 / 5 : d > 0 ? d : VR_BASE.cyc;
+  }
   Object.keys(VR_BASE).forEach(f => { if (c[f] === undefined) c[f] = VR_BASE[f]; });
   return c;
 }
+/* 사이클 길이(달력 일수) — 0 이나 소수가 들어와도 경계가 멈추거나 어긋나지 않게 */
+const vrCyc = cfg => { const n = Math.round(num(cfg.cyc)); return n >= 1 ? n : VR_BASE.cyc; };
 const addDays = (s, n) => { const d = parseISO(s); d.setDate(d.getDate() + n); return iso(d); };
 /* 주말을 건너뛰며 바로 앞 영업일 — 사이클 마지막 날(다음 사이클 시작의 앞 영업일)에 쓴다 */
 const prevBiz = s => {
   const d = parseISO(s);
   do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0 || d.getDay() === 6);
-  return iso(d);
-};
-/* 주말을 건너뛰며 n 영업일 뒤 */
-const addBiz = (s, n) => {
-  const d = parseISO(s);
-  for (let k = 0; k < n;) { d.setDate(d.getDate() + 1); const w = d.getDay(); if (w !== 0 && w !== 6) k++; }
   return iso(d);
 };
 
@@ -3669,7 +3743,7 @@ function vrRun(key) {
   const ks = dayKeys(), i0 = cfg.d0 ? ks.indexOf(cfg.d0) : -1;
   if (i0 < 0) return null;
 
-  const G = num(cfg.G), days = Math.max(1, num(cfg.days));
+  const G = num(cfg.G), cyc = vrCyc(cfg);
   /* 사이클마다 오갈 현금.
      적립식은 정해 둔 금액을 넣고, 거치식은 0, 인출식은 (평가금 + Pool) 의 0.5% 를
      100 단위로 절사해 뺀다 — 이 규칙은 시트 스크립트 autoCheck() 에서 그대로 옮겼다. */
@@ -3681,9 +3755,46 @@ function vrRun(key) {
   let V = num(cfg.V), pool = num(cfg.pool);
   let q = num(rec0[sl.g][sl.s].q), prevC = num(rec0[sl.g][sl.s].c);
   let invested = q * num(rec0.px[sl.px]) + pool;      // 총 투입 — 수익률 분모
-  let next = addBiz(cfg.d0, days);
+  let next = addDays(cfg.d0, cyc);                     // 달력 일수 — 주말 포함
   let cycPool = pool;                                  // 이번 사이클 운용 Pool
   const cycles = [{ d: cfg.d0, V, pool, kind: '시작' }];
+
+  /* ── 사이클 경계는 반영일이 아니라 체결일로 가른다 (2026-09-15) ──────────────
+     체결은 **웹을 연 날의 원장(latest)** 에 들어간다. 그날이 곧 체결일은 아니다.
+     경계 앞뒤로 두 가지가 샌다.
+     ① 금요일(옛 사이클) 체결을 화요일에 열어 반영하면 경계(월) **뒤**에 적힌다.
+        V 는 그 매수를 뺀 Pool 로 오르고, 사이클은 replay 로 이어지므로 그 차이가
+        **영영 V 에 남는다.**
+     ② 월요일 밤(새 사이클) 체결을 자정 전에 반영하면 경계일 원장에 적힌다. 하루
+        증감을 경계보다 먼저 처리하므로 새 사이클 매수가 **V 계산에 섞인다.**
+     그래서 체결마다 적어 둔 미국 체결일(tr.fd)로 경계 B 에 쓸 Pool 을 다시 센다.
+       경계 Pool = 그날까지 굴린 Pool
+                 − (그날까지 적혔는데 체결일 ≥ B 인 다리의 현금)
+                 + (그 뒤에 적혔는데 체결일 < B 인 다리의 현금)
+     현금은 매수 −금액 · 매도 +금액, 이 자리(g·s) 다리만. 인출식이 쓰는 보유수량도
+     같은 식으로 다시 센다. Pool 자체가 굴러가는 방식은 그대로다 — 경계에서 V·적립·
+     운용 Pool 을 정할 때만 이 값을 쓴다. 그래서 '이번 사이클에 쓴 금액'(운용 Pool −
+     지금 Pool)에도 ①은 안 들어가고 ②는 들어간다.
+     시작일 당일 다리는 세지 않는다 — 넣어 둔 Pool 이 이미 그날 끝 잔액이다.
+     옛 다리(fd 없음)도 보정하지 않는다. 반영일을 체결일로 대신 쓰면 경계일에 적힌
+     옛 다리가 전부 ②로 빠져 **예전 결과가 바뀐다** — 보정하지 않는 것이 예전 동작 그대로다. */
+  const legs = [];
+  /* 보유수량이 안 변한 날(같은 날 같은 수량 매수·매도)은 Pool 을 굴릴 때도 건너뛴다(아래 nq > q / nq < q).
+     그날 다리를 보정에 넣으면 굴린 적 없는 현금을 빼게 된다 — 두 곳이 같은 규칙을 쓴다(리뷰). */
+  for (let i = i0 + 1, pq = num(state.days[ks[i0]][sl.g][sl.s].q); i < ks.length; i++) {
+    const nq = num(state.days[ks[i]][sl.g][sl.s].q), same = nq === pq;
+    pq = nq;
+    if (same) continue;
+    (state.days[ks[i]].tr || []).forEach(t => {
+      if (t.g !== sl.g || t.s !== sl.s || !/^\d{4}-\d{2}-\d{2}$/.test(t.fd || '')) return;
+      const sg = t.side === 'S' ? 1 : t.side === 'B' ? -1 : 0;
+      if (sg) legs.push({ i, fd: t.fd, cash: sg * num(t.amt), dq: -sg * num(t.qty) });
+    });
+  }
+  const attr = (i, B) => legs.reduce((a, l) => {
+    const k = l.i <= i && l.fd >= B ? -1 : l.i > i && l.fd < B ? 1 : 0;
+    return k ? { cash: a.cash + k * l.cash, dq: a.dq + k * l.dq } : a;
+  }, { cash: 0, dq: 0 });
 
   for (let i = i0 + 1; i < ks.length; i++) {
     const d = ks[i], r = state.days[d];
@@ -3696,13 +3807,18 @@ function vrRun(key) {
     /* 사이클 경계. 공식 예시가 P/G 에 적립 전 Pool 을 쓰므로 순서를 그대로 지킨다.
        (V=9000, P=1000, G=10, 적립 250 → 9000 + 100 + 250 = 9350) */
     while (d >= next) {
-      const flow = flowAt(q * num(r.px[sl.px]), pool);
-      V = V + pool / G + flow;
+      const a = legs.length ? attr(i, next) : { cash: 0, dq: 0 };
+      const poolAt = pool + a.cash, qAt = q + a.dq;    // 체결일 기준 경계 직전
+      const flow = flowAt(qAt * num(r.px[sl.px]), poolAt);
+      V = V + poolAt / G + flow;
       pool += flow;
       invested += flow;
-      cycPool = pool;                                  // 한도는 사이클 시작 시점 Pool 기준
-      cycles.push({ d: next, V, pool, flow, kind: cfg.mode });
-      next = addBiz(next, days);
+      cycPool = poolAt + flow;                         // 한도는 사이클 시작 시점 Pool 기준
+      /* 기록의 Pool 은 그 사이클의 시작 Pool(체결일 기준, 적립·인출 뒤)이다. 보정이 없으면 예전 기록과 같다 */
+      const cy = { d: next, V, pool: cycPool, flow, kind: cfg.mode };
+      if (Math.abs(a.cash) >= 0.005) cy.adj = a.cash;  // 늦게·일찍 반영된 체결을 보정했다
+      cycles.push(cy);
+      next = addDays(next, cyc);
     }
   }
   const close = num(latest().px[sl.px]);
@@ -3789,7 +3905,8 @@ const VR_FIELDS = [
   ['band', '밴드', '±%', 0.5],
   ['unit', '표기 단위', '주 · 한 줄당 주문 수량', 1],
   ['flow', '사이클당 적립액', 'USD · 적립식만 · 인출이면 −', 1, true],
-  ['days', '사이클 길이', '영업일', 1]
+  /* 달력 일수다(2026-09-15). 예전 칸은 영업일이라 2주를 14 로 넣으면 영업일 14일(달력 18일)이 됐다 */
+  ['cyc', '사이클 길이', '달력 일수 · 주말 포함 · 2주 = 14', 1]
 ];
 
 function vrPanel(sl) {
@@ -3915,11 +4032,13 @@ function vrPanel(sl) {
     const cs = run.cycles.slice(-8);
     out += `<h2 class="sec">사이클 기록</h2><div class="card pad"><div class="scroll"><table class="tbl">
       <tr><th>날짜</th><th>V</th><th>Pool</th></tr>`
-      + cs.map(c => `<tr><td>${c.d} <span class="u">${esc(c.kind)}${c.flow ? ' ' + ibSgn(c.flow) : ''}</span></td>
+      + cs.map(c => `<tr><td>${c.d} <span class="u">${esc(c.kind)}${c.flow ? ' ' + ibSgn(c.flow) : ''}${c.adj ? ' · 체결일 보정 ' + ibSgn(c.adj) : ''}</span></td>
           <td>${ibU(c.V, 0)}</td><td>${ibU(c.pool, 0)}</td></tr>`).join('')
       + `</table></div>
+      ${cs.some(c => c.adj) ? `<p class="note" style="margin-top:9px"><b>체결일 보정</b> — 경계 앞뒤로 늦게·일찍
+      반영된 체결을 반영한 날이 아니라 <b>미국 체결일</b>로 갈라 그 경계의 Pool 을 다시 셌습니다.</p>` : ''}
       <p class="note" style="margin-top:9px">이번 사이클 <b>${run.cycFrom} ~ ${prevBiz(run.nextCycle)}</b>
-      · 다음 갱신 <b>${run.nextCycle}</b> (${fmt(num(cfg.days), 0)} 영업일).
+      · 다음 갱신 <b>${run.nextCycle}</b> (${vrCyc(cfg) % 7 === 0 ? fmt(vrCyc(cfg) / 7, 0) + '주 · ' : ''}${fmt(vrCyc(cfg), 0)}일).
       갱신 때 <b>다음 V = 현재 V + Pool ÷ ${fmt(num(cfg.G), 0)}
       ${cfg.mode === '적립' ? '+ ' + ibU(num(cfg.flow), 0) : cfg.mode === '인출' ? '− (평가금+Pool)×0.5%' : ''}</b> 로 오릅니다.
       이 표를 원본 시트와 한 줄씩 맞춰 보실 수 있습니다.</p></div>`;
@@ -5196,7 +5315,7 @@ async function sbDrainInbox() {
       tgt.q = +(num(tgt.q) + sign * p.qty).toFixed(4);
       tgt.c = +(num(tgt.c) + sign * p.amt).toFixed(2);
       x.usd = +(num(x.usd) - sign * p.amt).toFixed(2);
-      ibRecord(x, p, r.id, 'auto');
+      ibRecord(x, p, r.id, 'auto', new Date(r.received_at).getTime());
       n++;
     });
     // 같은 배치 안에 똑같은 알림이 두 번 들어 있어도 한 번만 반영되게 한다
