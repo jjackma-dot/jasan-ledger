@@ -355,7 +355,7 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         <div class="note" style="margin-top:8px" id="plNote">손익기준 시트의 항목별 매입금액 대비 현재 평가액. 부동산은 여기 포함하지 않습니다.</div>
       </div>
 
-      <h2 class="sec">항목별 손익 <span class="u" style="font-size:11px;font-weight:400;text-transform:none;letter-spacing:0">매입원가 대비 · 실현+미실현</span></h2>
+      <h2 class="sec">항목별 손익 <span class="u" style="font-size:11px;font-weight:400;text-transform:none;letter-spacing:0">매입원가 대비 + 매도수익 = 누적수익</span></h2>
       <div class="card rows" id="plRows"></div>
 
       <h2 class="sec">기준값</h2>
@@ -659,7 +659,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-16 04:02';
+const BUILD = '2026-09-20 15:12';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1262,7 +1262,31 @@ function plRows() {
   ];
   /* 주식 반영수익 = (DC·자녀 제외 전체 금융자산) − 원금 */
   const realized = { n: '주식 반영수익', sub: '무매+VR+레버리지 − 원금', v: c.stockAcct - num(state.principal), cost: num(state.principal) };
-  return { rows, realized, c, x };
+
+  /* ── 매도수익 (2026-09-20, 사용자 요청) ────────────────────────────────
+     위 일곱 줄은 **지금 들고 있는 것**의 매입원가 대비 손익이다. 이미 팔아서 끝난
+     수익은 거기 없다 — 판 순간 그 종목의 평가액에서 빠져 **예수금**으로 옮겨 가고,
+     차감법 매입금액도 그만큼 줄기 때문이다. 그래서 목록을 아무리 더해도 큰 숫자
+     (원금 대비 누적수익)가 안 나왔다. 사용자가 짚은 것이 이것이다.
+
+     빠진 그 몫은 **계좌에 원가로 쌓여 있는 원금 초과분**이다:
+
+       매도수익 = (달러 매입금액 + 달러예수금) × 매입환율 + 원화예수금 + ISA 매입원가 − 기준원금
+
+     항등식이다(대수로 확인, 매입원가를 무엇으로 재든 성립한다):
+
+       항목별 손익 합 + 매도수익 = 메리츠 계좌 평가액 − 기준원금 = 누적수익
+
+     환율은 **매입환율**로 잰다 — 지금 환율로 재면 환차손익 줄과 겹쳐 두 번 센다.
+     은행 예적금은 안 들어간다(메리츠 계좌가 아니다. docs/02 '계좌가 셋이다').
+     화면이 스스로 이 항등식을 검산한다(renderAnalysis 의 cumGap). */
+  const sold = {
+    cat: 'core', grp: '매도수익', n: '원금 위에 쌓인 실현분', bridge: true,
+    sub: '팔아서 예수금·매입원가로 들어간 몫',
+    v: (usdCost + num(x.usd)) * fx0 / 1e4 + c.krw + man(num(B['주식 레버리지'].cost)) - num(state.principal),
+    cost: 0
+  };
+  return { rows, realized, sold, c, x };
 }
 /* 보유수량·매입금액을 **손으로 고친 시각**을 자리마다 남긴다.
 
@@ -1285,11 +1309,18 @@ const fixedAt = (g, sl) => num((state.fixed || {})[g + '.' + sl]);
    기준원금 16,000만원이 대응하는 것이 바로 이 계좌다. */
 const meritz = c => c.usK + c.cashK + c.krw + c.isaV;
 
-function renderAnalysis() {
-  const { rows: allRows, realized, c, x } = plRows();
-  const rows = allRows.filter(r => inScope(r, UI.ana));      // 자산 = 주식계좌만, 전체 = DC·자녀까지
+/* 누적수익이 언제부터인가. 기준원금 16,000만원을 맞춰 둔 시점이다 (2026-09-20, 사용자 지정).
+   예전 이름은 '1년 누적수익' 이었는데, 원금을 맞춘 날은 고정인데 '1년' 은 매일 달라지므로
+   시간이 갈수록 틀린 말이 된다. 값은 한 푼도 안 바뀌고 이름만 정확해진 것이다. */
+const CUM_FROM = '25.3월 이후';
 
-  /* 큰 숫자는 **원금 대비 1년 누적수익**이다 (2026-09-07, 사용자 요청).
+function renderAnalysis() {
+  const { rows: allRows, realized, sold, c, x } = plRows();
+  /* 매도수익은 범위와 무관하게 늘 붙는다 — 범위를 넓히면 평가액도 원금도 DC·자녀 몫만큼
+     같이 늘어 그 차이(손익)는 이미 아래 두 줄이 담는다. 남는 다리는 언제나 같은 값이다. */
+  const rows = allRows.filter(r => inScope(r, UI.ana)).concat(sold);   // 자산 = 주식계좌만, 전체 = DC·자녀까지
+
+  /* 큰 숫자는 **원금 대비 누적수익**이다 (2026-09-07, 사용자 요청. 이름은 2026-09-20 에 고쳤다 — CUM_FROM).
 
      한 번 뒤집었다가 되돌렸다. 매입원가 대비 손익(실현 + 미실현)을 큰 숫자로 올렸더니
      사용자 말이 이랬다 — "나는 원금 대비 돈을 벌었는데 손익이 마이너스로 표현되는 게
@@ -1321,7 +1352,7 @@ function renderAnalysis() {
   const y1 = val - denom;
 
   $('#plVal').textContent = eok(y1);
-  $('#plLbl').textContent = total ? '1년 누적수익 · 전체' : '1년 누적수익 · 자산';
+  $('#plLbl').textContent = (total ? '누적수익 · 전체' : '누적수익 · 자산') + ' — ' + CUM_FROM;
 
   const pr = $('#plRate');
   pr.className = 'delta ' + (y1 > 0.5 ? 'up' : y1 < -0.5 ? 'dn' : 'fl');
@@ -1344,9 +1375,16 @@ function renderAnalysis() {
     : `메리츠 계좌 평가액 <b>${fmt(mz, 0)}만원</b> = 미국주식 ${fmt(c.usK, 0)}`
       + ` + 달러예수금 ${fmt(c.cashK, 0)} + 원화예수금 ${fmt(c.krw, 0)} + ISA ${fmt(c.isaV, 0)}`
       + `<br>기준원금 <b>${fmt(num(state.principal), 0)}만원</b>`;
+  /* 목록을 더하면 큰 숫자가 나오는지 **화면이 스스로 검산한다.** 이 항등식이 깨지면
+     매도수익 줄의 정의가 어긋난 것이므로 조용히 넘어가면 안 된다. */
+  const shown = rows.filter(r => !r.bridge).reduce((a, r) => a + r.v, 0);
+  const cumGap = Math.abs(shown + sold.v - y1);
+  const idLine = `<br>항목별 손익 ${fmt(shown, 0)} + 매도수익 ${fmt(sold.v, 0)}`
+    + ` = <b>누적수익 ${fmt(y1, 0)}만원</b>`
+    + (cumGap < 0.5 ? '' : ` <b style="color:var(--up)">차이 ${fmt(cumGap, 2)}만원</b>`);
   $('#plNote').innerHTML = `<details><summary style="cursor:pointer;color:var(--muted);font-size:11.5px">
       계산 근거 <span style="font-size:9px">▾</span></summary>
-    <div style="margin-top:6px">${body}`
+    <div style="margin-top:6px">${body}${idLine}`
     + (savOut > 0.5
       ? `<br><b>은행 예적금 ${fmt(savOut, 0)}만원(하나·우리)은 빠집니다</b> — 증권 계좌가 아니라
           기준원금에 대응하지 않습니다.`
@@ -1364,7 +1402,9 @@ function renderAnalysis() {
   /* 묶음별로 소계를 달아 준다. 일곱 줄이 평평하게 놓여 있으면 '미국주식이 전체로는
      얼마인가' 를 매번 암산해야 했다. 환차손익도 미국주식과 한 덩어리다 —
      달러로 산 것을 원화로 볼 때 생기는 값이라 따로 떼면 뜻이 흐려진다. */
-  const maxAbs = Math.max(...rows.map(r => Math.abs(r.v)), 1);
+  /* 막대 길이 기준에서 매도수익은 뺀다. 그 한 줄이 목록에서 가장 커서, 넣으면 나머지
+     일곱 줄이 전부 실오라기가 된다. 넘치는 만큼은 100% 에서 잘린다(bar 의 Math.min). */
+  const maxAbs = Math.max(...rows.filter(r => !r.bridge).map(r => Math.abs(r.v)), 1);
   const grps = [];
   rows.forEach(r => { const g = grps.find(o => o.n === r.grp); if (g) g.rs.push(r); else grps.push({ n: r.grp, rs: [r] }); });
   $('#plRows').innerHTML = grps.map(g => {
@@ -1401,7 +1441,7 @@ function renderAnalysis() {
   const unreal = allRows.filter(r => r.cat === 'core').reduce((a, r) => a + r.v, 0);   // 주식계좌 미실현
   const reCum = reP + num(state.rePast);                        // 과거 실현분까지 더한 부동산 누적수익
   /* 누적수익을 기간으로 가른다. 총액은 실적/계획 탭의 주식 누적수익과 같은 정의다.
-     1년치는 메리츠 계좌 기준으로 고정한다 — 범위(자산/전체)를 따라가면
+     CUM_FROM 몫은 메리츠 계좌 기준으로 고정한다 — 범위(자산/전체)를 따라가면
      총액(주식 기준)과 앞뒤가 안 맞는다. 과거수익은 나머지다. */
   const cumAll = num(state.stPast) + realized.v;
   const cum1 = meritz(c) - num(state.principal);
@@ -1460,12 +1500,12 @@ function renderAnalysis() {
     ${poolBlock}
     ${cum1 == null ? '' : `<div class="scroll" style="margin-top:12px"><table class="tbl">
     <tr><th>누적수익 기간 분해</th><th>만원</th></tr>
-    <tr><td>1년 누적수익 <span class="u">원금 대비</span></td><td>${fmt(cum1, 0)}</td></tr>
+    <tr><td>${CUM_FROM} 누적수익 <span class="u">원금 대비</span></td><td>${fmt(cum1, 0)}</td></tr>
     <tr><td>과거수익 <span class="u">그 이전</span></td><td>${fmt(cumAll - cum1, 0)}</td></tr>
     <tr><td style="color:var(--ink);font-weight:600">= 누적수익</td><td style="font-weight:600">${fmt(cumAll, 0)}</td></tr>
     </table></div>`}
     <p class="note" style="margin-top:8px">반영수익은 위 목록의 무매·VR·환차·ISA와 계좌가 겹치므로 합산 대상이 아닙니다. 원금 대비 계좌 전체 성과를 따로 보는 값입니다.
-    ${cum1 == null ? '' : `누적수익은 과거 실현수익 ${fmt(num(state.stPast), 0)}만원에 반영수익을 더한 값이고, 그중 최근 1년치를 갈라 놓은 것이 위 표입니다.`}</p></details>`;
+    ${cum1 == null ? '' : `누적수익은 과거 실현수익 ${fmt(num(state.stPast), 0)}만원에 반영수익을 더한 값이고, 그중 ${CUM_FROM} 몫을 갈라 놓은 것이 위 표입니다.`}</p></details>`;
 }
 
 /* ===================== 시세 자동 조회 =====================
@@ -1716,8 +1756,14 @@ function renderInput() {
   }
   const ss = $('#sbState'); if (ss) ss.textContent = SB && sbTok ? '연결됨' : '연결 안 됨';
   /* 기록이 비었을 때 다른 탭이 '입력 › 서버 연결' 로 보내는데, 그것이 맨 아래 닫힌
-     상자면 안내가 헛돈다. 안 붙어 있으면 펴 둔다. 붙은 뒤에는 건드리지 않는다. */
-  const sw = $('#sbWrap'); if (sw && !(SB && sbTok)) sw.open = true;
+     상자면 안내가 헛돈다. 안 붙어 있으면 펴 둔다. 붙은 뒤에는 건드리지 않는다.
+
+     ── 붙기 전에 펴면 영영 펴진 채로 남는다 (2026-09-20, 사용자 요청) ──
+     부팅 순서가 renderAll() → initSupabase() 라, 처음 그릴 때는 늘 '연결 안 됨'
+     이다. 그 한 번에 펴 놓고 나면 연결된 뒤에도 접는 코드가 없어, **늘 붙어 있는
+     사용자에게도 서버 연결 상자가 항상 펴진 채**로 보였다. 이제 연결 시도가
+     끝난 뒤에만 펴고, 그 전에는 기본값(접힘) 그대로 둔다. */
+  const sw = $('#sbWrap'); if (sw && sbReady && !(SB && sbTok)) sw.open = true;
   syncNote();
 }
 
@@ -5038,6 +5084,8 @@ function sbDefaults() {
 }
 const SBK = 'jasan_sb';
 let SB = null, sbTok = null;
+/** 서버에 붙는 시도가 한 번이라도 끝났는가. 끝나기 전의 '연결 안 됨' 은 답이 아니라 아직 모르는 것이다 */
+let sbReady = false;
 function sbCfg() {
   let s = null;
   try { s = JSON.parse(localStorage.getItem(SBK) || 'null'); } catch (e) { }
@@ -5812,6 +5860,8 @@ PROVIDERS.splice(1, 0, {
   }
   renderSpanSeg(); renderAll();
   initSupabase().then(ok => ok || initCloud()).then(() => {
+    /* 여기까지 와야 '연결 안 됨' 이 사실이다. 그 전의 화면은 아직 모르는 상태였다 */
+    sbReady = true; renderInput();
     refreshQuotes(false); recoverServer();
     /* 폰이 검증을 마치고 `#vfy=ib` 를 붙여 돌려보냈으면 여기서 받는다.
        서버에 붙은 뒤라야 결과를 읽을 수 있어 이 자리다. 새 탭으로 열렸어도
