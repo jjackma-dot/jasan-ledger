@@ -157,13 +157,14 @@ details[open] summary{margin-bottom:2px}
 .bar i{display:block;height:100%;border-radius:2px}
 
 .cum3{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:12px}
-.cum3 div{background:var(--surf);padding:9px 8px}
+/* 세로 여백 5px — 세 겹이라 표 높이가 예전의 70% 가 된다 (2026-09-20, 사용자 요청) */
+.cum3 div{background:var(--surf);padding:5px 8px}
 /* '주식+DC+자녀' 처럼 긴 이름도 한 줄에 들어가야 한다. 좁은 화면에서는 자간을 조여
    맞추고, 그래도 넘치면 줄바꿈 대신 폭에 맞춰 눌러 준다. 숫자 줄과 높이가 어긋나면
    세 칸의 바닥선이 안 맞아 표가 지저분해진다. */
 .cum3 .k{font-size:10.5px;color:var(--muted);font-weight:600;letter-spacing:.02em;line-height:1.2;
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-@media (max-width:390px){ .cum3 .k{font-size:9.5px;letter-spacing:-.02em} .cum3 div{padding:9px 6px} }
+@media (max-width:390px){ .cum3 .k{font-size:9.5px;letter-spacing:-.02em} .cum3 div{padding:5px 6px} }
 .cum3 .n{font-size:14.5px;letter-spacing:-.01em;white-space:nowrap;font-weight:600;margin-top:-1px;
   line-height:1.15;font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
 .src{font-size:9.5px;font-weight:600;padding:1px 5px;border-radius:4px;margin-left:6px;letter-spacing:.02em}
@@ -518,7 +519,7 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         <div class="lbl">2012년 이후 누적수익 <span style="text-transform:none;letter-spacing:0;font-weight:500">· 만원</span></div>
         <div class="cum3" id="cum3" style="margin-top:10px"></div>
         <details class="inl" id="reDetail">
-          <summary>부동산 내역 입력·수정</summary>
+          <summary>부동산/손익기준값 변경</summary>
           <div class="dbody" id="reEdit"></div>
         </details>
       </div>
@@ -659,7 +660,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-20 15:12';
+const BUILD = '2026-09-20 17:11';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1215,7 +1216,7 @@ function plRow(n, b, px, fx) {
   const val = b.q * px, pl = val - b.cost, un = val - b.q * b.avg;
   const u0 = v => (v >= 0 ? '+' : '−') + '$' + fmt(Math.abs(v), 0);
   return {
-    cat: 'core', grp: '미국주식', n,
+    cat: 'core', grp: '보유주식', n,
     sub: b.full ? `실현 ${u0(b.real)} · 미실현 ${u0(un)}` : '미실현만 · 무매/VR 을 켜면 실현분까지',
     v: pl * fx / 1e4, cost: b.cost * fx / 1e4, real: b.full ? b.real * fx / 1e4 : null
   };
@@ -1255,10 +1256,10 @@ function plRows() {
     plRow('무매 TQQQ', bT, num(p.T), fx),
     plRow('무매 SOXL', bS, num(p.S), fx),
     plRow('VR TQQQ', bV, num(p.T), fx),
-    { cat: 'core', grp: '미국주식', n: '환차손익', sub: '매입금액 + 달러예수금 × 환율차', v: (usdCost + num(x.usd)) * (fx - fx0) / 1e4, cost: (usdCost + num(x.usd)) * fx0 / 1e4 },
-    { cat: 'core', grp: '국내주식', n: 'ISA 레버리지', v: c.isaV - man(num(B['주식 레버리지'].cost)), cost: man(num(B['주식 레버리지'].cost)) },
-    { cat: 'ex', grp: '다른 계좌', n: '자녀 QLD', sub: '환차손익 포함', v: c.kidV - man(num(B['자녀 QLD'].cost)), cost: man(num(B['자녀 QLD'].cost)) },
-    { cat: 'ex', grp: '다른 계좌', n: 'DC 퇴직연금', v: c.dcv - man(num(B['DC'].cost)), cost: man(num(B['DC'].cost)) }
+    { cat: 'core', grp: '보유주식', n: 'ISA 레버리지', v: c.isaV - man(num(B['주식 레버리지'].cost)), cost: man(num(B['주식 레버리지'].cost)) },
+    { cat: 'core', grp: '환차손익', n: '환차손익', sub: '매입금액 + 달러예수금 × 환율차', v: (usdCost + num(x.usd)) * (fx - fx0) / 1e4, cost: (usdCost + num(x.usd)) * fx0 / 1e4 },
+    { cat: 'ex', grp: '자산 외', n: '자녀 QLD', sub: '환차손익 포함', v: c.kidV - man(num(B['자녀 QLD'].cost)), cost: man(num(B['자녀 QLD'].cost)) },
+    { cat: 'ex', grp: '자산 외', n: 'DC 퇴직연금', v: c.dcv - man(num(B['DC'].cost)), cost: man(num(B['DC'].cost)) }
   ];
   /* 주식 반영수익 = (DC·자녀 제외 전체 금융자산) − 원금 */
   const realized = { n: '주식 반영수익', sub: '무매+VR+레버리지 − 원금', v: c.stockAcct - num(state.principal), cost: num(state.principal) };
@@ -1281,8 +1282,7 @@ function plRows() {
      은행 예적금은 안 들어간다(메리츠 계좌가 아니다. docs/02 '계좌가 셋이다').
      화면이 스스로 이 항등식을 검산한다(renderAnalysis 의 cumGap). */
   const sold = {
-    cat: 'core', grp: '매도수익', n: '원금 위에 쌓인 실현분', bridge: true,
-    sub: '팔아서 예수금·매입원가로 들어간 몫',
+    cat: 'core', grp: '실현손익', n: '매도수익 및 기타', bridge: true, sub: '',
     v: (usdCost + num(x.usd)) * fx0 / 1e4 + c.krw + man(num(B['주식 레버리지'].cost)) - num(state.principal),
     cost: 0
   };
@@ -1316,9 +1316,12 @@ const CUM_FROM = '25.3월 이후';
 
 function renderAnalysis() {
   const { rows: allRows, realized, sold, c, x } = plRows();
-  /* 매도수익은 범위와 무관하게 늘 붙는다 — 범위를 넓히면 평가액도 원금도 DC·자녀 몫만큼
-     같이 늘어 그 차이(손익)는 이미 아래 두 줄이 담는다. 남는 다리는 언제나 같은 값이다. */
-  const rows = allRows.filter(r => inScope(r, UI.ana)).concat(sold);   // 자산 = 주식계좌만, 전체 = DC·자녀까지
+  /* 중분류는 넷이다 (2026-09-20, 사용자 요청) — 보유주식 · 환차손익 · 실현손익 · 자산 외.
+     매도수익(실현손익)은 범위와 무관하게 늘 붙는다: 범위를 넓히면 평가액도 원금도 DC·자녀 몫만큼
+     같이 늘어 그 차이는 이미 '자산 외' 두 줄이 담는다. 남는 다리는 언제나 같은 값이다.
+     차례를 맞추려고 '자산 외'(cat ex) 앞에 끼워 넣는다. */
+  const vis = allRows.filter(r => inScope(r, UI.ana));                 // 자산 = 주식계좌만, 전체 = DC·자녀까지
+  const rows = [...vis.filter(r => r.cat !== 'ex'), sold, ...vis.filter(r => r.cat === 'ex')];
 
   /* 큰 숫자는 **원금 대비 누적수익**이다 (2026-09-07, 사용자 요청. 이름은 2026-09-20 에 고쳤다 — CUM_FROM).
 
@@ -1395,7 +1398,11 @@ function renderAnalysis() {
   const bar = (v, mx) => `<div class="bar" style="width:110px"><i style="width:${Math.min(100, Math.abs(v) / mx * 100)}%;background:var(--${v < 0 ? 'down' : 'up'})"></i></div>`;
   const line = (r, mx) => {
     const cls = r.v > 0 ? 'up' : r.v < 0 ? 'dn' : 'fl';
-    return `<div class="row"><div><div class="nm">${r.n}${r.sub ? `<span class="sub">${r.sub}</span>` : ''}</div>${bar(r.v, mx)}</div>
+    /* 중분류 이름이 제목에 이미 있으므로, 줄 이름이 그것과 같으면 되풀이하지 않고
+       설명을 이름 자리에 올린다 (환차손익처럼 한 줄뿐인 묶음). */
+    const nm = r.n === r.grp ? (r.sub || r.n) : r.n;
+    const sb = r.n === r.grp ? '' : r.sub;
+    return `<div class="row"><div><div class="nm">${nm}${sb ? `<span class="sub">${sb}</span>` : ''}</div>${bar(r.v, mx)}</div>
       <div class="vals"><div class="v num ${cls}">${r.v >= 0 ? '+' : '−'}${fmt(Math.abs(r.v), 0)}</div>
       <div class="d num" style="color:var(--muted)">${r.cost > 0 ? (r.v >= 0 ? '+' : '−') + fmt(Math.abs(r.v / r.cost * 100), 1) + '%' : '—'}</div></div></div>`;
   };
@@ -1409,10 +1416,11 @@ function renderAnalysis() {
   rows.forEach(r => { const g = grps.find(o => o.n === r.grp); if (g) g.rs.push(r); else grps.push({ n: r.grp, rs: [r] }); });
   $('#plRows').innerHTML = grps.map(g => {
     const gs = g.rs.reduce((a, r) => a + r.v, 0);
-    const head = g.rs.length > 1
-      ? `<div class="grp-h" style="padding-left:15px;display:flex;align-items:baseline">
-           <span>${g.n}</span><span class="vals" style="margin-left:auto"><span class="v num ${gs > 0 ? 'up' : gs < 0 ? 'dn' : 'fl'}">${gs >= 0 ? '+' : '−'}${fmt(Math.abs(gs), 0)}<span class="u">만원</span></span></span></div>`
-      : `<div class="grp-h" style="padding-left:15px">${g.n}</div>`;
+    /* 한 줄짜리 묶음에도 제목 옆에 금액을 적는다 (2026-09-20, 사용자 요청).
+       예전에는 두 줄 이상일 때만 소계를 달았는데, 중분류가 넷이 되면서 '환차손익'·'실현손익'
+       처럼 한 줄뿐인 묶음이 생겼고 그때만 금액이 제목에서 빠져 줄이 들쭉날쭉했다. */
+    const head = `<div class="grp-h" style="padding-left:15px;display:flex;align-items:baseline">
+           <span>${g.n}</span><span class="vals" style="margin-left:auto"><span class="v num ${gs > 0 ? 'up' : gs < 0 ? 'dn' : 'fl'}">${gs >= 0 ? '+' : '−'}${fmt(Math.abs(gs), 0)}<span class="u">만원</span></span></span></div>`;
     return head + g.rs.map(r => line(r, maxAbs)).join('');
   }).join('');
 
