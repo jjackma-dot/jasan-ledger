@@ -180,6 +180,10 @@ details.inl[open] summary::before{content:"\25BE "}
 details.inl.bare{border-top:0}
 details.inl.bare+details.inl.bare{border-top:1px solid var(--line)}
 details.inl.bare summary{padding:11px 15px}
+/* 실적/계획 hero 의 '부동산/손익기준값 변경' 아래 여백을 절반으로 (2026-09-21, 사용자 요청).
+   그 줄 아래 흰 공간은 summary 아래 패딩(9) + 카드 아래 패딩(14) + 테두리(1) = 24px 였다.
+   둘을 반씩 줄여 12px 로 맞춘다 — 한쪽만 0 까지 밀면 글자가 테두리에 붙는다. */
+#reDetail > summary{padding-bottom:4px}
 .dbody{padding-bottom:6px}
 
 /* ── 입력 탭 섹션 접기 ─────────────────────────────────────────────
@@ -515,7 +519,7 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         <button data-v="total" aria-pressed="false">전체</button>
       </div>
 
-      <div class="card hero" style="margin-top:12px;padding-bottom:14px">
+      <div class="card hero" style="margin-top:12px;padding-bottom:7px">
         <div class="lbl">2012년 이후 누적수익 <span style="text-transform:none;letter-spacing:0;font-weight:500">· 만원</span></div>
         <div class="cum3" id="cum3" style="margin-top:10px"></div>
         <details class="inl" id="reDetail">
@@ -660,7 +664,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-20 17:11';
+const BUILD = '2026-09-21 09:21';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
