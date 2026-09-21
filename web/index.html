@@ -664,7 +664,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-21 09:21';
+const BUILD = '2026-09-21 23:13';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -3512,7 +3512,12 @@ async function latestVerify(quiet) {
      하나 남겼는데, 그 알림을 누르면 원래 쓰던 크롬 탭이 아니라 엉뚱한 브라우저가
      열렸다. 그래서 알림을 아예 없앴고(OverlayLauncher), 대신 결과가 이 화면에
      그날이 갈 때까지 남아 있게 했다. 검증하고 한참 뒤에 웹을 열어도 결과가 보인다. */
-  if (!best || !num(best.t) || iso(new Date(num(best.t))) !== iso(new Date())) return;
+  /* 무매 검증 결과가 없어도 **메리츠 자산 대조는 보여 준다** — 18:30 자동주문 앞단계로
+     폰이 혼자 읽어 둔 날이 그렇다(수집기 4.12). 그날은 guideIB 가 갱신되지 않는다 */
+  if (!best || !num(best.t) || iso(new Date(num(best.t))) !== iso(new Date())) {
+    try { await syncMtsAsset(box); } catch (e) { }
+    return;
+  }
   if (box.innerHTML.trim()) return;
   const what = best.what === 'vr' ? 'vr' : 'ib', txt = String(best.text || '');
   if (!quiet) goTab('ib');
@@ -3520,6 +3525,8 @@ async function latestVerify(quiet) {
     ? `<div class="warn" style="margin-top:9px"><span>◔</span><div>
         <b>${what === 'vr' ? 'VR' : '무매'} 앱을 읽지 못했습니다.</b><br>${esc(txt.replace(/^ERR\s*/, ''))}</div></div>`
     : verifyReport(what, txt, num(best.t));
+  /* 메리츠 자산 대조도 그날 것이 있으면 이어서 붙인다 (수집기 4.12) */
+  try { await syncMtsAsset(box); } catch (e) { }
 }
 
 async function runVerify(what) {
@@ -3573,6 +3580,9 @@ async function pollVerify(what, t0, resumed) {
         return;
       }
       box.innerHTML = verifyReport(what, txt);
+      /* 수집기 4.12 — 무매 검증 뒤에는 **메리츠 자산 대조**가 이어진다(사용자 요청).
+         무매 결과를 먼저 그려 두고 그것만 따로 기다린다. 폰은 지문을 기다리느라 1~2분이 걸릴 수 있다. */
+      if (what !== 'vr') await pollAsset(t0, box, gen);
       return;
     }
     say(`${lbl} 앱 화면을 읽는 중… ${(i + 1) * 2}초`);
@@ -3680,6 +3690,222 @@ function splitByTicker(txt) {
   const r = {};
   order.forEach(k => { r[k] = (k === 'mm.T' ? 'TQQQ' : 'SOXL') + '\n' + out[k].join('\n'); });
   return r;
+}
+
+/* ===================== 메리츠 자산 대조 (2026-09-21, 사용자 요청) =====================
+
+   수집기가 메리츠 MY자산에서 읽어 `meta.mtsAsset` 으로 올린 값을 원장과 견준다.
+   읽는 길은 안드로이드(MtsFillService.captureAssets · AssetLogic)이고 **판단은 여기다** —
+   원장이 여기 있고 기준원금 항등식도 여기 걸려 있다.
+
+     ① 해외주식 보유수량 — 자리마다 대조해 **알리기만 한다.** 고치는 것은 사람이 한다
+        (입력 탭 보유 현황). 다른 까닭은 반영 안 된 체결일 수도, 손질일 수도 있다
+     ② 외화예수금 — 늘어난 만큼이 **일할계산한 연 5% 안**이면 예탁금 이용료로 보고 원장에 넣는다.
+        메리츠는 영업일마다 하루치를 넣어 주고 **주말이 지나면 사흘치가 한꺼번에** 들어온다(사용자).
+        그래서 허용액은 기준일부터 오늘까지의 **달력 일수**로 잰다.
+        한도를 넘거나 줄었으면 **알리기만 한다** — 반영 안 된 체결이나 환전일 수 있다(사용자 선택)
+
+   이자는 **입금이 아니라 수익**이다. 그래서 applyFlow 와 달리 기준원금을 건드리지 않는다 —
+   예수금만 올리면 '매도수익'(docs/02) 이 그만큼 늘어 누적수익에 그대로 들어간다.                */
+const USD_APR = 0.05;          // 사용자가 정한 상한 — "증가분이 일할계산된 연 5% 이내면 이자"
+const USD_EPS = 0.005;         // 센트 아래는 같은 값으로 본다
+
+/* 수집기가 올린 글에서 값만 꺼낸다. 폰에서 이미 갈라 놓았으므로 여기서는 줄만 읽는다 —
+   원문은 같은 글 아래 `-- 읽은 글자 --` 로 함께 오고, 못 읽은 날 그걸 보고 고친다. */
+function parseAsset(txt) {
+  const holds = [], cash = [];
+  String(txt || '').split(/\r?\n/).forEach(l => {
+    let m = l.match(/^해외주식\s+(\d{4}-\d{4}-\d{2})\s+([A-Z]{1,6})\s+(\d+)$/);
+    if (m) { holds.push({ acct: m[1], tick: m[2], qty: +m[3] }); return; }
+    m = l.match(/^외화예수금\s+(\d{4}-\d{4}-\d{2})\s+(\d+(?:\.\d+)?)$/);
+    if (m) cash.push({ acct: m[1], usd: +m[2] });
+  });
+  return { holds, cash };
+}
+
+const daysBetween = (a, b) => Math.round((parseISO(b) - parseISO(a)) / 864e5);
+
+/* 이자를 얼마나 쌓아 둘 수 있는가의 **기준일**.
+
+   마지막으로 맞춘 날(state.usdChk.d)이 기준이다. 체결이 있어도 옮기지 않는다 — 체결은
+   예수금을 정확히 더하고 빼므로 그 사이에도 이자는 계속 쌓인다. 기준일을 체결로 옮기면
+   그 며칠치가 영영 한도 밖으로 밀려 매일 '확인 필요' 만 뜬다.
+
+   한 번도 맞춘 적이 없으면 **원장 예수금이 마지막으로 바뀐 날**을 쓴다 — 그날이 우리가
+   그 값을 마지막으로 안 날이다. 그보다 앞은 알 길이 없다. */
+function usdAnchor() {
+  const c = state.usdChk;
+  if (c && c.d) return c.d;
+  const ks = dayKeys();
+  for (let i = ks.length - 1; i > 0; i--)
+    if (Math.abs(num(state.days[ks[i]].usd) - num(state.days[ks[i - 1]].usd)) > USD_EPS) return ks[i];
+  return ks[0] || iso(new Date());
+}
+
+/* 견주기만 한다 — 원장은 건드리지 않는다. 고치는 곳은 mtsAssetCommit 하나뿐이다 */
+function mtsAssetDiff(obj) {
+  const a = parseAsset(obj && obj.text);
+  const x = latest(), today = iso(new Date());
+  const out = { t: num(obj && obj.t), holds: [], cash: null };
+
+  IB_SLOTS.forEach(sl => {
+    const tick = PX_NAME[sl.s];
+    const r = a.holds.find(h => h.acct.slice(0, 4) === sl.acct && h.tick === tick);
+    out.holds.push({ n: sl.n, mine: num(x[sl.g][sl.s].q), them: r ? r.qty : null });
+  });
+  /* 원장에 자리가 없는 계좌·종목도 적는다. **못 본 것을 없는 것으로 치지 않는다** */
+  a.holds.forEach(h => {
+    if (!IB_SLOTS.some(sl => sl.acct === h.acct.slice(0, 4) && PX_NAME[sl.s] === h.tick))
+      out.holds.push({ n: h.acct + ' ' + h.tick, mine: null, them: h.qty });
+  });
+
+  const mine = a.cash.filter(c => ACCTS[c.acct.slice(0, 4)]);
+  const other = a.cash.filter(c => !ACCTS[c.acct.slice(0, 4)]);
+  if (!mine.length) return out;
+  const them = +mine.reduce((s, c) => s + c.usd, 0).toFixed(2);
+  const was = +num(x.usd).toFixed(2);
+  const anchor = usdAnchor();
+  const days = Math.max(1, daysBetween(anchor, today));
+  const cap = +(Math.abs(was) * USD_APR * days / 365).toFixed(2);
+  const diff = +(them - was).toFixed(2);
+  out.cash = {
+    them, was, diff, cap, days, anchor, other, accts: mine,
+    act: Math.abs(diff) <= USD_EPS ? 'same' : (diff > 0 && diff <= cap + USD_EPS) ? 'interest' : 'check'
+  };
+  return out;
+}
+
+/* 판정을 원장에 반영한다. **한 번만** — 같은 읽기(res.t)로 두 번 넣지 않는다.
+   @return 이자로 넣은 금액. 아무것도 안 넣었으면 0 */
+function mtsAssetCommit(res) {
+  const c = res.cash;
+  if (!c) return 0;
+  const chk = state.usdChk || (state.usdChk = { d: '', t: 0, log: [] });
+  if (num(res.t) <= num(chk.t)) return 0;                  // 이미 본 읽기다
+  chk.t = num(res.t);
+  if (c.act === 'check') { saveLocal(); schedulePush(); return 0; }   // 기준일은 그대로 둔다
+  const today = iso(new Date()), k = latestKey();
+  let put = 0;
+  if (c.act === 'interest') {
+    latest().usd = c.them;
+    put = c.diff;
+    chk.log = [{ d: today, amt: c.diff, days: c.days, from: c.was, to: c.them }]
+      .concat(chk.log || []).slice(0, 20);
+    markDirty(k);
+  }
+  chk.d = today;                                           // 맞췄다 — 여기서부터 다시 쌓는다
+  saveLocal(); schedulePush();
+  return put;
+}
+
+/* 화면 — 검증 결과 아래에 한 장으로 붙는다 */
+function assetReport(res, at) {
+  if (!res) return '';
+  const same = h => h.mine != null && h.them != null && h.mine === h.them;
+  const hl = res.holds.map(h => {
+    const ok = same(h);
+    const val = h.them == null ? '앱 화면에 없음' : fmt(h.them, 0) + '주';
+    const sub = h.mine == null ? '원장에 없는 자리'
+      : h.them == null ? '원장 ' + fmt(h.mine, 0) + '주'
+        : ok ? '' : '원장 ' + fmt(h.mine, 0) + '주 · ' + (h.them > h.mine ? '+' : '−') + fmt(Math.abs(h.them - h.mine), 0);
+    return '<div class="row"><div style="min-width:0"><div class="nm">' + esc(h.n)
+      + (sub ? '<span class="sub">' + esc(sub) + '</span>' : '') + '</div></div>'
+      + '<div class="vals"><div class="v num ' + (ok ? '' : 'up') + '" style="' + (ok ? 'color:var(--c2)' : '') + '">'
+      + esc(val) + '</div></div></div>';
+  }).join('');
+
+  const c = res.cash;
+  let cl = '<div class="row"><div class="nm" style="color:var(--up)">외화예수금을 읽지 못했습니다</div></div>';
+  if (c) {
+    const tone = c.act === 'check' ? 'var(--up)' : 'var(--c2)';
+    const say = c.act === 'same' ? '원장과 같습니다'
+      : c.act === 'interest' ? '이자 +$' + fmt(c.diff, 2) + ' 반영'
+        : c.diff > 0 ? '+$' + fmt(c.diff, 2) + ' — ' + fmt(c.days, 0) + '일치 한도 $' + fmt(c.cap, 2) + ' 초과'
+          : '−$' + fmt(Math.abs(c.diff), 2) + ' — 메리츠가 원장보다 적습니다';
+    cl = '<div class="row"><div style="min-width:0"><div class="nm">외화예수금<span class="sub">원장 $'
+      + fmt(c.was, 2) + (c.accts.length > 1 ? ' · 계좌 ' + c.accts.length + '개 합' : '') + '</span></div></div>'
+      + '<div class="vals"><div class="v num" style="color:' + tone + '">$' + fmt(c.them, 2) + '</div>'
+      + '<div class="d num" style="color:var(--muted)">' + esc(say) + '</div></div></div>';
+    if (c.act === 'check') cl += '<div class="row" style="background:var(--surf2)">'
+      + '<div class="nm" style="font-size:11.5px;line-height:1.5;color:var(--ink2);flex:1;white-space:normal">'
+      + '원장은 그대로 뒀습니다. 반영 안 된 체결이나 환전일 수 있습니다 — 입력 탭의 <b>확인 필요한 알림</b>을 '
+      + '먼저 보고, 그래도 다르면 보유 현황에서 직접 맞춰 주세요. (기준일 ' + esc(c.anchor) + ' 부터 '
+      + fmt(c.days, 0) + '일 · 연 5% 한도 $' + fmt(c.cap, 2) + ')</div></div>';
+    if (c.other.length) cl += '<div class="row"><div class="nm" style="color:var(--muted)">원장에 없는 계좌 '
+      + c.other.map(o => esc(o.acct)).join(' · ') + '<span class="sub">합계에서 뺐습니다</span></div></div>';
+  }
+
+  const bad = res.holds.filter(h => !same(h)).length + (c && c.act === 'check' ? 1 : 0);
+  const head = bad === 0 ? '<b style="color:var(--c2)">전부 맞습니다</b>'
+    : '<b style="color:var(--up)">' + bad + '건 확인 필요</b>';
+  const when = at ? ' <span class="u">' + new Date(at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) + ' 읽음</span>' : '';
+  const log = ((state.usdChk || {}).log || []).slice(0, 3);
+  return '<div class="card rows" style="margin-top:10px">'
+    + '<div class="grp-h" style="padding-left:15px">메리츠 자산 대조 · ' + head + when + '</div>'
+    + hl + cl + '</div>'
+    + (log.length ? '<details class="inl bare" style="margin-top:6px">'
+      + '<summary style="padding:8px 3px 6px;font-size:11.5px;color:var(--muted)">예수금 이자 반영 내역</summary>'
+      + '<p class="note" style="margin:0 3px 6px">'
+      + log.map(l => esc(l.d) + ' <b>+$' + fmt(l.amt, 2) + '</b> (' + fmt(l.days, 0) + '일치) → $' + fmt(l.to, 2)).join('<br>')
+      + '</p></details>' : '');
+}
+
+/* 받아서 반영하고 그린다. 그리지 않아도 **반영은 한다** — 탭을 안 열었다고 이자가 빠지면 안 된다 */
+function takeMtsAsset(v, box) {
+  if (!v) return false;
+  const txt = String(v.text || '');
+  if (txt.startsWith('ERR')) {
+    if (box) box.insertAdjacentHTML('beforeend', '<div class="warn" style="margin-top:9px"><span>◔</span><div>'
+      + '<b>메리츠 자산을 읽지 못했습니다.</b><br>'
+      + esc(txt.replace(/^ERR\s*/, '').split(/\r?\n/).slice(0, 3).join(' · ')).slice(0, 400) + '</div></div>');
+    return false;
+  }
+  const res = mtsAssetDiff(v);
+  const put = mtsAssetCommit(res);
+  if (box) box.insertAdjacentHTML('beforeend', assetReport(res, num(v.t)));
+  if (put) { renderAll(); toast('예수금 이자 +$' + fmt(put, 2) + ' 반영'); }
+  return true;
+}
+
+/* 열 때마다 한 번 — 18:30 앞단계로 폰이 읽어 둔 것을 여기서 받는다.
+   화면을 안 봐도 반영되어야 한다(자동주문은 저녁에 돌고 웹은 다음 날 열릴 수 있다). */
+async function syncMtsAsset(box) {
+  if (!SB || !sbTok) return false;
+  let rows = null;
+  try { rows = await sbReq('/rest/v1/meta?k=eq.mtsAsset&select=v'); } catch (e) { return false; }
+  const v = rows && rows[0] && rows[0].v;
+  if (!v || !num(v.t)) return false;
+  /* **반영과 보여 주기를 가른다.** 반영은 이미 본 읽기면 mtsAssetCommit 이 스스로 건너뛴다.
+     보여 주기는 그날이 갈 때까지 계속한다 — 무매 검증 결과와 같은 규칙이다.
+     이 둘을 묶어 두면, 부팅 때 조용히 반영해 버린 뒤로는 탭을 열어도 아무것도 안 보인다. */
+  const today = iso(new Date(num(v.t))) === iso(new Date());
+  return takeMtsAsset(v, today ? box : null);
+}
+
+/* 무매 검증 뒤 이어지는 메리츠 대조를 기다린다 (수집기 4.12).
+   무매 결과는 먼저 올라오고, 메리츠 쪽은 지문을 기다리느라 1~2분이 걸릴 수 있다. */
+async function pollAsset(t0, box, gen) {
+  const say = m => {
+    const n = box.querySelector('#astWait');
+    if (n) n.innerHTML = m; else box.insertAdjacentHTML('beforeend', '<p class="note" id="astWait" style="margin:9px 3px 0">' + m + '</p>');
+  };
+  say('메리츠 자산을 대조하는 중… 폰에서 <b>지문</b>을 대 주세요');
+  for (let i = 0; i < 75; i++) {                       // 최대 150초
+    await new Promise(r => setTimeout(r, 2000));
+    if (gen !== vfyGen) return;                        // 더 새 검증이 시작됐다
+    let rows = null;
+    try { rows = await sbReq('/rest/v1/meta?k=eq.mtsAsset&select=v'); } catch (e) { }
+    const v = rows && rows[0] && rows[0].v;
+    if (v && num(v.t) > t0) {
+      box.querySelector('#astWait')?.remove();
+      takeMtsAsset(v, box);
+      return;
+    }
+    say('메리츠 자산을 대조하는 중… ' + ((i + 1) * 2) + '초 · 폰에서 <b>지문</b>을 대 주세요');
+  }
+  box.querySelector('#astWait')?.remove();
+  box.insertAdjacentHTML('beforeend', '<div class="warn" style="margin-top:9px"><span>◔</span><div>'
+    + '<b>메리츠 자산 대조 결과가 오지 않았습니다.</b> 폰에서 메리츠가 MY자산까지 갔는지 확인해 주세요.</div></div>');
 }
 
 document.getElementById('p-ib')?.addEventListener('click', e => {
@@ -5175,6 +5401,9 @@ async function sbPushMeta() {
     { k: 'undone', v: state.undone || {} },
     /* 손으로 고친 시각. 기기마다 따로 놀면 한쪽에서 막은 알림이 다른 기기에서 반영된다 */
     { k: 'fixed', v: state.fixed || {} },
+    /* 예수금 이자 기준일·마지막으로 본 읽기(수집기 4.12). 이것이 기기마다 따로 놀면
+       **같은 이자를 두 번 넣거나** 한도를 잘못 재게 된다 */
+    { k: 'usdChk', v: state.usdChk || {} },
     /* 주문표를 만들다 터져도 나머지 동기화까지 막으면 안 된다.
        예전에는 이게 sbPushMeta 안에서 그대로 던져서, 실패하면 그날 원장이
        통째로 안 올라갔다. */
@@ -5759,6 +5988,7 @@ async function initSupabase() {
       if (meta.ibLog) state.ibLog = meta.ibLog;
       if (meta.undone) state.undone = meta.undone;
       if (meta.fixed) state.fixed = meta.fixed;
+      if (meta.usdChk) state.usdChk = meta.usdChk;
       state.ts = meta.ts; ensureMeta(); ensurePlan(); saveLocal(); renderAll();
       toast('서버에서 최신 기록을 불러왔습니다');
     } else if (!isEmptyLedger()) {
@@ -5766,6 +5996,10 @@ async function initSupabase() {
     }
     remoteOn = true;
     await sbDrainInbox();
+    /* 폰이 18:30 앞단계로 읽어 둔 메리츠 자산을 받는다 (수집기 4.12).
+       무매/VR 탭을 열지 않아도 예수금 이자는 반영되어야 한다 — 자동주문은 저녁에 돌고
+       웹은 다음 날 열릴 수 있다. 화면 없이 조용히 반영하고, 결과는 탭을 열면 보인다. */
+    try { await syncMtsAsset(null); } catch (e) { }
     // 재시도로 여러 번 들어올 수 있다. 타이머를 매번 새로 걸면 쌓인다
     startDraining();
     return true;
