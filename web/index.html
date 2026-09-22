@@ -664,7 +664,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-22 17:02';
+const BUILD = '2026-09-22 18:15';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -4125,6 +4125,13 @@ function splitByTicker(txt) {
    예수금만 올리면 '매도수익'(docs/02) 이 그만큼 늘어 누적수익에 그대로 들어간다.                */
 const USD_APR = 0.05;          // 사용자가 정한 상한 — "증가분이 일할계산된 연 5% 이내면 이자"
 const USD_EPS = 0.005;         // 센트 아래는 같은 값으로 본다
+/* **최소 닷새치는 허용한다** (2026-09-22, 사용자 요청: "이번 추석은 4일 연휴인데 최대 5일치
+   5% 이자 수령 범위까지 자동증가 허용요망").
+   연휴에는 이용료가 며칠치씩 몰려 들어온다. 그런데 연휴 동안 대조를 돌리면 값이 같아
+   기준일이 매일 오늘로 옮겨지고, 정작 몰린 돈이 들어온 날에는 '하루치' 한도로 재게 된다.
+   그래서 경과일이 짧아도 **닷새치까지는** 이자로 본다. 연 5% 기준이라 닷새치도 잔액의
+   0.068% 뿐이다 — 체결 한 건과는 자릿수가 다르다. */
+const USD_MIN_DAYS = 5;
 
 /* 수집기가 올린 글에서 값만 꺼낸다. 폰에서 이미 갈라 놓았으므로 여기서는 줄만 읽는다 —
    원문은 같은 글 아래 `-- 읽은 글자 --` 로 함께 오고, 못 읽은 날 그걸 보고 고친다. */
@@ -4164,10 +4171,20 @@ function mtsAssetDiff(obj) {
   const x = latest(), today = iso(new Date());
   const out = { t: num(obj && obj.t), holds: [], cash: null };
 
+  /* **다 팔면 목록에서 빠진다** (2026-09-22, 사용자 지적: "무매SOXL 실제 보유 0주 인데
+     앱 화면에 없음 이라고 나옴. 없는게 당연"). 메리츠 보유잔고는 0주짜리를 안 보여 준다 —
+     원장도 0 이면 **그게 맞는 것**이지 못 읽은 것이 아니다. 0주로 적고 ✓ 로 센다.
+     원장에 수량이 있는데 목록에 없으면 그때는 진짜 어긋난 것이라 예전처럼 말한다. */
+  const gotList = a.holds.length > 0;
   IB_SLOTS.forEach(sl => {
     const tick = PX_NAME[sl.s];
     const r = a.holds.find(h => h.acct.slice(0, 4) === sl.acct && h.tick === tick);
-    out.holds.push({ n: sl.n, mine: num(x[sl.g][sl.s].q), them: r ? r.qty : null });
+    const mineQ = num(x[sl.g][sl.s].q);
+    out.holds.push({
+      n: sl.n, mine: mineQ,
+      them: r ? r.qty : (gotList && mineQ === 0 ? 0 : null),
+      gone: !r && gotList && mineQ === 0 ? 1 : undefined
+    });
   });
   /* 원장에 자리가 없는 계좌·종목도 적는다. **못 본 것을 없는 것으로 치지 않는다** */
   a.holds.forEach(h => {
@@ -4181,7 +4198,7 @@ function mtsAssetDiff(obj) {
   const them = +mine.reduce((s, c) => s + c.usd, 0).toFixed(2);
   const was = +num(x.usd).toFixed(2);
   const anchor = usdAnchor();
-  const days = Math.max(1, daysBetween(anchor, today));
+  const days = Math.max(USD_MIN_DAYS, daysBetween(anchor, today));
   const cap = +(Math.abs(was) * USD_APR * days / 365).toFixed(2);
   const diff = +(them - was).toFixed(2);
   out.cash = {
@@ -4222,8 +4239,9 @@ function assetReport(res, at) {
     const ok = same(h);
     const val = h.them == null ? '앱 화면에 없음' : fmt(h.them, 0) + '주';
     const sub = h.mine == null ? '원장에 없는 자리'
-      : h.them == null ? '원장 ' + fmt(h.mine, 0) + '주'
-        : ok ? '' : '원장 ' + fmt(h.mine, 0) + '주 · ' + (h.them > h.mine ? '+' : '−') + fmt(Math.abs(h.them - h.mine), 0);
+      : h.gone ? '다 팔아 목록에 없습니다'
+        : h.them == null ? '원장 ' + fmt(h.mine, 0) + '주'
+          : ok ? '' : '원장 ' + fmt(h.mine, 0) + '주 · ' + (h.them > h.mine ? '+' : '−') + fmt(Math.abs(h.them - h.mine), 0);
     return '<div class="row"><div style="min-width:0"><div class="nm">' + esc(h.n)
       + (sub ? '<span class="sub">' + esc(sub) + '</span>' : '') + '</div></div>'
       + '<div class="vals"><div class="v num ' + (ok ? '' : 'up') + '" style="' + (ok ? 'color:var(--c2)' : '') + '">'
