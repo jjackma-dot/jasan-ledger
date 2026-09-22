@@ -664,7 +664,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-21 23:13';
+const BUILD = '2026-09-22 09:50';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2428,7 +2428,11 @@ function ibRun(key) {
       sma5: num(r.sma && r.sma[sl.px])
     });
     prevC = c;
-    hist.push({ d, ...st, buyPx, boughtQty: boughtQty != null ? boughtQty : Math.max(0, dq), soldQ: soldQty != null ? soldQty : Math.max(0, -dq) });
+    /* 그날 **나간 돈과 들어온 돈**을 함께 싣는다 (2026-09-22). 사이클 하나의
+       매입금액·매도금액을 내려면 이 둘을 날마다 더해야 한다 — 평단이나 실현손익으로는
+       '얼마를 사고 얼마를 팔았는가' 를 되짚을 수 없다. */
+    hist.push({ d, ...st, buyPx, boughtQty: boughtQty != null ? boughtQty : Math.max(0, dq), soldQ: soldQty != null ? soldQty : Math.max(0, -dq),
+      boughtAmt: num(boughtAmt), proceeds: num(proceeds) });
   }
   return { cfg, sl, st, hist, mixed, orders: ibOrders(cfg, st) };
 }
@@ -2633,6 +2637,308 @@ function ibLegRows(title, legs) {
       <span class="u">${esc(l.tag)}</span></td><td>${fmt(l.qty, 0)}주</td></tr>`).join('');
 }
 
+/* ===================== 무매 사이클 기록 (2026-09-22, 사용자 요청) =====================
+
+   무한매수법은 **사이클 단위**로 끝난다 — 전량 매도하면 한 판이 닫히고 새 판이 시작된다.
+   그런데 이 앱은 사이클이 끝나도 아무것도 남기지 않았다. 게다가 새 사이클을 시작하면
+   설정의 시작일(d0)이 오늘로 옮겨져 **replay 가 지난 판을 통째로 잊는다.**
+   그래서 끝난 판은 그때 적어 두지 않으면 영영 사라진다.
+
+   사용자 요청: "fire gate 에서 관리하는 무매 수익기록인데 위처럼 누적 관리요망.
+   (가능하면 지난기록까지) SOXL 종료시 바로 그날 동일조건 시작여부(시드유지or수익포함)
+   묻도록 하고 새 사이클 시작."
+
+   ── 무엇을 적는가 ────────────────────────────────────────────────
+   기간 · 종목 · 시드 · 매입금액 · 매도금액 · 수익금. 나머지는 그것들에서 나온다:
+     수익률        = 수익 ÷ 매입금액      (앱 화면으로 확인: $60.85 ÷ $27,717.20 = 0.22% → 0.2%)
+     시드 대비 수익률 = 수익 ÷ 시드        (앱 화면으로 확인: $60.85 ÷ $13,000 = 0.47% → 0.5%)
+
+   ── 지난 기록 ───────────────────────────────────────────────────
+   원장은 2026-08-01 부터이고 replay 는 설정의 시작일부터다. 그보다 앞선 사이클은
+   되짚을 방법이 **없다** — 그래서 붙여넣기로 받는다(`ibCycImport`). 앱 목록 화면의
+   글자 그대로를 읽는다. 매입금액·시드를 모르면 비워 두고, 아는 것(기간·종목·수익금)만
+   적는다. **모르는 것을 지어내지 않는다** — 합계는 수익금만으로도 맞는다.            */
+
+const IB_CYC_MAX = 300;
+
+function ibCycles() { if (!Array.isArray(state.ibCycles)) state.ibCycles = []; return state.ibCycles; }
+const ibCycKey = c => c.k + '|' + c.d1;
+const ibCycSort = l => l.sort((a, b) => (a.d1 < b.d1 ? -1 : a.d1 > b.d1 ? 1 : a.k < b.k ? -1 : 1));
+
+/* 사이클 하나의 파생값. 모르는 것은 null 로 돌려준다 — 0 으로 두면 '0%' 로 보인다 */
+function ibCycCalc(c) {
+  const profit = num(c.profit);
+  const buy = num(c.buy) > 0 ? num(c.buy) : null;
+  const seed = num(c.seed) > 0 ? num(c.seed) : null;
+  return {
+    profit,
+    rate: c.rate != null ? num(c.rate) : (buy ? profit / buy * 100 : null),
+    seedRate: c.seedRate != null ? num(c.seedRate) : (seed ? profit / seed * 100 : null)
+  };
+}
+
+/**
+ * replay 에서 **끝난 판**을 찾아 아직 안 적은 것만 적는다.
+ *
+ * 같은 판을 두 번 적지 않게 `종목|종료일` 을 열쇠로 쓴다. 사이클은 하루에 두 번 끝날 수 없다.
+ *
+ * **앵커에서 이어받은 판은 반쪽이다.** 설정의 시작일이 사이클의 진짜 시작일이 아니면
+ * (중간 진입 — `q0 > 0`) 그 앞의 매수·매도가 빠져 있다. 그런 줄에는 `partial` 을 달아
+ * 화면이 그렇게 말하고, 사용자가 앱 값으로 고칠 수 있게 한다.
+ * **반쪽인 줄 알면서 온전한 척하지 않는다.**
+ */
+function ibScanCycles(key, run) {
+  if (!run || !run.hist || run.hist.length < 2) return 0;
+  const list = ibCycles(), have = new Set(list.map(ibCycKey));
+  const cfg = run.cfg, tick = PX_NAME[run.sl.s];
+  let sIdx = 0, first = true, buy = 0, sell = 0, added = 0;
+  let base = num(run.hist[0].realized);          // 이 판이 시작될 때까지의 누적 실현손익
+  for (let i = 1; i < run.hist.length; i++) {
+    const h = run.hist[i];
+    buy += num(h.boughtAmt); sell += num(h.proceeds);
+    if (!h.cycleEnd) continue;
+    const k = key + '|' + h.d;
+    const partial = first && num(cfg.q0) > 0;
+    if (!have.has(k)) {
+      /* **수익은 `매도 − 매입` 이 아니라 실현손익의 증가분이다.**
+         처음부터 끝까지 담긴 판에서는 둘이 같다(다 사서 다 팔았으니까). 그런데
+         **앵커에서 이어받은 반쪽**에서는 전혀 다르다 — 시작일 앞에 사 둔 것을 팔면
+         매도만 잡히고 매입은 안 잡혀, 실제 원장에서 `매도 − 매입` 이 +$8,453 으로 나왔다
+         (앱이 말하는 그 판의 수익은 +$60.85 다). 그 값이 '수익 포함' 으로 시드에 더해지면
+         다음 판의 1회 투자금이 통째로 어긋난다.
+         실현손익 증가분은 앵커의 평단을 기준으로 재므로 반쪽에서도 뜻이 있는 값이다. */
+      list.push({
+        k: key, tick, d0: (run.hist[sIdx] || run.hist[0]).d, d1: h.d,
+        seed: num(cfg.seed), buy: +buy.toFixed(2), sell: +sell.toFixed(2),
+        profit: +(num(h.realized) - base).toFixed(2), src: 'auto',
+        partial: partial ? 1 : undefined
+      });
+      have.add(k); added++;
+    }
+    sIdx = i + 1; first = false; buy = 0; sell = 0; base = num(h.realized);
+  }
+  if (added) {
+    state.ibCycles = ibCycSort(list).slice(-IB_CYC_MAX);
+    saveLocal(); schedulePush();
+  }
+  return added;
+}
+
+/** 켜 둔 무매 자리를 전부 훑는다. 화면에 안 띄운 종목의 판도 놓치면 안 된다 */
+function ibScanAll() {
+  let n = 0;
+  IB_SLOTS.filter(s => !s.vr).forEach(s => { n += ibScanCycles(s.k, ibRun(s.k)); });
+  return n;
+}
+
+/** **오늘** 끝난 판인가. 끝난 그날에만 새 사이클을 묻는다 */
+function ibJustEnded(run) {
+  if (!run || !run.hist.length) return null;
+  const last = run.hist[run.hist.length - 1];
+  return last.cycleEnd ? last : null;
+}
+
+/** 그 자리의 마지막 기록 */
+const ibLastCyc = key => ibCycles().filter(c => c.k === key).slice(-1)[0] || null;
+
+/**
+ * 같은 조건으로 **새 사이클을 시작한다** (사용자 요청).
+ *
+ * @param mode 'keep' 시드 유지 · 'gain' 이번 판 수익을 시드에 더한다
+ *
+ * 시작일을 오늘로 옮기고 앵커를 0 으로 비운다. 분할수·목표수익률은 건드리지 않는다 —
+ * '동일조건' 이 그 뜻이다. **보유가 남아 있으면 하지 않는다** — 그때 앵커를 0 으로 비우면
+ * 있는 주식을 없다고 적는 것이다.
+ */
+function ibRestart(key, mode) {
+  const sl = IB_SLOTS.find(s => s.k === key); if (!sl) return;
+  const run = ibRun(key), end = ibJustEnded(run);
+  if (!end) { toast('끝난 사이클이 없습니다'); return; }
+  const q = num(latest()[sl.g][sl.s].q);
+  if (q > 0) { toast(`아직 ${fmt(q, 0)}주 남아 있습니다 — 설정에서 직접 맞춰 주세요`); return; }
+  ibScanCycles(key, run);                         // 새 판을 열기 전에 끝난 판을 적는다
+  const rec = ibLastCyc(key);
+  const gain = rec && rec.d1 === end.d ? num(rec.profit) : 0;
+  const cfg = ibCfg(key);
+  const before = num(cfg.seed);
+  cfg.seed = +(before + (mode === 'gain' ? gain : 0)).toFixed(2);
+  cfg.d0 = latestKey(); cfg.q0 = 0; cfg.a0 = 0; cfg.r0 = 0; cfg.t0 = 0;
+  (state.ibAsk = state.ibAsk || {})[key] = end.d;
+  saveLocal(); schedulePush(); renderAll();
+  toast(`${sl.n} 새 사이클 시작 · 시드 ${ibU(cfg.seed, 0)}`
+    + (mode === 'gain' ? ` (수익 ${ibSgn(gain, 2)} 포함)` : ''));
+}
+
+/** '나중에' — 오늘은 더 묻지 않는다. 기록은 이미 남아 있다 */
+function ibAskLater(key, d) {
+  (state.ibAsk = state.ibAsk || {})[key] = d;
+  saveLocal(); schedulePush(); renderIB();
+}
+
+/**
+ * 지난 기록 붙여넣기.
+ *
+ * 앱 목록 화면의 글자 그대로를 받는다. 한 줄에 **날짜 둘 · 종목 하나 · 숫자 몇** 이면 된다:
+ *
+ *   `2026.06.23 ~ 2026.09.22  SOXL  $60.85 / 0.2%  시드 대비 수익률: 0.5%`
+ *   `2026-06-23 2026-09-22 SOXL 60.85 0.2 0.5`
+ *   `mm.S 2026-06-23 2026-09-22 SOXL 60.85 13000 27717.20 27778.05`   ← 다 아는 경우
+ *
+ * 숫자 개수로 가른다 — 1개면 수익금만, 2개면 +수익률, 3개면 +시드 대비 수익률,
+ * 4개 이상이면 `수익금 시드 매입금액 매도금액` 으로 읽는다.
+ * **모르는 값은 비워 둔다.** 반올림된 %에서 매입금액·시드를 역산하면 15% 씩 틀리는데,
+ * 그 틀린 값이 화면에서는 진짜처럼 보인다.
+ */
+const CYC_DATE = /(20\d\d)\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(\d{1,2})/;
+const cycNum = v => +String(v).replace(/[^\d.\-]/g, '');
+
+function ibCycImport(text) {
+  const out = { add: 0, dup: 0, over: 0, bad: 0 };
+  const list = ibCycles();
+  const at = new Map(list.map((c, i) => [ibCycKey(c), i]));
+  String(text || '').split(/\r?\n/).forEach(raw => {
+    const line = raw.trim();
+    if (!line) return;
+    const ds = line.match(new RegExp(CYC_DATE.source, 'g'));
+    const tk = (line.match(/\b(TQQQ|SOXL|QLD)\b/) || [])[1];
+    if (!ds || ds.length < 2 || !tk) { out.bad++; return; }
+    const iso2 = t => { const m = t.match(CYC_DATE); return m[1] + '-' + pad2(+m[2]) + '-' + pad2(+m[3]); };
+    const d0 = iso2(ds[0]), d1 = iso2(ds[1]);
+    /* 날짜와 이름표에 든 숫자는 값이 아니다 — 먼저 지운다 */
+    let rest = line;
+    ds.forEach(t => { rest = rest.replace(t, ' '); });
+    rest = rest.replace(/\b(TQQQ|SOXL|QLD)\b/g, ' ')
+      .replace(/시드\s*대비\s*수익률/g, ' ').replace(/Ver\s*[\d.]+/gi, ' ');
+
+    const rec = { k: null, tick: tk, d0, d1, src: 'hand' };
+    /* **`$` 와 `%` 를 붙잡는다.** 앱 목록에는 `SOXL 7000` 같은 **이름표**가 함께 찍혀 있어서,
+       숫자를 순서대로 읽으면 그 7000 이 수익금이 된다. 기호가 붙은 것만 값으로 본다. */
+    const money = (rest.match(/\$\s*-?[\d,]+(?:\.\d+)?/g) || []).map(cycNum);
+    const pct = (rest.match(/-?[\d,]+(?:\.\d+)?(?=\s*%)/g) || []).map(cycNum);
+    /* **`$금액 / 숫자%` 가 수익금이다.** `$` 하나로는 모자란다 — 이름표가
+       `SOXL $13000/20` 처럼 달러로 적혀 있어(사용자 화면 2026-09-22) 그 13000 이
+       수익금으로 읽혔다. 앱은 수익금 바로 뒤에 `/ 수익률%` 을 붙이므로 그 짝으로 붙잡는다. */
+    const pair = rest.match(/\$\s*(-?[\d,]+(?:\.\d+)?)\s*\/\s*(-?[\d,]+(?:\.\d+)?)\s*%/);
+    if (pair) {
+      rec.profit = +cycNum(pair[1]).toFixed(2);
+      rec.rate = cycNum(pair[2]);
+      const after = rest.slice(pair.index + pair[0].length).match(/-?[\d,]+(?:\.\d+)?(?=\s*%)/);
+      if (after) rec.seedRate = cycNum(after[0]);
+    } else if (money.length) {
+      rec.profit = +money[0].toFixed(2);
+      if (pct.length >= 1) rec.rate = pct[0];
+      if (pct.length >= 2) rec.seedRate = pct[1];
+    } else {
+      /* 기호가 없으면 **직접 적은 줄**로 본다: 수익금 [시드 매입금액 매도금액] */
+      const ns = (rest.match(/-?[\d,]+(?:\.\d+)?/g) || []).map(cycNum).filter(v => isFinite(v));
+      if (!ns.length) { out.bad++; return; }
+      rec.profit = +ns[0].toFixed(2);
+      if (ns.length >= 4) { rec.seed = ns[1]; rec.buy = ns[2]; rec.sell = ns[3]; }
+      else { if (ns.length >= 2) rec.rate = ns[1]; if (ns.length >= 3) rec.seedRate = ns[2]; }
+    }
+    const slot = IB_SLOTS.find(s => !s.vr && PX_NAME[s.s] === tk);
+    rec.k = slot ? slot.k : 'mm.' + tk[0];
+    const key = ibCycKey(rec), i = at.get(key);
+    if (i != null) {
+      /* **사람이 넣은 값이 자동보다 앞선다.** 앵커에서 이어받은 반쪽은 우리 계산이 그 판의
+         수익을 말하지 못한다 — 앱 값이 진짜다. 사람이 이미 적은 줄은 덮지 않는다. */
+      if (list[i].src === 'auto') { list[i] = rec; out.over++; } else out.dup++;
+      return;
+    }
+    list.push(rec); at.set(key, list.length - 1); out.add++;
+  });
+  if (out.add || out.over) { state.ibCycles = ibCycSort(list).slice(-IB_CYC_MAX); saveLocal(); schedulePush(); renderAll(); }
+  return out;
+}
+
+function ibCycDelete(i) {
+  const l = ibCycles();
+  if (i < 0 || i >= l.length) return;
+  const c = l[i];
+  if (!confirm(`${c.tick} ${c.d0} ~ ${c.d1} 기록을 지울까요?`)) return;
+  l.splice(i, 1); saveLocal(); schedulePush(); renderAll();
+  toast('기록 한 줄을 지웠습니다');
+}
+
+/* ── 화면 ─────────────────────────────────────────────────────── */
+
+/** 오늘 끝났으면 **바로 묻는다** — 시드 유지 / 수익 포함 / 나중에 */
+function ibEndCard(sl, run) {
+  const end = ibJustEnded(run); if (!end) return '';
+  if ((state.ibAsk || {})[sl.k] === end.d) return '';
+  const cfg = ibCfg(sl.k), rec = ibLastCyc(sl.k);
+  const gain = rec && rec.d1 === end.d ? num(rec.profit) : 0;
+  const seed = num(cfg.seed), q = num(latest()[sl.g][sl.s].q);
+  const span = rec && rec.d1 === end.d ? `${rec.d0} ~ ${rec.d1}` : end.d;
+  return `<div class="card pad" style="margin-top:12px;border-color:var(--c2)">
+    <div class="nm" style="font-size:15px"><b>${esc(sl.n)} 사이클이 끝났습니다</b>
+      <span class="sub">${esc(span)}</span></div>
+    <p class="note" style="margin:7px 3px 0">전량 매도되어 한 판이 닫혔습니다 ·
+      이번 판 수익 <b style="color:var(--${gain >= 0 ? 'up' : 'down'})">${ibSgn(gain, 2)}</b>
+      ${rec && rec.partial ? `<br><b style="color:var(--up)">이 값은 시작일 ${esc(rec.d0)} 부터만 센 것입니다</b> —
+        그 앞의 매수·매도는 원장에 없어 되짚을 수 없습니다. 앱이 말하는 이 판의 수익이 진짜입니다.
+        <b>수익 포함</b> 으로 열 생각이면 아래 <b>완료 사이클 › 지난 기록 붙여넣기</b> 에 앱의 그 줄을 먼저 넣어 주세요
+        (같은 판이면 이 줄을 덮어씁니다).` : ''}
+      <br>같은 조건(분할수 ${fmt(num(cfg.n), 0)} · 목표 ${fmt(num(cfg.ty), 1)}%)으로 <b>오늘</b> 새 사이클을 시작할까요?</p>
+    ${q > 0 ? `<p class="note" style="margin:7px 3px 0;color:var(--up)">아직 ${fmt(q, 0)}주가 남아 있어
+      새로 시작하지 않습니다 — 설정에서 보유수량·평단을 맞춰 주세요.</p>`
+    : `<div style="display:flex;gap:6px;margin-top:10px;flex-wrap:wrap">
+      <button class="ghost" data-cyc="keep" data-k="${esc(sl.k)}" style="flex:1 1 0;min-width:0">시드 유지<br><b>${ibU(seed, 0)}</b></button>
+      <button class="ghost" data-cyc="gain" data-k="${esc(sl.k)}" style="flex:1 1 0;min-width:0">수익 포함<br><b>${ibU(seed + gain, 0)}</b></button>
+      <button class="ghost" data-cyc="later" data-k="${esc(sl.k)}" data-d="${esc(end.d)}" style="flex:0 0 auto">나중에</button></div>`}</div>`;
+}
+
+/** 완료 사이클 — 목록과 합계 */
+function ibCycPanel() {
+  const all = ibCycles();
+  const yr = String(new Date().getFullYear());
+  const thisYear = all.filter(c => String(c.d1).slice(0, 4) === yr);
+  const sum = l => l.reduce((a, c) => a + num(c.profit), 0);
+  const byTick = {};
+  thisYear.forEach(c => { byTick[c.tick] = (byTick[c.tick] || 0) + num(c.profit); });
+  const tot = sum(thisYear);
+
+  const head = `<div class="cum3" style="margin-top:0">
+      <div><div class="k">완료 사이클</div><div class="n">${fmt(all.length, 0)}회</div></div>
+      <div><div class="k">${esc(yr)}년 수익</div><div class="n ${tot >= 0 ? 'up' : 'dn'}">${ibSgn(tot, 2)}</div></div>
+      <div><div class="k">${esc(yr)}년 판</div><div class="n">${fmt(thisYear.length, 0)}회</div></div>
+    </div>
+    ${Object.keys(byTick).length ? `<p class="note" style="margin:8px 3px 0">${esc(yr)}년 종목별 — `
+      + Object.entries(byTick).sort((a, b) => b[1] - a[1])
+        .map(([t, v]) => `<b>${esc(t)}</b> <span style="color:var(--${v >= 0 ? 'up' : 'down'})">${ibSgn(v, 2)}</span>`).join(' · ')
+      + `</p>` : ''}`;
+
+  const rows = all.slice().reverse().map(c => {
+    const i = all.indexOf(c), g = ibCycCalc(c);
+    const tail = [
+      g.rate != null ? `수익률 ${fmt(g.rate, 1)}%` : '',
+      g.seedRate != null ? `시드 대비 ${fmt(g.seedRate, 1)}%` : '',
+      num(c.seed) > 0 ? `시드 ${ibU(num(c.seed), 0)}` : '',
+      c.partial ? '<b style="color:var(--up)">반쪽</b>' : '',
+      c.src === 'hand' ? '직접' : ''
+    ].filter(Boolean).join(' · ');
+    return `<div class="row"><div style="min-width:0">
+      <div class="nm">${esc(c.tick)}<span class="sub">${esc(c.d0)} ~ ${esc(c.d1)}</span></div>
+      ${tail ? `<div class="note" style="margin-top:3px">${tail}</div>` : ''}</div>
+      <div class="vals"><div class="v num" style="color:var(--${g.profit >= 0 ? 'up' : 'down'})">${ibSgn(g.profit, 2)}</div>
+      ${num(c.buy) > 0 ? `<div class="d num" style="color:var(--muted)">매입 ${ibU(num(c.buy), 0)}</div>` : ''}</div>
+      <button class="ghost" data-cycdel="${i}" style="padding:4px 8px;font-size:11.5px;flex:none">지우기</button></div>`;
+  }).join('');
+
+  const imp = `<details class="inl bare" style="margin-top:8px">
+    <summary style="padding:8px 3px 6px;font-size:11.5px;color:var(--muted)">지난 기록 붙여넣기</summary>
+    <p class="note" style="margin:0 3px 6px">무매 앱 <b>리포트</b> 목록의 글자를 그대로 붙여넣으세요.
+    한 줄에 <b>날짜 둘 · 종목 · 숫자</b> 면 됩니다 — 숫자는 <b>수익금 · 수익률 · 시드 대비</b> 순서입니다.
+    <br>원장(${esc(dayKeys()[0] || '—')} 부터)보다 앞선 판은 되짚을 방법이 없어 이 길로만 들어옵니다.
+    모르는 값은 비워 둡니다 — <b>반올림된 %에서 매입금액을 역산하지 않습니다.</b></p>
+    <textarea id="cycIn" rows="4" placeholder="2026.06.23 ~ 2026.09.22  SOXL  $60.85 / 0.2%  시드 대비 수익률: 0.5%"
+      style="width:100%;font-size:12px;font-family:inherit"></textarea>
+    <button class="ghost" id="cycAdd" style="margin-top:6px">기록에 넣기</button></details>`;
+
+  return head + (rows ? `<div class="card rows" style="margin-top:8px">${rows}</div>`
+    : `<p class="note" style="margin:8px 3px 0">아직 적힌 판이 없습니다. 사이클이 끝나면 저절로 적힙니다.</p>`) + imp;
+}
+
 function renderIB() {
   const body = $('#ibBody'); if (!body) return;
   const sl = IB_SLOTS.find(s => s.k === UI.ib) || IB_SLOTS[0];
@@ -2640,6 +2946,10 @@ function renderIB() {
   const x = latest(), close = num(x.px[sl.px]);
   const curQ = num(x[sl.g][sl.s].q);
   const run = ibRun(sl.k);
+  /* **끝난 판을 먼저 적는다.** 새 사이클을 시작하면 replay 의 시작일이 오늘로 옮겨져
+     지난 판이 통째로 사라진다 — 그때 적어 두지 않으면 영영 없다.
+     화면에 안 띄운 종목도 함께 훑는다(무매 TQQQ 를 보는 동안 SOXL 이 끝날 수 있다). */
+  ibScanAll();
   let out = '';
 
   if (sl.vr) { body.innerHTML = vrPanel(sl) + renderGuide(sl); return; }   // VR 은 방법론이 달라 화면도 따로다
@@ -2699,8 +3009,13 @@ function renderIB() {
     </div>`;
 
     if (o.done) {
-      out += `<div class="warn"><span>◕</span><div><b>사이클이 끝났습니다.</b> 전량 매도됐습니다.
-        내일부터 새 사이클 1일차로 자동 전환되어 최초 매수 주문이 나옵니다.</div></div>`;
+      /* 끝난 그날 **바로 묻는다** (2026-09-22, 사용자 요청). 예전에는 "내일부터 자동 전환" 이라고만 했는데,
+         그러면 시드도 앵커도 옛 판의 값을 그대로 이고 간다 — 새 판의 1회 투자금이 지난 판의
+         누적 실현손익에 끌려간다. 이제 사람이 '시드 유지 / 수익 포함' 을 골라 깨끗하게 연다. */
+      const card = ibEndCard(sl, run);
+      out += card || `<div class="warn"><span>◕</span><div><b>사이클이 끝났습니다.</b> 전량 매도됐습니다.
+        아래 <b>완료 사이클</b> 에 적혔습니다. 새로 시작하려면 설정에서 <b>시작일</b>을 오늘로 두고
+        보유수량·평단·누적 실현손익·T 를 비우세요.</div></div>`;
     } else {
       /* 대폭락 줄은 급락한 날에만 체결되는 보험이다. 오늘 걸 주문은 leg 와 매도 두 줄뿐인데
          대폭락이 여러 줄이면 그것이 화면을 다 먹는다. 따로 접어 둔다. */
@@ -2758,14 +3073,15 @@ function renderIB() {
         아래 설정에서 <b>시작점 맞추기</b> 를 누른 뒤 증권사 앱의 평단을 넣으세요.</div></div>`;
     }
 
-    const ends = run.hist.filter(h => h.cycleEnd);
-    if (ends.length) {
-      out += `<h2 class="sec">사이클 기록</h2><div class="card pad"><div class="scroll"><table class="tbl">
-        <tr><th>종료일</th><th>그날 실현손익</th></tr>`
-        + ends.map(h => `<tr><td>${h.d}</td>
-            <td style="color:var(--${h.profit >= 0 ? 'up' : 'down'})">${ibSgn(h.profit)}</td></tr>`).join('')
-        + `</table></div></div>`;
-    }
+  }
+
+  /* **완료 사이클** — replay 가 아니라 적어 둔 기록에서 그린다 (2026-09-22).
+     예전에는 `run.hist` 에서 그때그때 골라 냈는데, 새 사이클을 시작하면 시작일이 옮겨져
+     지난 판이 화면에서 사라졌다. 이 구획은 무매를 껐을 때도 보여야 하므로 `if (run)` 밖이다. */
+  {
+    const cy = ibCycles();
+    out += secD('cyc', '완료 사이클', ibCycPanel(),
+      cy.length ? `${fmt(cy.length, 0)}회 · ${ibSgn(cy.reduce((a, c) => a + num(c.profit), 0), 0)}` : '없음');
   }
 
   /* T 내역. 쓰던 앱과 T 가 다를 때 **어느 날** 갈라졌는지가 유일하게 필요한 정보다.
@@ -3909,6 +4225,25 @@ async function pollAsset(t0, box, gen) {
 }
 
 document.getElementById('p-ib')?.addEventListener('click', e => {
+  /* 사이클 기록 (2026-09-22) — 끝난 판을 적고 새 판을 연다 */
+  const cyb = e.target.closest('[data-cyc]');
+  if (cyb) {
+    const k = cyb.dataset.k, m = cyb.dataset.cyc;
+    if (m === 'later') ibAskLater(k, cyb.dataset.d); else ibRestart(k, m);
+    return;
+  }
+  const cyd = e.target.closest('[data-cycdel]');
+  if (cyd) { ibCycDelete(+cyd.dataset.cycdel); return; }
+  if (e.target.closest('#cycAdd')) {
+    const ta = $('#cycIn'); if (!ta) return;
+    const r = ibCycImport(ta.value);
+    if (r.add) ta.value = '';
+    toast(r.add ? `${r.add}건 넣었습니다`
+      + (r.dup ? ` · 이미 있던 ${r.dup}건은 건너뜀` : '') + (r.bad ? ` · 못 읽은 ${r.bad}줄` : '')
+      : r.dup ? `${r.dup}건 전부 이미 있습니다`
+        : '읽을 줄이 없습니다 — 날짜 둘과 종목이 한 줄에 있어야 합니다');
+    return;
+  }
   if (e.target.closest('#vfyIB')) { runVerify('ib'); return; }
   if (e.target.closest('#vfyVR')) { runVerify('vr'); return; }
   const pb = e.target.closest('#vfyPaste');
@@ -5393,6 +5728,9 @@ async function sbPushMeta() {
     { k: 'plan', v: state.plan }, { k: 'ts', v: state.ts },
     { k: 'reCost', v: num(state.reCost) }, { k: 'rePast', v: num(state.rePast) }, { k: 'stPast', v: num(state.stPast) }, { k: 'flows', v: state.flows || [] },
     { k: 'ib', v: state.ib || {} }, { k: 'ibLog', v: state.ibLog || [] },
+    /* 끝난 사이클 기록·'나중에' 표시 (2026-09-22). 기기마다 따로 놀면 같은 판이 두 번 적히고,
+       한쪽에서 새로 연 사이클을 다른 쪽이 또 묻는다 */
+    { k: 'ibCycles', v: state.ibCycles || [] }, { k: 'ibAsk', v: state.ibAsk || {} },
     { k: 'vr', v: state.vr || {} },
     /* 되돌린 체결 목록 — **옛 기록이다.** 반영 내역이 inbox 를 보던 시절에는
        "이 줄은 되돌렸으니 목록에서 빼라" 는 표시가 따로 필요했다. 지금은 되돌리면
@@ -5986,6 +6324,8 @@ async function initSupabase() {
       if (meta.ib) state.ib = meta.ib;
       if (meta.vr) state.vr = meta.vr;
       if (meta.ibLog) state.ibLog = meta.ibLog;
+      if (meta.ibCycles) state.ibCycles = meta.ibCycles;
+      if (meta.ibAsk) state.ibAsk = meta.ibAsk;
       if (meta.undone) state.undone = meta.undone;
       if (meta.fixed) state.fixed = meta.fixed;
       if (meta.usdChk) state.usdChk = meta.usdChk;
