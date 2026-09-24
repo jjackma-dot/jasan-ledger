@@ -664,7 +664,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-24 04:22';
+const BUILD = '2026-09-24 08:02';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -3804,7 +3804,9 @@ function diffOrders(mine, theirs, byHold, inWin) {
        줄까지 다 보여 주는데, 그건 이 앱이 오늘 걸 주문이 아니라 판정과 무관하다. */
     const outByHold = byHold && hs.length && (num(a.hold) < lo || num(a.hold) > hi);
     const outByPx = !!inWin && !inWin(num(a.px));
-    pairs.push({ mine: a, app: null, ok: false, outside: !!(outByHold || outByPx) });
+    /* outHold — 보유수량 범위 밖이라 **봐준** 줄. 사람이 보는 검증에서는 거짓 경보를 막지만, VR 자동진행(수집기 4.31)은
+       이 줄도 센다 — 앱 표가 한 줄만 읽혀도 '양호' 가 되면 그 판정으로 실제 예약이 나간다(시험으로 확인했다) */
+    pairs.push({ mine: a, app: null, ok: false, outside: !!(outByHold || outByPx), outHold: !!(outByHold && !outByPx) });
   });
   const unmatched = right.filter(b => !usedR.has(b.i));
   const extra = inWin ? unmatched.filter(b => inWin(num(b.px))) : unmatched;
@@ -4058,12 +4060,126 @@ async function pollVerify(what, t0, resumed) {
     <br>앱이 안 열렸다면 수집기 앱에서 대상 앱을 지정해 주세요.</div></div>`;
 }
 
+/* ===================== VR 자동진행 (2026-09-24, 수집기 4.31, 사용자 요청) =====================
+
+   "사이클이 끝나는 다음날인 토요일 오전 10시에 알람 … VR검증(fire gate앱) > 메리츠앱 접속 > 관심종목 1회클릭 >
+    해외예약 > 예약내역/취소 확인 > 예약매수(비밀번호 1회입력) > 기간 자동변경 후 예약하기 까지 입력 >
+    예약완료 후 예약내역/취소 확인"
+
+   **흐름은 수집기가 끌고, 판정은 여기서 한다.** 크롬은 사람이 누르지 않은 앱 호출(intent)을 막으므로,
+   웹이 검증을 마치고 저절로 수집기를 부르는 길은 믿을 수 없다. 그래서 순서가 이렇다.
+     ① 수집기 알림 [지금진행] → 이 주소를 `#vrauto=<시각>` 으로 연다
+     ② 여기서 체결 반영(알림함 → 원장) · VR 검토 대기 확인 · 새 사이클 주문표를 만들어 서버에 올린다
+        → `meta.vrStage` = ready (못 하면 stop 과 까닭)
+     ③ 수집기가 그것을 보고 fire gate VR 앱을 읽어 `meta.guideVR` 로 올리고 이 화면으로 돌아온다
+     ④ 여기서 무매/VR 검증과 **같은 기준**(verifyReport)으로 대조한다. 전부 양호면 `meta.vrGo` 에
+        **대조한 그 주문표**(줄·사이클)를 적는다. 하나라도 다르면 ok:false 와 까닭 — 수집기는 멈춘다(사용자 선택)
+   새 사이클 주문표는 토요일에 이미 나온다 — vrRun 이 사이클 마지막 영업일 다음 날 넘긴다(vrTurn). */
+let vrAutoBusy = false;
+const vrAutoHash = () => { const m = (location.hash || '').match(/vrauto=(\d+)/); return m ? +m[1] : 0; };
+
+async function vrPutMeta(k, v) {
+  await sbReq('/rest/v1/meta', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify([{ k, v }]) });
+}
+
+async function vrAutoResume() {
+  const t0 = vrAutoHash();
+  if (!t0 || vrAutoBusy) return;
+  try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { }
+  if (Date.now() - t0 > 30 * 60e3) return;             // 오래된 주소를 새로고침한 것
+  vrAutoBusy = true;
+  try { await vrAutoFlow(t0); }
+  catch (e) { await vrAutoStop(t0, '웹앱에서 오류가 났습니다: ' + e.message); }
+  finally { vrAutoBusy = false; }
+}
+
+async function vrAutoStop(t0, why, keep) {
+  const box = $('#vfyOut');
+  const warn = `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>VR 자동진행을 멈췄습니다.</b><br>${esc(why)}</div></div>`;
+  if (box) box.innerHTML = keep ? warn + box.innerHTML : warn;
+  if (!SB || !sbTok) return;
+  const v = { t0, t: Date.now(), ok: false, why };
+  try { await vrPutMeta('vrStage', { ...v, stage: 'stop' }); } catch (e) { }
+  try { await vrPutMeta('vrGo', v); } catch (e) { }
+}
+
+async function vrAutoFlow(t0) {
+  goTab('ib');
+  const box = $('#vfyOut');
+  const say = m => { if (box) box.innerHTML = `<p class="note" style="margin:9px 3px 0"><b>VR 자동진행</b> — ${m}</p>`; };
+  if (!SB || !sbTok) {
+    if (box) box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div>
+      <b>이 브라우저는 서버에 연결되어 있지 않아 VR 자동진행을 할 수 없습니다.</b> 평소 쓰는 브라우저에서 입력 탭 로그인 뒤
+      알림의 [지금진행] 을 다시 눌러 주세요. 폰은 몇 분 뒤 스스로 멈춥니다.</div></div>`;
+    return;
+  }
+  const sl = IB_SLOTS.find(x => x.vr);
+
+  /* ① 체결 반영 — 금요일 체결이 원장에 들어가야 새 V 가 맞다 */
+  say('① 체결을 원장에 반영합니다');
+  await sbDrainInbox();
+  await fetchReview();
+  /* VR 계좌 체결이 **확인 필요** 로 남아 있으면 V 가 틀린다. 반영하지 않은 채 예약을 걸지 않는다 */
+  const pend = (reviewInbox || []).filter(r => (r.parsed || []).some(p => p && p.acct === sl.acct));
+  if (pend.length) return vrAutoStop(t0, `VR 계좌(${sl.acct}) 체결 ${pend.length}건이 '확인 필요한 알림' 에 남아 있습니다 — 입력 탭에서 반영하거나 무시한 뒤 [지금진행] 을 다시 눌러 주세요.`);
+  if (fillToToday()) renderAll();
+
+  /* ② 새 사이클 주문표 */
+  const r = vrRun(sl.k);
+  if (!r) return vrAutoStop(t0, 'VR 이 켜져 있지 않거나 설정(시작일·V·G)이 비어 있습니다.');
+  const today = latestKey();
+  if (r.cycFrom < today)
+    return vrAutoStop(t0, `이번 사이클(${r.cycFrom}~)이 이미 시작됐습니다. 자동진행은 사이클이 끝난 뒤부터 새 사이클 시작일(${r.nextCycle} 앞 영업일 다음 날 ~ 시작일)까지만 돕니다.`);
+  let plan;
+  try { plan = ibPlanPayload(); } catch (e) { return vrAutoStop(t0, '주문표를 만들지 못했습니다: ' + e.message); }
+  const ps = (plan.slots || []).find(x => x.k === sl.k);
+  if (!ps || !(ps.rows || []).length) return vrAutoStop(t0, 'VR 주문표에 낼 줄이 없습니다.');
+  renderAll();
+  say(`② 새 사이클 ${ps.cyc.from} ~ ${ps.cyc.to} 주문표 ${ps.rows.length}줄을 올립니다`);
+  await sbPushMeta(plan);
+  await vrPutMeta('vrStage', { t0, t: Date.now(), stage: 'ready', cyc: ps.cyc, n: ps.rows.length });
+
+  /* ③ fire gate VR 앱 읽기를 기다린다. 이 탭은 그동안 뒤로 가 멈춰 있다가 폰이 돌려보내면 이어서 돈다 */
+  const tS = Date.now();
+  let v = null;
+  while (Date.now() - tS < 8 * 60e3) {
+    await new Promise(res => setTimeout(res, 2000));
+    let rows = null;
+    try { rows = await sbReq('/rest/v1/meta?k=eq.guideVR&select=v'); } catch (e) { }
+    const g = rows && rows[0] && rows[0].v;
+    if (g && num(g.t) > tS) { v = g; break; }
+    say(`③ 폰이 fire gate VR 앱을 읽는 중… ${Math.round((Date.now() - tS) / 1000)}초`);
+  }
+  if (!v) return vrAutoStop(t0, 'fire gate VR 앱을 읽은 결과가 8분 안에 오지 않았습니다.');
+  const txt = String(v.text || '');
+  if (txt.startsWith('ERR')) return vrAutoStop(t0, 'fire gate VR 앱을 읽지 못했습니다 — ' + txt.replace(/^ERR\s*/, ''));
+
+  /* ④ 대조 — 무매/VR 검증 버튼과 같은 판정 */
+  vfyLast = null;
+  box.innerHTML = verifyReport('vr', txt, num(v.t));
+  const vl = vfyLast;
+  if (!vl || vl.what !== 'vr' || !vl.seen)
+    return vrAutoStop(t0, 'fire gate VR 앱 화면에서 VR 표를 찾지 못했습니다.', true);
+  if (vl.bad > 0)
+    return vrAutoStop(t0, `fire gate VR 앱과 ${vl.bad}건이 다릅니다 — 예약을 내지 않습니다. VR 앱의 사이클을 갱신했는지 확인하고 [지금진행] 을 다시 눌러 주세요.`, true);
+  /* 화면 검증은 앱이 덮은 범위 밖의 줄을 봐준다. 여기서는 봐주지 않는다 — 우리가 낼 줄이 앱 표에 **다 있어야** 한다 */
+  if (num(vl.strict) > 0)
+    return vrAutoStop(t0, `fire gate VR 앱 표에서 우리 예약 줄 ${vl.strict}건을 찾지 못했습니다(앱 표가 덜 읽혔거나 다릅니다) — 예약을 내지 않습니다. 다시 진행해 주세요.`, true);
+  await vrPutMeta('vrGo', { t0, t: Date.now(), ok: true, at: plan.at, k: ps.k, tick: ps.tick, acct: ps.acct, cyc: ps.cyc, rows: ps.rows });
+  box.insertAdjacentHTML('afterbegin', `<p class="note" style="margin:9px 3px 0"><b style="color:var(--c2)">VR 자동진행 — 대조 통과.</b>
+    폰이 메리츠로 가서 새 사이클(${ps.cyc.from} ~ ${ps.cyc.to}) 예약 ${ps.rows.length}줄을 냅니다. 지문·비밀번호는 폰에서 넣어 주세요.</p>`);
+}
+
+/* 마지막으로 그린 검증의 판정 — { what, bad, seen } */
+let vfyLast = null;
+
 /* 폰이 떠 온 글자를 자리별로 갈라 각각 대조한다.
    무매는 TQQQ·SOXL 둘 다 본다 — 한 화면에 카드 둘이 이어져 있다. */
 function verifyReport(what, txt, at) {
   const slots = what === 'vr' ? IB_SLOTS.filter(s => s.vr) : IB_SLOTS.filter(s => !s.vr);
   const parts = what === 'vr' ? { 'vr.T': txt } : splitByTicker(txt);
-  let html = '', bad = 0, seen = 0;
+  let html = '', bad = 0, seen = 0, strict = 0;
   slots.forEach(sl => {
     const t = parts[sl.k];
     if (!t) { html += `<div class="row"><div class="nm">${esc(sl.n)}</div>
@@ -4079,6 +4195,8 @@ function verifyReport(what, txt, at) {
        예전에 이걸 세어 "200건 이상 불일치" 가 떴다. */
     const nbad = pairs.bad + (dq !== 0 ? 1 : 0) + (Math.abs(da) > AVG_TOL ? 1 : 0);
     bad += nbad; seen++;
+    /* 자동진행용 엄격 판정 — 가격 창 안의 우리 줄은 **전부** 앱과 짝이 맞아야 한다. 앱 표가 비었으면 그것도 불일치다 */
+    strict += nbad + pairs.filter(p => p.outHold).length + (g.rows.length ? 0 : 1);
     const ok = nbad === 0;
     /* 전 줄이 같은 이유로 틀렸을 때는 줄 수를 말하지 말고 어디를 보라고 말한다.
        VR 40건이 정확히 그 모양이었다 — 40개의 오류가 아니라 기준선 하나다. */
@@ -4125,6 +4243,8 @@ function verifyReport(what, txt, at) {
         <div class="nm" style="font-size:11.5px;line-height:1.5;color:var(--ink2);flex:1;white-space:normal">${cz}</div></div>`;
     }
   });
+  /* VR 자동진행(수집기 4.31)이 이 판정을 그대로 쓴다 — 화면에 뜨는 '전부 양호' 와 같은 기준이어야 한다 */
+  vfyLast = { what, bad, seen, strict, t: Date.now() };
   const head = !seen ? '읽은 것이 없습니다'
     : bad === 0 ? `<b style="color:var(--c2)">전부 양호</b> — 앱과 같습니다`
       : `<b style="color:var(--up)">${bad}건이 다릅니다</b>`;
@@ -4539,6 +4659,8 @@ const prevBiz = s => {
   do { d.setDate(d.getDate() - 1); } while (d.getDay() === 0 || d.getDay() === 6);
   return iso(d);
 };
+/* 사이클을 넘기는 날 — 다음 사이클 시작 B 의 **앞 영업일 다음 날**. 월요일 B 면 그 앞 토요일이다(vrRun 주석) */
+const vrTurn = B => addDays(prevBiz(B), 1);
 
 /* 시작일부터 오늘까지 다시 계산한다. 무매와 같은 방식이다 —
    상태를 따로 들고 있지 않으므로 두 번 세거나 하루를 건너뛰어 어긋나지 않는다.
@@ -4614,8 +4736,15 @@ function vrRun(key) {
     q = nq; prevC = c;
 
     /* 사이클 경계. 공식 예시가 P/G 에 적립 전 Pool 을 쓰므로 순서를 그대로 지킨다.
-       (V=9000, P=1000, G=10, 적립 250 → 9000 + 100 + 250 = 9350) */
-    while (d >= next) {
+       (V=9000, P=1000, G=10, 적립 250 → 9000 + 100 + 250 = 9350)
+
+       ── 넘기는 날은 '사이클 마지막 영업일 다음 날' 이다 (2026-09-24, VR 자동진행) ──────────
+       사용자는 사이클이 끝난 **토요일**에 fire gate VR 앱의 사이클을 손으로 갱신하고 다음 사이클 예약을 건다.
+       경계 B(다음 사이클 시작, 보통 월요일)에서만 넘기면 토·일에는 지난 사이클 표가 나와 대조가 안 맞는다.
+       B 앞의 주말에는 체결이 없으므로(체결일 귀속은 아래 attr 이 B 로 그대로 가른다) 토요일에 넘겨도
+       월요일에 넘긴 것과 V·Pool·주문표가 같다. 평일 경계(시작이 화~금)면 B 와 같은 날이라 예전 그대로다.
+       사이클 기록의 날짜(cy.d)·귀속 기준은 여전히 B 다. */
+    while (d >= vrTurn(next)) {
       const a = legs.length ? attr(i, next) : { cash: 0, dq: 0 };
       const poolAt = pool + a.cash, qAt = q + a.dq;    // 체결일 기준 경계 직전
       const flow = flowAt(qAt * num(r.px[sl.px]), poolAt);
@@ -4848,6 +4977,8 @@ function vrPanel(sl) {
       반영된 체결을 반영한 날이 아니라 <b>미국 체결일</b>로 갈라 그 경계의 Pool 을 다시 셌습니다.</p>` : ''}
       <p class="note" style="margin-top:9px">이번 사이클 <b>${run.cycFrom} ~ ${prevBiz(run.nextCycle)}</b>
       · 다음 갱신 <b>${run.nextCycle}</b> (${vrCyc(cfg) % 7 === 0 ? fmt(vrCyc(cfg) / 7, 0) + '주 · ' : ''}${fmt(vrCyc(cfg), 0)}일).
+      ${run.cycFrom > latestKey() ? `<b>새 사이클이 ${run.cycFrom} 에 시작합니다</b> — 앞 사이클 마지막 영업일이 지나 미리 넘겼습니다(주말 예약용).` : ''}
+      갱신은 사이클 마지막 영업일 다음 날(보통 토요일) 원장에서 합니다.
       갱신 때 <b>다음 V = 현재 V + Pool ÷ ${fmt(num(cfg.G), 0)}
       ${cfg.mode === '적립' ? '+ ' + ibU(num(cfg.flow), 0) : cfg.mode === '인출' ? '− (평가금+Pool)×0.5%' : ''}</b> 로 오릅니다.
       이 표를 원본 시트와 한 줄씩 맞춰 보실 수 있습니다.</p></div>`;
@@ -5917,7 +6048,7 @@ async function sbPushDays(keys) {
   const body = keys.map(k => ({ d: k, data: state.days[k] }));
   await sbReq('/rest/v1/ledger_days', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(body) });
 }
-async function sbPushMeta() {
+async function sbPushMeta(planNow) {
   const body = [
     { k: 'fx0', v: num(state.fx0) }, { k: 'principal', v: num(state.principal) },
     { k: 'plan', v: state.plan }, { k: 'ts', v: state.ts },
@@ -5940,7 +6071,8 @@ async function sbPushMeta() {
     /* 주문표를 만들다 터져도 나머지 동기화까지 막으면 안 된다.
        예전에는 이게 sbPushMeta 안에서 그대로 던져서, 실패하면 그날 원장이
        통째로 안 올라갔다. */
-    { k: 'ibPlan', v: (() => { try { return ibPlanPayload(); } catch (e) { return { d: latestKey(), at: Date.now(), slots: [] }; } })() }
+    /* planNow — VR 자동진행이 **자기가 만든 그 표**를 올리고 그 `at` 을 수집기에 넘긴다. 따로 만들면 at 이 달라진다 */
+    { k: 'ibPlan', v: planNow || (() => { try { return ibPlanPayload(); } catch (e) { return { d: latestKey(), at: Date.now(), slots: [] }; } })() }
   ];
   await sbReq('/rest/v1/meta', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify(body) });
 }
@@ -6673,13 +6805,15 @@ PROVIDERS.splice(1, 0, {
        서버에 붙은 뒤라야 결과를 읽을 수 있어 이 자리다. 새 탭으로 열렸어도
        무매/VR 탭으로 옮겨 결과를 띄운다. */
     resumeVerify(true);
+    /* 수집기가 VR 자동진행으로 열었으면(#vrauto=…) 여기서 받는다 — 서버에 붙은 뒤라야 반영·업로드가 된다 */
+    vrAutoResume();
   });
   setInterval(() => { if (!document.hidden) refreshQuotes(false); }, 5 * 60e3);
   // 데이터가 덜 찬 상태로 남지 않게 주기적으로도 확인한다. 다 차 있으면 즉시 빠져나온다
   setInterval(() => { if (!document.hidden) recoverServer(); }, 60e3);
   /* 브라우저가 탭을 재사용하면 페이지가 다시 열리지 않고 **주소만** 바뀐다.
      그때도 결과를 받아야 한다 — 이게 없으면 아무 일도 일어나지 않는다. */
-  addEventListener('hashchange', () => resumeVerify(true));
+  addEventListener('hashchange', () => { if (vrAutoHash()) { if (sbReady) vrAutoResume(); return; } resumeVerify(true); });
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
     if (fillToToday()) renderAll();
