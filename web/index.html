@@ -155,6 +155,25 @@ details[open] summary{margin-bottom:2px}
 .legend .lg i{width:9px;height:9px;border-radius:2px;flex:none}
 .bar{height:3px;border-radius:2px;background:var(--line);overflow:hidden;margin-top:5px}
 .bar i{display:block;height:100%;border-radius:2px}
+/* 무매/VR 공통 — 자리별 총액 막대 (2026-09-25). 평가액(주식 --c2) + Pool(현금 --c3) 누적, 세로선 = 시드.
+   색은 종합 탭 GROUPS 의 주식·현금과 같다. 두 칸 사이 2px 는 바탕색 틈이다(테두리를 긋지 않는다) */
+.ibx{padding:9px 0 10px;border-top:1px solid var(--line)}
+.ibx-lg + .ibx{border-top:0}
+.ibx-h{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.ibx-h .nm{font-size:13px;font-weight:600;color:var(--ink)}
+.ibx-h .v{font-size:13px;font-weight:600;color:var(--ink);text-align:right}
+.ibx-h .d{font-size:11.5px;font-weight:500;margin-left:4px}
+.ibx-bar{position:relative;display:flex;height:14px;margin:8px 0 6px}
+.ibx-bar i{display:block;height:100%}
+.ibx-bar i.end{border-radius:0 4px 4px 0}
+.ibx .s1,.ibx-lg .s1{background:var(--c2)}
+.ibx .s2,.ibx-lg .s2{background:var(--c3)}
+.ibx-bar .mk{position:absolute;top:-4px;bottom:-4px;width:2px;margin-left:-1px;background:var(--ink);box-shadow:0 0 0 1px var(--surf);border-radius:1px}
+.ibx-f{font-size:11px;color:var(--muted);font-family:"IBM Plex Mono",monospace;font-variant-numeric:tabular-nums}
+.ibx-lg{display:flex;gap:14px;font-size:11.5px;color:var(--ink2);margin:0 0 4px}
+.ibx-lg span{display:inline-flex;align-items:center;gap:5px}
+.ibx-lg i{display:inline-block;width:10px;height:10px;border-radius:2px}
+.ibx-lg .mk{display:inline-block;width:2px;height:12px;background:var(--ink);border-radius:1px}
 
 .cum3{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-top:12px}
 /* 세로 여백 5px — 세 겹이라 표 높이가 예전의 70% 가 된다 (2026-09-20, 사용자 요청) */
@@ -379,11 +398,14 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
 
     <!-- ============ 입력 ============ -->
     <section class="pane" id="p-ib">
+      <!-- 공통 (2026-09-25, 사용자 요청) — 세 자리에 공통인 것(검증·자산 대조·주문표 올리기·완료 사이클)은 여기에만 -->
       <div class="seg" id="ibSeg" role="group" aria-label="종목">
-        <button data-v="mm.T" aria-pressed="true">무매 TQQQ</button>
+        <button data-v="all" aria-pressed="true" style="flex:0 0 auto;padding:6px 11px">공통</button>
+        <button data-v="mm.T" aria-pressed="false">무매 TQQQ</button>
         <button data-v="mm.S" aria-pressed="false">무매 SOXL</button>
         <button data-v="vr.T" aria-pressed="false">VR TQQQ</button>
       </div>
+      <div id="ibCommon">
       <!-- 셋 다 같은 폭 한 줄. 글자를 줄여 두 줄짜리 버튼을 없앴다 -->
       <div style="display:flex;gap:7px;margin-top:10px">
         <button class="ghost" id="ibOverlay" style="flex:1 1 0;min-width:0;padding:10px 2px;font-size:12.5px">주문표 띄우기</button>
@@ -395,6 +417,7 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         수집기 앱이 깔린 폰에서 누르면 메리츠 MTS 위에 주문표가 뜹니다.
         빠른설정에 <b>무매 주문표</b> 타일을 올려 두면 MTS 를 보다가 쓸어내려 바로 띄울 수도 있고,
         홈 화면의 <b>무매 주문표</b> 아이콘으로도 됩니다.</p>
+      </div>
       <div id="ibBody"></div>
     </section>
 
@@ -664,7 +687,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-24 08:02';
+const BUILD = '2026-09-25 11:28';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1108,7 +1131,7 @@ function drawChart(svg, tipEl, series, opt = {}) {
 }
 
 /* ===================== 종합 탭 ===================== */
-let UI = { scope: 'asset', scale: 'd', span: 90, tab: 'sum', plan: 'asset', ana: 'asset', ib: 'mm.T', ibOpen: {} };
+let UI = { scope: 'asset', scale: 'd', span: 90, tab: 'sum', plan: 'asset', ana: 'asset', ib: 'all', ibOpen: {} };
 /* 종합 탭에서 펼쳐 둔 중분류. 처음에는 다 접혀 있고 합계만 보인다 */
 let OPEN_G = {};
 const SPANS = { d: [[60, '60일'], [90, '90일'], [180, '180일']], m: [[12, '1년'], [36, '3년'], [60, '5년']], y: [[10, '10년'], [20, '20년'], [30, '30년']] };
@@ -3074,17 +3097,126 @@ function ibCycPanel() {
     : `<p class="note" style="margin:8px 3px 0">아직 적힌 판이 없습니다. 사이클이 끝나면 저절로 적힙니다.</p>`) + imp;
 }
 
+/* ===================== 공통 (2026-09-25, 사용자 요청) =====================
+
+   "무매/VR 탭에서 상단 3개 항목 왼쪽에 공통버튼 추가. 무매검증, 자산대조 등 3항목 공통인 내용은
+    공통에만 표시. 공통탭에 항목별로 평가액+pool=총액 이고 기존시드 대비 증감 표현하는 수평 막대그래프
+    3줄 표시. 하단에 필요 POOL합 대비 잔여/부족 달러예수금 표시."
+
+   값은 각 자리의 **'현황과 수익률' 표와 같은 식**으로 낸다 — 두 화면이 다른 숫자를 보이면 안 된다.
+     무매: 평가액 = 보유 × 현재가 · Pool = 잔금 · 시드 = 시드 + 시작 시점 누적실현 (현황 표의 '시드')
+     VR  : 평가액 = 보유 × 현재가 · Pool = Pool 잔액 · 시드 = 총 투입 (시작 + 적립 − 인출)
+   증감 = 총액 − 시드 — 현황 표의 '시드 기준 수익률' 과 같은 분자다.
+   필요 Pool 합은 **켠 자리만** 더한다. 달러예수금은 원장 값(3020·3081 두 계좌의 합)이다. */
+function ibSums() {
+  const x = latest();
+  return IB_SLOTS.map(sl => {
+    const close = num(x.px[sl.px]);
+    if (sl.vr) {
+      const r = vrRun(sl.k);
+      if (!r) return { sl, off: true };
+      const val = r.q * close;
+      return { sl, val, pool: r.pool, tot: val + r.pool, base: r.invested, baseL: '총 투입' };
+    }
+    const r = ibRun(sl.k);
+    if (!r) return { sl, off: true };
+    const cfg = ibCfg(sl.k), st = r.st, val = st.q * close;
+    return { sl, val, pool: st.balance, tot: val + st.balance, base: num(cfg.seed) + num(cfg.r0), baseL: '시드' };
+  });
+}
+
+/* 메리츠에서 마지막으로 읽은 계좌별 외화예수금 (수집기 자산 대조). 원장은 두 계좌를 합쳐 들고 있어
+   '무매 계좌에는 모자라고 VR 계좌에는 남는' 경우를 못 가른다 — 읽은 것이 있으면 그것으로 한 줄 더 적는다 */
+let mtsCashAcct = null;
+
+function ibCommonPanel() {
+  const rows = ibSums(), on = rows.filter(r => !r.off);
+  const usd = num(latest().usd);
+  /* 막대는 **한 눈금**을 같이 쓴다 — 세 줄의 길이를 서로 견줄 수 있어야 한다 */
+  /* 평가액도 넣는다 — Pool 이 음수면 평가액이 총액보다 길어 눈금 밖으로 나간다 */
+  const M = Math.max(1, ...on.map(r => Math.max(r.tot, r.base, r.val, 0)));
+  const pc = v => Math.max(0, Math.min(100, v / M * 100));
+  const bars = rows.map(r => {
+    if (r.off) return `<div class="ibx"><div class="ibx-h"><span class="nm">${esc(r.sl.n)}</span>
+      <span class="u">꺼져 있음 — 합에서 뺐습니다</span></div></div>`;
+    const d = r.tot - r.base, rate = r.base > 0 ? d / r.base * 100 : null;
+    const a = pc(r.val), b = pc(Math.max(0, r.pool)), m = pc(r.base);
+    const dir = d >= 0 ? 'up' : 'down';
+    return `<div class="ibx">
+      <div class="ibx-h"><span class="nm">${esc(r.sl.n)}</span>
+        <span class="v num">${ibU(r.tot, 0)}
+          <span class="d" style="color:var(--${dir})">${ibSgn(d, 0)}${rate != null ? ` (${d >= 0 ? '+' : '−'}${fmt(Math.abs(rate), 1)}%)` : ''}</span></span></div>
+      <div class="ibx-bar" role="img" aria-label="${esc(r.sl.n)} 평가액 ${ibU(r.val, 0)}, Pool ${ibU(r.pool, 0)}, 총액 ${ibU(r.tot, 0)}, ${r.baseL} ${ibU(r.base, 0)}">
+        ${a > 0 ? `<i class="s1${b > 0 ? '' : ' end'}" style="width:${a.toFixed(3)}%" title="평가액 ${ibU(r.val, 0)}"></i>` : ''}
+        ${b > 0 ? `<i class="s2 end" style="width:max(0px, calc(${b.toFixed(3)}% - ${a > 0 ? 2 : 0}px))${a > 0 ? ';margin-left:2px' : ''}" title="Pool ${ibU(r.pool, 0)}"></i>` : ''}
+        <b class="mk" style="left:${m.toFixed(3)}%" title="${r.baseL} ${ibU(r.base, 0)}"></b></div>
+      <div class="ibx-f">평가액 ${ibU(r.val, 0)} + Pool ${ibU(r.pool, 0)} · ${r.baseL} ${ibU(r.base, 0)}</div>
+    </div>`;
+  }).join('');
+
+  const need = on.reduce((s, r) => s + r.pool, 0), left = usd - need;
+  const lc = left >= 0 ? 'pos' : 'up';
+  /* 계좌별 — 메리츠에서 읽은 것이 있을 때만 */
+  let perAcct = '';
+  if (mtsCashAcct && mtsCashAcct.cash.length) {
+    const byAcct = {};
+    on.forEach(r => { byAcct[r.sl.acct] = (byAcct[r.sl.acct] || 0) + r.pool; });
+    const when = new Date(mtsCashAcct.t).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    const parts = Object.keys(byAcct).sort().map(ac => {
+      const c = mtsCashAcct.cash.filter(x => x.acct.slice(0, 4) === ac);
+      if (!c.length) return `${ac} 예수금 못 읽음`;
+      const have = c.reduce((s, x) => s + x.usd, 0), l = have - byAcct[ac];
+      return `${ac} ${ibU(have, 0)} − ${ibU(byAcct[ac], 0)} = <b style="color:var(--${l >= 0 ? 'pos' : 'up'})">${l >= 0 ? '잔여' : '부족'} ${ibU(Math.abs(l), 0)}</b>`;
+    });
+    perAcct = `<p class="note" style="margin-top:8px">계좌별 <span class="u">메리츠 ${when} 읽음</span> — ${parts.join(' · ')}</p>`;
+  }
+
+  const cy = ibCycles();
+  return `<h2 class="sec">자리별 총액</h2><div class="card pad">
+    <div class="ibx-lg"><span><i class="s1"></i>평가액</span><span><i class="s2"></i>Pool</span>
+      <span><b class="mk"></b>시드</span></div>
+    ${on.length ? bars : `<p class="note">켠 자리가 없습니다. 위 종목을 골라 무매나 VR 을 켜 주세요.</p>`}
+    <p class="note" style="margin-top:10px">막대 = 평가액 + Pool = <b>총액</b> · 세로선 = <b>시드</b>
+      (무매는 시드 + 시작 시점 누적실현, VR 은 총 투입). 오른쪽 증감은 각 자리 '현황과 수익률' 표의
+      시드 기준 수익률과 같습니다.</p>
+    <div class="scroll" style="margin-top:12px"><table class="tbl">
+      <tr><th>Pool</th><th>USD</th></tr>
+      ${on.map(r => `<tr><td>${esc(r.sl.n)} <span class="u">${r.sl.vr ? 'Pool 잔액' : '잔금'}</span></td><td>${ibU(r.pool, 0)}</td></tr>`).join('')}
+      <tr><td style="color:var(--ink);font-weight:600">필요 Pool 합</td><td style="font-weight:600">${ibU(need, 0)}</td></tr>
+      <tr><td>달러예수금 <span class="u">원장 · 3020 + 3081</span></td><td>${ibU(usd, 0)}</td></tr>
+      <tr><td style="color:var(--ink);font-weight:600">${left >= 0 ? '잔여' : '부족'}</td>
+        <td style="font-weight:600;color:var(--${lc})">${left >= 0 ? '+' : '−'}${ibU(Math.abs(left), 0)}</td></tr>
+    </table></div>${perAcct}</div>`
+    /* **완료 사이클** — replay 가 아니라 적어 둔 기록에서 그린다 (2026-09-22). 무매를 껐을 때도 보인다 */
+    + secD('cyc', '완료 사이클', ibCycPanel(),
+      cy.length ? `${fmt(cy.length, 0)}회 · ${ibSgn(cy.reduce((a, c) => a + num(c.profit), 0), 0)}` : '없음');
+}
+
+/* 무매/VR 탭의 자리를 코드에서 바꾼다 (검증 결과가 오면 공통으로, 읽은 글자 넣기는 그 자리로) */
+function ibPick(k) {
+  if (UI.ib === k) return;
+  UI.ib = k;
+  $$('#ibSeg button').forEach(c => c.setAttribute('aria-pressed', c.dataset.v === k));
+  renderIB();
+}
+
 function renderIB() {
   const body = $('#ibBody'); if (!body) return;
+  /* **끝난 판을 먼저 적는다.** 새 사이클을 시작하면 replay 의 시작일이 오늘로 옮겨져
+     지난 판이 통째로 사라진다 — 그때 적어 두지 않으면 영영 없다.
+     화면에 안 띄운 종목도 함께 훑는다(무매 TQQQ 를 보는 동안 SOXL 이 끝날 수 있다).
+     공통을 보는 동안에도 돈다 — 그래서 맨 앞이다. */
+  ibScanAll();
+  /* 공통 (2026-09-25) — 검증 버튼·결과(#ibCommon)는 여기서만 보인다. 결과 칸은 숨겨도 내용을 지키므로
+     종목을 보다 돌아와도 방금 받은 검증 결과가 그대로 있다 */
+  const common = UI.ib === 'all';
+  const cm = $('#ibCommon'); if (cm) cm.hidden = !common;
+  if (common) { body.innerHTML = ibCommonPanel(); return; }
   const sl = IB_SLOTS.find(s => s.k === UI.ib) || IB_SLOTS[0];
   const cfg = ibCfg(sl.k);
   const x = latest(), close = num(x.px[sl.px]);
   const curQ = num(x[sl.g][sl.s].q);
   const run = ibRun(sl.k);
-  /* **끝난 판을 먼저 적는다.** 새 사이클을 시작하면 replay 의 시작일이 오늘로 옮겨져
-     지난 판이 통째로 사라진다 — 그때 적어 두지 않으면 영영 없다.
-     화면에 안 띄운 종목도 함께 훑는다(무매 TQQQ 를 보는 동안 SOXL 이 끝날 수 있다). */
-  ibScanAll();
   let out = '';
 
   if (sl.vr) { body.innerHTML = vrPanel(sl) + renderGuide(sl); return; }   // VR 은 방법론이 달라 화면도 따로다
@@ -3221,14 +3353,7 @@ function renderIB() {
 
   }
 
-  /* **완료 사이클** — replay 가 아니라 적어 둔 기록에서 그린다 (2026-09-22).
-     예전에는 `run.hist` 에서 그때그때 골라 냈는데, 새 사이클을 시작하면 시작일이 옮겨져
-     지난 판이 화면에서 사라졌다. 이 구획은 무매를 껐을 때도 보여야 하므로 `if (run)` 밖이다. */
-  {
-    const cy = ibCycles();
-    out += secD('cyc', '완료 사이클', ibCycPanel(),
-      cy.length ? `${fmt(cy.length, 0)}회 · ${ibSgn(cy.reduce((a, c) => a + num(c.profit), 0), 0)}` : '없음');
-  }
+  /* 완료 사이클은 두 무매 자리에 똑같이 뜨던 것이라 **공통으로 옮겼다** (2026-09-25, ibCommonPanel) */
 
   /* T 내역. 쓰던 앱과 T 가 다를 때 **어느 날** 갈라졌는지가 유일하게 필요한 정보다.
      예전에는 오늘 한 줄만 보여 줘서, 차이가 과거에서 왔으면 짚을 방법이 없었다. */
@@ -3944,7 +4069,7 @@ function resumeVerify(force) {
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { }
     const p = vfyPending();
     vfySet(null);
-    goTab('ib');
+    goTab('ib'); ibPick('all');                      // 결과 칸은 공통에만 있다 (2026-09-25)
     /* 언제 시작했는지 모를 수 있으므로 '최근 5분 안' 이면 받는다 */
     pollVerify(h[1], p && num(p.t0) ? num(p.t0) : Date.now() - 5 * 60e3, true);
     return;
@@ -3953,7 +4078,7 @@ function resumeVerify(force) {
   if (!p) { if (force) latestVerify(true); return; }
   if (Date.now() - num(p.t0) > 5 * 60e3) { vfySet(null); if (force) latestVerify(true); return; }
   if (!force && UI.tab !== 'ib') return;
-  goTab('ib');
+  goTab('ib'); ibPick('all');
   pollVerify(p.what, num(p.t0), true);
 }
 
@@ -3984,7 +4109,7 @@ async function latestVerify(quiet) {
   }
   if (box.innerHTML.trim()) return;
   const what = best.what === 'vr' ? 'vr' : 'ib', txt = String(best.text || '');
-  if (!quiet) goTab('ib');
+  if (!quiet) { goTab('ib'); ibPick('all'); }
   box.innerHTML = txt.startsWith('ERR')
     ? `<div class="warn" style="margin-top:9px"><span>◔</span><div>
         <b>${what === 'vr' ? 'VR' : '무매'} 앱을 읽지 못했습니다.</b><br>${esc(txt.replace(/^ERR\s*/, ''))}</div></div>`
@@ -4105,7 +4230,7 @@ async function vrAutoStop(t0, why, keep) {
 }
 
 async function vrAutoFlow(t0) {
-  goTab('ib');
+  goTab('ib'); ibPick('all');
   const box = $('#vfyOut');
   const say = m => { if (box) box.innerHTML = `<p class="note" style="margin:9px 3px 0"><b>VR 자동진행</b> — ${m}</p>`; };
   if (!SB || !sbTok) {
@@ -4481,6 +4606,12 @@ function takeMtsAsset(v, box) {
   }
   const res = mtsAssetDiff(v);
   const put = mtsAssetCommit(res);
+  /* 공통 탭의 계좌별 Pool 대조용 (2026-09-25) */
+  const cash = parseAsset(txt).cash;
+  if (cash.length && (!mtsCashAcct || num(v.t) >= mtsCashAcct.t)) {
+    mtsCashAcct = { t: num(v.t), cash };
+    if (!put && UI.tab === 'ib' && UI.ib === 'all') renderIB();
+  }
   if (box) box.insertAdjacentHTML('beforeend', assetReport(res, num(v.t)) + trailBtn());
   if (put) { renderAll(); toast('예수금 이자 +$' + fmt(put, 2) + ' 반영'); }
   return true;
@@ -4561,9 +4692,11 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
     try { guideText = decodeURIComponent(escape(atob(pb.dataset.t))); } catch (err) { guideText = ''; }
     /* VR 글자를 무매 자리에 붙이면 아홉 줄이 통째로 '앱에 없음' 으로 뜬다.
        그 검증이 본 자리로 데려간다. */
-    if (pb.dataset.w === 'vr' && UI.ib !== 'vr.T') {
-      UI.ib = 'vr.T';
-      $$('#ibSeg button').forEach(c => c.setAttribute('aria-pressed', c.dataset.v === 'vr.T'));
+    /* 공통에서 누르면 무매는 무매 TQQQ 로 간다 (2026-09-25) — 대조 칸은 종목 자리에만 있다 */
+    const want = pb.dataset.w === 'vr' ? 'vr.T' : String(UI.ib).startsWith('mm.') ? UI.ib : 'mm.T';
+    if (UI.ib !== want) {
+      UI.ib = want;
+      $$('#ibSeg button').forEach(c => c.setAttribute('aria-pressed', c.dataset.v === want));
     }
     UI.ibOpen = UI.ibOpen || {}; UI.ibOpen.guide = true;
     renderIB();
