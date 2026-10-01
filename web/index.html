@@ -721,7 +721,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-02 08:33';
+const BUILD = '2026-10-02 08:39';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1168,9 +1168,13 @@ function drawChart(svg, tipEl, series, opt = {}) {
 /* ===================== 종합 탭 ===================== */
 let UI = { scope: 'asset', scale: 'd', span: 90, tab: 'sum', plan: 'asset', career: '정년유지', ana: 'asset', ib: 'all', ibOpen: {} };
 /* 금액 가리기 (2026-09-25, 사용자 요청: "다른 사람에 보여줄 때를 고려해서 다크모드 버튼 옆에 금액가리기 버튼").
-   가리는 곳 — 종합: 자산·전체 금액, 부동산 금액, 그래프 세로축 · 실적/계획: 그래프 세로축, 은퇴 요약의 총 순자산·부동산.
+   가리는 곳 — 종합: 맨 위 금액(세 범위 모두)·전일비, **항목 금액·증감 전부**(주식·현금·DC·자녀·부동산), 그래프 세로축
+   · 실적/계획: 그래프 세로축, 은퇴 요약의 총 순자산·부동산.
+   2026-10-02 사용자 지정: "가리기 기능 시 종합탭 주식,현금 등 금액 가리고 실적/계획탭 누적수익은 가리지 않음".
+   그전에는 종합에서 자산·전체 금액과 부동산 줄만 가리고 금융 범위·주식·현금 금액은 보였고, 실적/계획 누적수익의 부동산·합계를 가렸다.
    **남은 값으로 되짚을 수 있는 것도 함께 가린다** — 전일비 금액과 % 가 둘 다 보이면 총액이 나오고(금액 ÷ %),
-   누적수익의 합계와 주식이 보이면 부동산이 나오고, 항목 막대는 가장 긴 막대(부동산) 대비 길이라 비율이 새고,
+   항목 이름 옆 수량(○○주)·외화예수금 달러는 시세를 곱하면 금액이고, 금융 범위 금액이 보이면 막대 비율로 항목 금액이 나온다
+   (그래서 금융 범위도 가린다). 항목 막대는 둔다 — 금액이 하나도 안 보이면 비율만으로는 금액이 안 나온다. 부동산 막대만 예전처럼 뺀다.
    그래프 툴팁은 세로축을 가려도 값을 그대로 보여 준다. 이 기기에만 기억한다(서버에 안 올린다). */
 let HIDE = false;
 try { HIDE = localStorage.getItem('jasan_hide') === '1'; } catch (e) { }
@@ -1191,8 +1195,8 @@ function renderSummary() {
   const carryN = isEmptyLedger() ? 0 : Object.values(x.pxs || {}).filter(v => v === 'carry').length;
   $('#asof').textContent = lk.slice(2).replace(/-/g, '.') + (carryN ? ` · 시세 ${carryN}건 임시` : '');
   $('#heroLbl').textContent = SCOPE_LBL[UI.scope];
-  /* 금액 가리기 — 자산·전체만 가린다(사용자 지정). 금융은 부동산이 없어 그대로 둔다 */
-  const hideTot = HIDE && UI.scope !== 'fin';
+  /* 금액 가리기 — 세 범위 모두 가린다(2026-10-02 사용자 지정 — 그전엔 금융은 그대로 뒀다) */
+  const hideTot = HIDE;
   $('#heroVal').textContent = hideTot ? MASK : eok(c[UI.scope]);
   const dv = pc ? c[UI.scope] - pc[UI.scope] : null;
   const de = $('#heroDelta');
@@ -1216,9 +1220,10 @@ function renderSummary() {
   // 항목 행 — 중분류는 합계를 달고, 소분류는 눌러서 편다
   const its = items(x).filter(it => inScope(it, UI.scope));
   const pits = prevK ? items(state.days[prevK]) : null;
-  /* 부동산 줄은 금액·증감·막대를 가린다. 막대 눈금에서도 빼야 한다 — 다른 줄의 막대 길이가 부동산 대비 비율이다 */
-  const hideG = g => HIDE && g === '부동산';
-  const maxAbs = Math.max(...its.filter(i => !hideG(i.g)).map(i => Math.abs(i.v)), 1);
+  /* 가리는 동안 금액·증감·수량은 모든 줄에서 가린다(2026-10-02 사용자 지정 — 그전엔 부동산 줄만).
+     막대는 부동산만 뺀다(예전 그대로). 막대 눈금에서도 부동산을 빼야 한다 — 다른 줄의 막대 길이가 부동산 대비 비율이다 */
+  const hideBar = g => HIDE && g === '부동산';
+  const maxAbs = Math.max(...its.filter(i => !hideBar(i.g)).map(i => Math.abs(i.v)), 1);
   const dCell = (d, m) => {
     if (m) return `<div class="d num fl">${MASK}</div>`;
     const cls = d == null || Math.abs(d) < 0.5 ? 'fl' : d > 0 ? 'up' : 'dn';
@@ -1234,14 +1239,15 @@ function renderSummary() {
     html += `<button class="grp-h grp-t" data-g="${g}" aria-expanded="${open}">
         <span class="caret">${open ? '▾' : '▸'}</span>
         <i class="lgdot" style="background:var(${groupColor(g)})"></i><span>${g}</span>
-        <span class="vals"><span class="v num">${hideG(g) ? MASK : fmt(sum, 0)}<span class="u">만원</span></span>${dCell(psum == null ? null : sum - psum, hideG(g))}</span>
+        <span class="vals"><span class="v num">${HIDE ? MASK : fmt(sum, 0)}<span class="u">만원</span></span>${dCell(psum == null ? null : sum - psum, HIDE)}</span>
       </button>`;
     if (!open) return;
     gi.forEach(it => {
       const prev = pits ? pits.find(p => p.k === it.k) : null;
-      html += `<div class="row sub-row"><div><div class="nm">${it.n}${it.s ? `<span class="sub">${it.s}</span>` : ''}</div>
-        <div class="bar" style="width:96px">${hideG(g) ? '' : `<i style="width:${Math.min(100, Math.abs(it.v) / maxAbs * 100)}%;background:${it.v < 0 ? 'var(--down)' : `var(${groupColor(g)})`}"></i>`}</div></div>
-        <div class="vals"><div class="v num">${hideG(g) ? MASK : fmt(it.v, 0)}</div>${dCell(prev ? it.v - prev.v : null, hideG(g))}</div></div>`;
+      /* 이름 옆 수량(○○주)·달러 잔액도 시세를 곱하면 금액이라 가리는 동안 안 적는다 */
+      html += `<div class="row sub-row"><div><div class="nm">${it.n}${it.s && !HIDE ? `<span class="sub">${it.s}</span>` : ''}</div>
+        <div class="bar" style="width:96px">${hideBar(g) ? '' : `<i style="width:${Math.min(100, Math.abs(it.v) / maxAbs * 100)}%;background:${it.v < 0 ? 'var(--down)' : `var(${groupColor(g)})`}"></i>`}</div></div>
+        <div class="vals"><div class="v num">${HIDE ? MASK : fmt(it.v, 0)}</div>${dCell(prev ? it.v - prev.v : null, HIDE)}</div></div>`;
     });
   });
   $('#itemRows').innerHTML = html;
@@ -6308,13 +6314,13 @@ function renderPlan() {
   const g = cumulative();
 
   /* ── 누적수익 3열 ── */
-  /* 셋째 값 — 금액 가리기 때 가리는 칸. 부동산과 합계(합계 − 주식 = 부동산)를 가린다 */
+  /* 금액 가리기 때도 **가리지 않는다** (2026-10-02 사용자 지정: "실적/계획탭 누적수익은 가리지 않음").
+     그전엔 부동산과 합계를 가렸다. 수익이지 잔액이 아니라서 이것만으로는 자산 규모가 안 나온다 */
   const cells = useTotal
-    ? [['주식·DC·자녀', g.totalCol], ['부동산', g.re, 1], ['전체', g.total, 1]]
-    : [['주식', g.stock], ['부동산', g.re, 1], ['자산', g.asset, 1]];
-  $('#cum3').innerHTML = cells.map(([k, v, m]) => HIDE && m
-    ? `<div><div class="k">${k}</div><div class="n">${MASK}</div></div>`
-    : `<div><div class="k">${k}</div><div class="n ${v > 0 ? 'up' : v < 0 ? 'dn' : ''}">${v >= 0 ? '' : '−'}${fmt(Math.abs(v), 0)}</div></div>`).join('');
+    ? [['주식·DC·자녀', g.totalCol], ['부동산', g.re], ['전체', g.total]]
+    : [['주식', g.stock], ['부동산', g.re], ['자산', g.asset]];
+  $('#cum3').innerHTML = cells.map(([k, v]) =>
+    `<div><div class="k">${k}</div><div class="n ${v > 0 ? 'up' : v < 0 ? 'dn' : ''}">${v >= 0 ? '' : '−'}${fmt(Math.abs(v), 0)}</div></div>`).join('');
 
   const x = latest(), c0 = calc(latest());
   /* 평가액 세 줄은 오늘 기록을 직접 고치는 값이라 data-hold 로 묶는다.
