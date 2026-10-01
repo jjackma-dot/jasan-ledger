@@ -238,8 +238,11 @@ details.secd>.card:first-of-type,details.secd>.rows:first-of-type{margin-top:0}
 /* 세 시나리오 열의 폭을 똑같이 고정한다. 내용에 맞춰 폭이 정해지면 가운데 '현재' 열이
    좌우 어느 한쪽으로 밀려, 머리글과 숫자가 눈으로 안 맞는다. */
 table.rt{table-layout:fixed}
-table.rt td:first-child,table.rt th:first-child{width:34%;padding-right:6px;font-size:12px}
-table.rt td:not(:first-child),table.rt th:not(:first-child){width:22%}
+/* 항목 칸 40% · 숫자 칸 20% 씩 (2026-10-02, 사용자 요청: 폰에서 두 줄로 넘어가던 항목을 한 줄로).
+   예전 34% · 22% 는 360px 에서 항목 칸이 95px 라 여덟 줄이 넘어갔다. 숫자 칸은 360px 에서 59px(강조 줄 52px) —
+   지금 값은 40px 안팎이고 '1,234만'·'−12.3억' 도 48px 라 들어간다 */
+table.rt td:first-child,table.rt th:first-child{width:40%;padding-right:6px;font-size:12px}
+table.rt td:not(:first-child),table.rt th:not(:first-child){width:20%}
 table.rt th{text-align:right;font-size:10px}
 table.rt th:first-child{text-align:left}
 table.rt td{font-size:12.5px;padding:7px 0;white-space:nowrap}
@@ -599,8 +602,8 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         인출가능에서 미리 뗍니다(그 값은 시뮬레이션 설정 › 공통 가정 설명에 있습니다).
         <br><b>은퇴 인출가능</b>은 총 순자산에서 <b>집</b>·<b>국민연금 공백</b>·<b>은퇴 뒤 자녀증여</b>를 뺀,
         실제로 헐어 쓸 수 있는 금융·DC 자산입니다.
-        <br>그 아래 네 줄은 <b>세전 월 인출액 + 국민연금 − 세금·건보료 = 월 현금흐름</b>입니다.
-        세전 월 인출액은 인출가능에서 실질수익만 꺼낸 금액(자산유지)이고, 세금·건보료에는
+        <br>그 아래 네 줄은 <b>월 인출액(세전) + 국민연금 − 세금·건보료 = 월 현금흐름(세후)</b>입니다.
+        월 인출액은 인출가능에서 실질수익만 꺼낸 금액(<b>자산유지</b> — 원금은 그대로)이고, 세금·건보료에는
         인출세·연금소득세·건강보험료와 <b>보유세</b>까지 들어 있습니다. 반올림한 값끼리 맞아떨어지도록
         단수는 세금·건보료 줄에서 맞춥니다 — 그 줄은 제 값을 반올림한 것과 1만원까지 다를 수 있습니다.
         <br>위의 <b>재고용·정년연장</b>을 고르면 정년 뒤 연금 개시까지 더 일한 경우로 다시 셈합니다 —
@@ -720,7 +723,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-02 08:44';
+const BUILD = '2026-10-02 08:55';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -6397,7 +6400,9 @@ function renderPlan() {
     /* 자녀증여는 언제 나가든 **입력값 합산 한 줄**이다 (2026-10-02, 사용자 요청: "은퇴전 -4억도 은퇴시점 금액이
        아니므로 한 줄로 합쳐서 -6억으로 표시"). 잠깐 은퇴 전(입력값)·은퇴 뒤(할인값) 두 줄로 갈랐었다.
        계산은 그대로다 — 은퇴 뒤 증여는 할인해 인출가능에서 미리 뗀다(simulate 의 kidLater, 값은 설정 설명에 적는다) */
-    ['<span class="sub2">자녀증여 <span class="u">합산 · 20·30세</span></span>', s => -s.kidNom, '억', 0, 0, 'info'],
+    /* 라벨은 **폰(360px)에서 한 줄**에 들어가게 줄였다 (2026-10-02, 사용자 요청: "2줄로 표시되는 항목 1줄로 최적화").
+       360px 에서 항목 칸이 112px(강조 줄 105px) — 줄마다 7px 넘게 남는다. 기기 글꼴이 더 넓으면 예전처럼 줄을 넘긴다 */
+    ['<span class="sub2">자녀증여 <span class="u">20·30세</span></span>', s => -s.kidNom, '억', 0, 0, 'info'],
     ['<span class="sub2">기타지출 <span class="u">기간균등</span></span>', s => -s.miscNom, '억', 0, 0, 'info'],
     ['<span class="sub2">국민연금 공백지출</span>', s => -s.crevasse, '억', 0, 0, 'info'],
     ['은퇴 인출가능', s => s.avail, '억', 1],
@@ -6405,18 +6410,18 @@ function renderPlan() {
        예전 '세후 월 인출액'(= 월 현금흐름 − 국민연금)은 인출세만이 아니라 보유세·건보료·
        연금소득세까지 뺀 값이라 이름과 뜻이 달랐다(docs/10 §4). 보유세 줄도 세금·건보료에 넣었다.
        세금·건보료 = 인출세 16.5% + 연금소득세 + 건보료(재산분 + 공적연금분) + 보유세, 월로 나눈 것 */
-    ['세전 월 인출액 <span class="u">자산유지</span>', s => r0(s.drawPreM), '만', 0],
-    [s => `국민연금 <span class="u">부부 합산${s.penAdd > 0 ? ` · 연장 +${fmt(s.penAdd, 0)}` : ''}</span>`, s => r0(s.penH), '만', 0],
-    ['세금·건보료 <span class="u">보유세 포함</span>', taxShown, '만', 0],
-    ['월 현금흐름 <span class="u">자산유지 · 세후</span>', s => r0(s.cashM), '만', 1],
+    ['월 인출액 <span class="u">세전·자산유지</span>', s => r0(s.drawPreM), '만', 0],
+    [s => `국민연금 <span class="u">${s.penAdd > 0 ? `부부·연장 +${fmt(s.penAdd, 0)}` : '부부 합산'}</span>`, s => r0(s.penH), '만', 0],
+    ['세금·건보료', taxShown, '만', 0],                       // 보유세도 이 안에 있다 (아래 설명)
+    ['월 현금흐름 <span class="u">유지·세후</span>', s => r0(s.cashM), '만', 1],
     ['필요생활비 <span class="u">부부 적정</span>', s => s.needOk, '만', 0],
     /* 다섯째 값 'sgn' — 부호가 곧 판정인 줄이다. 모자라면 빨강, 남으면 녹색.
        다른 줄의 마이너스(파랑)는 '빼는 항목' 일 뿐 나쁘다는 뜻이 아니라 색을 달리 한다.
        자산소진 줄은 따로 보여 주지 않고 **적정과의 차이**로만 적는다 (2026-09-11, 사용자 요청) —
        판단에 필요한 것은 '얼마냐' 가 아니라 '모자라냐 남느냐' 이기 때문이다. */
     /* 화면의 두 줄(월 현금흐름·필요생활비)을 반올림한 값끼리 뺀다 — 눈으로 빼 본 값과 같게 */
-    ['└ 자산유지 − 적정', s => r0(s.cashM) - r0(s.needOk), '만', 0, 'sgn'],
-    [s => `└ 자산소진 − 적정 <span class="u">${fmt(s.depAge, 0)}세</span>`, s => s.cashMUse - s.needOk, '만', 0, 'sgn']
+    ['└ 유지 − 적정', s => r0(s.cashM) - r0(s.needOk), '만', 0, 'sgn'],
+    [s => `└ 소진 − 적정 <span class="u">${fmt(s.depAge, 0)}세</span>`, s => s.cashMUse - s.needOk, '만', 0, 'sgn']
   ];
   $('#retTbl').innerHTML =
     `<tr><th>항목</th>${SCN.map(n => `<th>${n}</th>`).join('')}</tr>`
