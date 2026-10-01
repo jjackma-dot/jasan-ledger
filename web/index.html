@@ -84,6 +84,11 @@ header{
 }
 .seg button[aria-pressed="true"]{background:var(--surf);color:var(--ink);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.06)}
 .seg.mini button{font-size:11.5px;padding:4px 2px}
+/* 제목 오른쪽에 붙는 선택 버튼 — 실적/계획 '연도별 자산' 의 근로 시나리오 */
+.sech{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:20px 3px 8px}
+.sech h2.sec{margin:0;white-space:nowrap}
+.sech .seg{flex:none}
+.sech .seg button{padding:4px 9px}
 
 main{padding:0 16px}
 .pane{display:none;animation:fade .18s ease}
@@ -233,11 +238,15 @@ details.secd>.card:first-of-type,details.secd>.rows:first-of-type{margin-top:0}
 /* 세 시나리오 열의 폭을 똑같이 고정한다. 내용에 맞춰 폭이 정해지면 가운데 '현재' 열이
    좌우 어느 한쪽으로 밀려, 머리글과 숫자가 눈으로 안 맞는다. */
 table.rt{table-layout:fixed}
-table.rt td:first-child,table.rt th:first-child{width:31%;padding-right:6px;font-size:12px}
-table.rt td:not(:first-child),table.rt th:not(:first-child){width:23%}
+table.rt td:first-child,table.rt th:first-child{width:34%;padding-right:6px;font-size:12px}
+table.rt td:not(:first-child),table.rt th:not(:first-child){width:22%}
 table.rt th{text-align:right;font-size:10px}
 table.rt th:first-child{text-align:left}
 table.rt td{font-size:12.5px;padding:7px 0;white-space:nowrap}
+/* 항목 칸은 줄을 넘길 수 있게 — 폰(360px)에서 '국민연금 부부 합산 · 연장 +24' 같은 긴 이름이
+   숫자 칸을 덮었다(2026-09-30). 숫자 칸은 그대로 한 줄이다 */
+table.rt td:first-child{white-space:normal;word-break:keep-all;line-height:1.3}
+table.rt td:first-child .u{white-space:nowrap}
 table.rt tr.hi td{background:var(--surf2);font-weight:600;color:var(--ink)}
 table.rt tr.hi td:first-child{color:var(--ink);border-radius:6px 0 0 6px;padding-left:7px}
 table.rt tr.hi td:last-child{border-radius:0 6px 6px 0;padding-right:7px}
@@ -559,7 +568,15 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         </details>
       </div>
 
-      <h2 class="sec">연도별 자산</h2>
+      <!-- 근로 시나리오 (2026-09-30) — 그래프와 아래 은퇴 요약이 함께 바뀐다 -->
+      <div class="sech">
+        <h2 class="sec">연도별 자산</h2>
+        <div class="seg mini" id="careerSeg" role="group" aria-label="근로 시나리오">
+          <button data-v="정년유지" aria-pressed="true">정년유지</button>
+          <button data-v="재고용" aria-pressed="false">재고용</button>
+          <button data-v="정년연장" aria-pressed="false">정년연장</button>
+        </div>
+      </div>
       <div class="card hero" style="margin-top:0;padding-top:14px">
         <div class="chartwrap" id="cw-plan">
           <svg class="chart" id="ch-plan" viewBox="0 0 340 350" aria-label="연도별 자산 추이"></svg>
@@ -580,7 +597,13 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         실제로 은퇴 장부에서 비어 있는 자리는 이보다 큽니다 — 일찍 나간 돈은 그만큼 불어나지
         못하기 때문이고, 수익률이 높은 시나리오일수록 차이가 큽니다.
         <br><b>은퇴 인출가능</b>은 총 순자산에서 <b>집</b>과 <b>국민연금 공백</b>을 뺀,
-        실제로 헐어 쓸 수 있는 금융·DC 자산입니다.</p>
+        실제로 헐어 쓸 수 있는 금융·DC 자산입니다.
+        <br>그 아래 네 줄은 <b>세전 월 인출액 + 국민연금 − 세금·건보료 = 월 현금흐름</b>입니다.
+        세전 월 인출액은 인출가능에서 실질수익만 꺼낸 금액(자산유지)이고, 세금·건보료에는
+        인출세·연금소득세·건강보험료와 <b>보유세</b>까지 들어 있습니다. 반올림한 값끼리 맞아떨어지도록
+        단수는 세금·건보료 줄에서 맞춥니다 — 그 줄은 제 값을 반올림한 것과 1만원까지 다를 수 있습니다.
+        <br>위의 <b>재고용·정년연장</b>을 고르면 정년 뒤 연금 개시까지 더 일한 경우로 다시 셈합니다 —
+        연금 공백이 없고, 그동안의 DC 불입과 국민연금 가입이 늘어납니다(설정 › 재고용·정년연장).</p>
       <details class="inl bare">
         <summary style="padding:9px 3px 6px;font-size:11.5px;color:var(--muted)">세금·건강보험료를 어떻게 매기나</summary>
         <p class="note" style="margin:0 3px 8px"><b>가정</b>: 금융·DC 를 IRP 에 모아
@@ -627,6 +650,7 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
       <h2 class="sec">시뮬레이션 설정</h2>
       <div class="card">
         <details class="inl bare"><summary>공통 가정</summary><div class="dbody" id="planCommon"></div></details>
+        <details class="inl bare"><summary>재고용·정년연장</summary><div class="dbody" id="planCareer"></div></details>
         <details class="inl bare"><summary>시나리오별 수익률</summary><div class="dbody" id="planSc"></div></details>
         <details class="inl bare"><summary>26년말 출발 자산</summary><div class="dbody" id="planABC"></div></details>
       </div>
@@ -695,7 +719,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-09-30 11:21';
+const BUILD = '2026-10-01 17:47';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1140,7 +1164,7 @@ function drawChart(svg, tipEl, series, opt = {}) {
 }
 
 /* ===================== 종합 탭 ===================== */
-let UI = { scope: 'asset', scale: 'd', span: 90, tab: 'sum', plan: 'asset', ana: 'asset', ib: 'all', ibOpen: {} };
+let UI = { scope: 'asset', scale: 'd', span: 90, tab: 'sum', plan: 'asset', career: '정년유지', ana: 'asset', ib: 'all', ibOpen: {} };
 /* 금액 가리기 (2026-09-25, 사용자 요청: "다른 사람에 보여줄 때를 고려해서 다크모드 버튼 옆에 금액가리기 버튼").
    가리는 곳 — 종합: 자산·전체 금액, 부동산 금액, 그래프 세로축 · 실적/계획: 그래프 세로축, 은퇴 요약의 총 순자산·부동산.
    **남은 값으로 되짚을 수 있는 것도 함께 가린다** — 전일비 금액과 % 가 둘 다 보이면 총액이 나오고(금액 ÷ %),
@@ -1736,6 +1760,14 @@ function ensurePlan() {
     }
     delete state.plan.kidTarget;
     if (!Array.isArray(state.plan.kidY) || state.plan.kidY.length !== KID_N) state.plan.kidY = d.kidY.slice();
+  }
+  /* 연금 개시 연도 2046 → 2047 (2026-09-30, 사용자 확인 — docs/08 §10).
+     2046 은 생년을 한 해 이르게 읽혀 정년유지 요약의 나이가 한 살 많고 자산소진 햇수가 한 해 짧았다.
+     서버·다른 기기에 옛 값이 남아 있으므로 **한 번만** 옮기고 표시(pyFix)를 남긴다 —
+     그 뒤 화면에서 일부러 2046 을 넣으면 그대로 둔다. */
+  if (!state.plan.pyFix) {
+    if (num(state.plan.pensionYear) === 2046) state.plan.pensionYear = 2047;
+    state.plan.pyFix = 1;
   }
   const B = SEED.basis || {}, past = SEED.past || {};
   if (state.reCost == null && B['부동산']) state.reCost = num(B['부동산'].cost);
@@ -5731,7 +5763,16 @@ document.getElementById('p-ib')?.addEventListener('change', e => {
    서버의 meta.seed.plan 에서 받아 채운다.                       */
 const PLAN_BASE = {
   infl: 0.023, loanRate: 0.05,
-  baseYear: 2026, retireYear: 2042, pensionYear: 2046, crevasseMonths: 53,
+  /* 연금 개시 연도는 **만 65세가 되는 해**다 — 생년 = 개시 연도 − 65 로 되짚어 나이와 자산소진
+     햇수를 낸다. 예전 기본값 2046 은 1981년생으로 읽혀 한 해 어긋났다(2026-09-30, 사용자 확인:
+     docs/08 §10). ensurePlan 이 옛 2046 을 한 번 옮긴다. */
+  /* 정년·연금 개시·공백은 **공개 빌드에 개인 값을 두지 않는다** (2026-10-01 리뷰). 셋을 합치면
+     생년과 생일 달이 나온다(birthMonthOf). 실제 값은 서버 plan 에 있고, 로컬 개인 빌드는 build.py 의
+     비공개 PLAN 이 덮는다. 아래는 아무의 것도 아닌 자리값이다(되짚으면 6월 — 가운데 값). */
+  baseYear: 2026, retireYear: 2045, pensionYear: 2050, crevasseMonths: 54,
+  /* 재고용·정년연장 (2026-09-30, 사용자 요청). 정년(retireYear) 뒤 연금 개시까지 더 일하는 경우다.
+     rehireWage 재고용 연봉(현재가치), peakCut 정년연장 임금피크 감액(연, 현재가치로 매년). */
+  rehireWage: 5000, peakCut: 0.10,
   /* 26년말 부동산가(re26)는 2026-09-13 에 없앴다 — 장부의 부동산 순자산을 쓴다(simulate 참고) */
   targetRE: 0, save: 0, dcAdd: 0,
   /* 자녀증여는 **인당 현재가치**다 (2026-09-11, 사용자 요청). 예전에는 3인 총액을
@@ -5766,6 +5807,57 @@ const PLAN_KEYS = ['targetRE', 'save', 'dcAdd'];
 const DEPLETE_AGE = 99, PENSION_AGE = 65;
 /* 자녀 수. kidY(20세가 되는 연도)의 길이와 같다 — 한곳에서만 고치면 되게 상수로 둔다. */
 const KID_N = 3;
+
+/* ── 근로 시나리오 (2026-09-30, 사용자 요청) ─────────────────────────────
+   정년유지  지금까지의 계산 그대로. 정년(retireYear)말 은퇴, 연금 공백(crevasseMonths)을 미리 뗀다.
+   재고용    정년 뒤 연금 개시까지 연봉 rehireWage(현재가치)로 다시 일한다. 연 저축 0.
+   정년연장  정년 뒤 연금 개시까지 같은 회사에서 일한다. 연봉이 매년 peakCut 씩 준다(현재가치).
+             연 저축은 입력값(P.save) 그대로다 — 기타지출은 정년까지 다 모았으므로 더 안 뗀다.
+   두 연장 시나리오는 **만 65세 생일이 있는 달까지 일하고 다음 달 퇴직·국민연금 수령**이다(사용자 지정).
+   그래서 연장은 정년 다음 해 ~ 연금 개시 연도이고, 연금 개시 연도의 소득은 **1년치의 50%** 로 본다
+   (저축·DC·국민연금 가입 모두). 연금 공백은 0 이다. 요약은 **퇴직 시점** 기준이라 연금 개시 연도의 자산·대출은
+   생일 달 개월치만 불리고, 정년 해 60세 생일 뒤 개월도 국민연금에 넣는다(birthMonthOf — 둘 다 사용자 지정).
+
+   DC 불입은 **연봉의 1/12**(근로자퇴직급여 보장법 최소)로 본다. 그러면 연 DC 불입액이 곧 월급이다 —
+   정년연장의 월급은 지금 DC 연 불입액(P.dcAdd)에서 출발한다. 물가만큼 오르는 몫은 현재가치에
+   이미 들어 있어 따로 반영하지 않는다(사용자 지정). */
+const CAREERS = ['정년유지', '재고용', '정년연장'];
+
+/* 국민연금 — 연장 근무로 늘어나는 몫 (본인, 월, 현재가치).
+
+   기본연금액(연) = Σ 기간별 상수 × (A + B) × 기간 가입월수/전체 가입월수 × (1 + 0.05 × 20년 넘는 월수/12)
+   20년 넘게 낸 사람은 뒤 괄호가 `전체 가입월수 ÷ 240` 이라 식이 `(A + B) × Σ(상수 × 가입월수) ÷ 240` 로 접힌다.
+   한 해(12개월) 더 내면 Σ 가 12 × 1.29 늘고, B 는 그해 소득 w 쪽으로 조금 끌린다. 정확히는
+   연 +12/240 × [1.29(A + w) + (c′ − 1.29)(w − B)] (c′ 는 새 평생 평균 상수)이고, 여기서 **c′ 를 1.29 로 두면**
+   **1년 더 낼 때마다 월 1.29 × (A + w) ÷ 240** 이 된다(B 가 안 움직인다고 두는 것과는 다르다 — 그건 1.29(A + B)).
+   빠진 항 (c′ − 1.29)(w − B) 는 작다 — 그럴듯한 입사 연도·평생 평균소득으로 재 보면 월 ±2천원 안쪽이고
+   (재고용은 크게, 정년연장은 B 가 상한보다 낮을 때 작게), 입사가 이르면 조금 더 커진다(docs/08 §10).
+
+   c    2026년 이후 가입기간의 상수 1.29 — 법 제51조① '1천분의 1천290', 소득대체율 43%
+        (법률 제20903호, 2025.4.2 공포, 2026.1.1 시행)
+   A    A값 3,193,511원 — 2026년 적용(보건복지부 고시 제2026-12호, 2026.1.20). 해마다 바뀐다
+   cap  기준소득월액 상한 659만원 — 2026.7~2027.6(고시 제2026-31호). 소득이 이보다 많아도 이 값으로 낸다
+   둘 다 **지금 값**을 쓴다 — 모델이 현재가치라서다. 실질임금이 오르면 A 도 오르므로 약간 보수적이다.
+   바뀌면 여기와 retire.py 의 NPS_A·NPS_CAP 만 고친다.
+
+   60세가 되면 사업장가입자 자격이 끝난다(제6조). 60~65세에 내려면 **임의계속가입**을 신청해야 하고
+   보험료는 전액 본인이 낸다(제88조④, 2033년부터 13%). 그 돈은 따로 빼지 않는다 — 재고용은 연 저축을
+   0 으로, 정년연장은 입력값 그대로 두는 사용자 가정 안에 들어 있다고 본다.
+   일을 그만둔 다음 달부터 받으므로 재직자 노령연금 감액(제63조의2)에는 걸리지 않는다. */
+const NPS = { c: 1.29, A: 319.3511, cap: 659 };
+
+/* 생일 달(1~12) — 만 60·65세 생일이 있는 달. 연장 시나리오에서 둘에 쓴다 (2026-09-30, 사용자 지정).
+   ① 정년 해에 60세 생일 뒤 남은 (12 − 생일 달) 개월도 임의계속가입으로 국민연금을 낸다
+   ② 연금 개시 연도에는 퇴직(생일 달)까지 **생일 달 개월치만** 자산·대출이 불어난다 — 요약이 퇴직 시점 기준이다
+   따로 넣지 않았으면 **연금 공백에서 되짚는다**: 공백 = 정년 다음 해 1월 ~ 연금 받기 전 달
+   = 12 × (연금 개시 연도 − 정년 − 1) + 생일 달. 공개 빌드에 개인 값을 적지 않으려는 뜻도 있다.
+   되짚은 값이 1~12 밖이면(공백이나 연도를 따로 고친 경우) 가운데인 6 으로 본다. */
+function birthMonthOf(P) {
+  const v = Math.round(num(P.birthMonth));
+  if (v >= 1 && v <= 12) return v;
+  const d = Math.round(num(P.crevasseMonths) - 12 * (num(P.pensionYear) - num(P.retireYear) - 1));
+  return d >= 1 && d <= 12 ? d : 6;
+}
 /* 부부 노후 필요생활비 — 국민연금연구원 국민노후보장패널조사 10차 부가조사(2024).
    화면의 월 현금흐름을 견줄 눈금이 없어 "이 숫자가 충분한가" 를 판단할 수가 없었다.
    조사 기준연도에서 기준연도까지 물가로 올려 쓴다. 부부 2인 기준이다. */
@@ -5895,7 +5987,7 @@ function startAssets(scenario) {
   return base;
 }
 
-function simulate(name) {
+function simulate(name, career = '정년유지') {
   const P = state.plan, s = P.sc[name], S = startAssets(name);
   const fr = s.fin - P.infl, dr = s.dc - P.infl, rr = s.ret - P.infl;
   /* ── 대출 금리도 실질로 쓴다 (2026-09-13, 사용자 결정) ─────────────────
@@ -5908,7 +6000,12 @@ function simulate(name) {
      빼는 방식도 수익률과 같은 뺄셈이다(정확한 나눗셈 1.05/1.023−1 = 2.64% 와 0.06%p 차이).
      엑셀 기준값 대조는 retire.py 의 명목 경로(loan_real=False)로 계속 돌린다. */
   const lr = num(P.loanRate) - P.infl;
-  const nYears = P.retireYear - P.baseYear;                  // 2026 → 2042
+  /* 연장 근무(재고용·정년연장)면 은퇴 시점이 정년에서 **연금 개시 연도**로 옮겨 간다.
+     개시 연도가 정년보다 앞서면 늘어나는 해가 없고, 연금이 이미 나오므로 공백도 없다. */
+  const ext = career === '재고용' || career === '정년연장';
+  const endY = ext ? Math.max(P.retireYear, num(P.pensionYear)) : P.retireYear;
+  const nYears = endY - P.baseYear;                          // 기준연도 → 정년 (연장이면 연금 개시 연도)
+  const nAccum = P.retireYear - P.baseYear;                  // 기타지출을 나누는 햇수 — 늘 정년까지
 
   /* 기타지출은 **모으는 동안 저축을 깎는** 방식이다 (2026-09-10, 사용자 요청).
 
@@ -5917,10 +6014,27 @@ function simulate(name) {
      사용자 말대로 "기타지출 1.8억 = 18년간 연 저축액 0.1억 차감" 으로 본다 —
      안 모은 돈은 불어나지도 않는다.
 
-     나누는 햇수는 모으는 기간(기준연도 → 은퇴연도)이다. 저축보다 크면 저축이
-     0 이 될 뿐 음수로 가지 않는다. */
-  const miscYr = nYears > 0 ? num(P.misc) / nYears : 0;
+     나누는 햇수는 모으는 기간(기준연도 → **정년**)이다. 저축보다 크면 저축이
+     0 이 될 뿐 음수로 가지 않는다. 연장 근무를 해도 햇수를 늘리지 않는다 — 세 근로 시나리오가
+     정년 앞까지 똑같이 가야 연장의 효과만 견줄 수 있다(사용자 선택: 연장 기간 저축은 입력값 그대로). */
+  const miscYr = nAccum > 0 ? num(P.misc) / nAccum : 0;
   const save = Math.max(0, P.save - miscYr);
+
+  /* 해마다의 저축·DC 불입. 정년까지는 예전 그대로이고 연장 해만 근로 시나리오를 따른다.
+     half   연금 개시 연도(만 65세, 생일 달까지 근무)는 1년치의 50% (사용자 지정)
+     wageM  그해 월급(현재가치). DC 불입 = 연봉 ÷ 12 = 월급이다(CAREERS 주석).
+            재고용은 rehireWage ÷ 12, 정년연장은 지금 DC 불입액에서 매년 peakCut 씩 준다 */
+  const half = y => y === num(P.pensionYear) ? 0.5 : 1;
+  const wageM = y => career === '재고용' ? num(P.rehireWage) / 12
+    : num(P.dcAdd) * Math.pow(1 - num(P.peakCut), y - P.retireYear);
+  const saveAt = y => y <= P.retireYear ? save : career === '재고용' ? 0 : num(P.save) * half(y);
+  const dcAt = y => y <= P.retireYear ? num(P.dcAdd) : wageM(y) * half(y);
+  /* 은퇴 연도에 불어나는 몫. 정년유지는 그해 말 은퇴라 한 해 전체(1), 연장은 퇴직(생일 달)까지 bm/12 이다.
+     gf(r) 는 gp 가 1 이면 예전 식 `1 + r` 그대로라 정년유지 값이 한 비트도 안 바뀐다. */
+  const bm = birthMonthOf(P);
+  const extN = ext && endY > P.retireYear;                   // 실제로 늘어나는 해가 있는가
+  const gp = extN ? bm / 12 : 1;
+  const gf = r => gp === 1 ? 1 + r : Math.pow(1 + r, gp);
 
   /* ── 자녀증여 (2026-09-11, 사용자 요청) ────────────────────────────────
      각자 스무 살이 되는 해에 **현재가치 kidGift** 를 준다. 그 해 자녀 계좌에 있는
@@ -5937,7 +6051,7 @@ function simulate(name) {
   const kidY = (P.kidY || []).map(v => num(v)).filter(v => v > 0);
   const kidGift = num(P.kidGift);
   let kids = kidY.map(() => (kidY.length ? S.b / kidY.length : 0));
-  const kidGrow = () => { kids = kids.map(v => v == null ? null : v * (1 + fr)); };
+  const kidGrow = (k = 1 + fr) => { kids = kids.map(v => v == null ? null : v * k); };
   /* 금융이 **마이너스**가 되면 그건 투자자산이 아니라 빚이다 (2026-09-11, 사용자 지정).
      증여가 몰린 해에 저축보다 많이 나가면 그럴 수 있는데, 예전에는 그 음수에도
      금융 수익률(fr)을 곱해 **빚이 저절로 줄어드는** 모양이 됐다.
@@ -5958,7 +6072,7 @@ function simulate(name) {
      비어 있고, 표에는 그 값을 적는다. 닫힌 식(연금 미래가치)을 쓰지 않는 것은
      대출 상환·부동산 잔금 때문에 저축이 그대로 안 들어가는 해가 있어서다. */
   let miscAcc = 0;
-  const miscTick = () => { miscAcc = miscAcc * (1 + fr) + miscYr; };
+  const miscTick = (y, k = 1 + fr) => { miscAcc = miscAcc * k + (y <= P.retireYear ? miscYr : 0); };
 
   /* ── 27년 잔금 = 은퇴후 부동산가 − 장부의 부동산 순자산 (2026-09-13, 사용자 결정) ──
      엑셀 원래 규칙 그대로다: "11.5억 − 26년 부동산 − 27년 금융자산 = 대출금".
@@ -5979,12 +6093,12 @@ function simulate(name) {
 
   // 27년: 부동산 잔금 — 금융자산부터 쓰고 모자라면 대출
   const gap = P.targetRE - reNet0;
-  const pool = E[0] * (1 + fr) + save;
+  const pool = E[0] * (1 + fr) + saveAt(P.baseYear + 1);
   B.push(Math.max(0, gap - pool));
   C.push(0); D.push(0);
-  kidGrow(); miscTick();
+  kidGrow(); miscTick(P.baseYear + 1);
   E.push(Math.max(0, pool - gap) - giveAt(P.baseYear + 1));
-  F.push(F[0] * (1 + dr) + num(P.dcAdd));
+  F.push(F[0] * (1 + dr) + dcAt(P.baseYear + 1));
   G.push(kidSum());
   rows.push({ y: P.baseYear + 1, B: B[1], C: C[1], D: D[1], E: E[1], F: F[1], G: G[1] });
 
@@ -5995,29 +6109,32 @@ function simulate(name) {
      된다. 초반 상환이 작아 그 돈이 금융에 남아 목표를 월 4.4만 부풀렸다(2026-09-13 리뷰).
      은행 금리가 0 이면 PMT 식이 0/0 이라 그냥 나눈다. 잔액을 넘게 갚지는 않는다. */
   const payNom = Math.abs(num(P.loanRate)) > 1e-9 ? pmt(num(P.loanRate), 30, loan0) : loan0 / 30;
+  /* 연장 해에도 같은 규칙으로 굴린다 — 대출은 그해 저축이 닿는 만큼 갚는다(재고용은 저축 0 이라
+     못 갚고 불어난다), 목표는 원리금균등을 계속 낸다. 남은 대출은 은퇴 연도에 한꺼번에 갚는다. */
   for (let i = 2; i < nYears; i++) {
+    const y = P.baseYear + i, sv = saveAt(y);
     const pb = B[i - 1];
     let c = 0;
     if (pb > 0) c = (name === '목표')
       ? Math.min(pb * (1 + lr), payNom / Math.pow(1 + P.infl, i - 1))
-      : Math.min(pb * (1 + lr), save);
+      : Math.min(pb * (1 + lr), sv);
     B.push(Math.max(0, pb * (1 + lr) - c));
-    C.push(c); D.push(save - c);
-    kidGrow(); miscTick();
-    E.push(grow(E[i - 1]) + (save - c) - giveAt(P.baseYear + i));
-    F.push(F[i - 1] * (1 + dr) + num(P.dcAdd));
+    C.push(c); D.push(sv - c);
+    kidGrow(); miscTick(y);
+    E.push(grow(E[i - 1]) + (sv - c) - giveAt(y));
+    F.push(F[i - 1] * (1 + dr) + dcAt(y));
     G.push(kidSum());
-    rows.push({ y: P.baseYear + i, B: B[i], C: C[i], D: D[i], E: E[i], F: F[i], G: G[i] });
+    rows.push({ y, B: B[i], C: C[i], D: D[i], E: E[i], F: F[i], G: G[i] });
   }
   // 은퇴 연도: 잔여 대출 일시 상환 + 자녀 목표액 정산
   const i = nYears;
-  const loanLeft = B[i - 1] * (1 + lr);
-  kidGrow(); miscTick();
-  const giveLast = giveAt(P.retireYear);
+  const loanLeft = B[i - 1] * gf(lr);
+  kidGrow(gf(fr)); miscTick(endY, gf(fr));
+  const giveLast = giveAt(endY);
   const g = kidSum();                                        // 아직 스무 살이 안 된 자녀 몫
-  const f = F[i - 1] * (1 + dr) + num(P.dcAdd);
-  const e = grow(E[i - 1]) + save - loanLeft - giveLast;
-  rows.push({ y: P.retireYear, B: 0, C: 0, D: save, E: e, F: f, G: g });
+  const f = F[i - 1] * gf(dr) + dcAt(endY);
+  const e = (E[i - 1] >= 0 ? E[i - 1] * gf(fr) : E[i - 1] * gf(lr)) + saveAt(endY) - loanLeft - giveLast;
+  rows.push({ y: endY, B: 0, C: 0, D: saveAt(endY), E: e, F: f, G: g });
 
   /* 표에 적는 자녀증여는 **은퇴 시점 값**이다. 2032년에 나간 1억은 은퇴(2042)까지
      불어났을 돈이므로, 은퇴 시점 장부에서 비어 있는 자리는 1억이 아니라 그 미래가치다.
@@ -6027,14 +6144,25 @@ function simulate(name) {
        = kidGift × (1+fr)^(은퇴연도 − 증여연도)
      둘로 나뉘어 있던 것이 합쳐지면 인당 kidGift 하나로 떨어진다.
      스무 살이 은퇴 뒤인 자녀가 있으면 지수가 음수가 되어 **할인**된다 — 그것도 맞다. */
-  const kidRet = kidY.reduce((a, gy) => a + kidGift * Math.pow(1 + fr, P.retireYear - gy), 0);
+  const kidRet = kidY.reduce((a, gy) => a + kidGift * Math.pow(1 + fr, endY - gy - (1 - gp)), 0);
   const miscRet = miscAcc;
 
   // 요약
   /* 가구 연금 = 본인 + 배우자. 크레바스도 가구 기준으로 뗀다 — 둘 다 그 기간에는
-     연금이 없다고 보는 쪽이 보수적이다. 배우자 개시 시기가 다르면 그만큼 여유다. */
-  const penH = num(P.pen);        // 부부 합산
-  const crevasse = penH * P.crevasseMonths;
+     연금이 없다고 보는 쪽이 보수적이다. 배우자 개시 시기가 다르면 그만큼 여유다.
+
+     연장 근무를 하면 본인 몫이 늘어난다 — 60~65세에 임의계속가입으로 계속 낸다고 본다.
+     한 해마다 월 1.29 × (A + 그해 월급(상한까지)) ÷ 240, 연금 개시 연도는 절반(NPS 주석).
+     연금을 받기 시작할 때까지 일하므로 공백이 없다. */
+  let penAdd = 0;
+  /* 정년 해의 60세 생일 뒤 (12 − 생일 달) 개월 — 그때 월급(= 지금 DC 연 불입액, 상한까지)으로 낸다 (사용자 지정) */
+  const preM = extN ? 12 - bm : 0;
+  if (preM > 0) penAdd += preM / 12 * NPS.c * (NPS.A + Math.min(num(P.dcAdd), NPS.cap)) / 240;
+  for (let y = P.retireYear + 1; ext && y <= endY; y++)
+    penAdd += half(y) * NPS.c * (NPS.A + Math.min(wageM(y), NPS.cap)) / 240;
+  const penBase = num(P.pen);
+  const penH = penBase + penAdd;  // 부부 합산
+  const crevasse = ext ? 0 : penH * P.crevasseMonths;
   const avail = e + f - crevasse;
   const dcShare = (e + f) ? f / (e + f) : 0;
   const taxProp = propTax(P.targetRE);                       // 재산세 + 종부세 (연)
@@ -6077,7 +6205,7 @@ function simulate(name) {
      실질수익률이 0 이하면 연금식이 성립하지 않으므로 그냥 나눠 쓴다. */
   const bornY = P.pensionYear - PENSION_AGE;
   const depAge = num(P.depleteAge) || DEPLETE_AGE;
-  const nDep = Math.max(1, (bornY + depAge) - P.retireYear);
+  const nDep = Math.max(1, (bornY + depAge) - endY);
   const drawDep = rr > 1e-9 ? pmt(rr, nDep, avail) : avail / nDep;
   const use = after(drawDep);
 
@@ -6093,9 +6221,13 @@ function simulate(name) {
      자녀자산 줄은 없앴다 — 은퇴 시점에는 셋 다 증여가 끝나 0 이다. */
   const kidNom = kidGift * (kidY.length || 0);               // 합산 입력값
   const miscNom = num(P.misc);
-  const retireAge = P.retireYear - bornY;                    // 은퇴 시점 만 나이
+  const retireAge = endY - bornY;                            // 은퇴 시점 만 나이
+  /* 연장 해 내역 — 설정 화면이 무엇을 넣었는지 그대로 보여 준다 */
+  const extRows = [];
+  for (let y = P.retireYear + 1; ext && y <= endY; y++)
+    extRows.push({ y, half: half(y), wageM: wageM(y), save: saveAt(y), dc: dcAt(y) });
   return {
-    name, rows, loanLeft,
+    name, career, endY, extRows, rows, loanLeft, bm, gp, preM,
     E: e, F: f, G: g,
     reNet: P.targetRE - loanLeft,                            // 부동산 순자산 (대출 차감)
     /* 금융은 **증여·기타지출이 다 빠진 뒤**의 값이다 (2026-09-11, 사용자 요청).
@@ -6109,7 +6241,9 @@ function simulate(name) {
     crevasse, misc: num(P.misc), miscYr, save, taxProp, avail, nDep,
     draw: keep.draw, dcDraw: keep.dcDraw, taxDc: keep.taxDc,
     taxInc: keep.taxInc, health: keep.health, deduct: keep.deduct,
-    penH,
+    penH, penBase, penAdd,
+    /* 요약표의 월 흐름 네 줄: 세전 월 인출액 + 국민연금 − 세금·건보료 = 월 현금흐름 (2026-09-30) */
+    drawPreM: keep.draw / 12, deductM: keep.deduct / 12,
     cashM: keep.cashM, drawM: keep.cashM - penH,
     drawUse: use.draw, cashMUse: use.cashM, drawMUse: use.cashM - penH,
     /* 견줄 기준선. 국민연금연구원 국민노후보장패널 10차(2024) 부부 기준
@@ -6195,9 +6329,22 @@ function renderPlan() {
     : '';
 
   /* ── 은퇴 요약 표 ── */
-  const sims = SCN.map(simulate);
-  $('#retTitle').textContent = `${P.retireYear}년말 은퇴 요약`;
+  /* 근로 시나리오는 연도별 자산 제목 옆 버튼으로 고른다. 그래프와 이 표가 같은 값을 쓴다.
+     simulate 를 SCN.map 에 그대로 넘기면 둘째 인자로 배열 번호가 들어가므로 감싸서 부른다. */
+  const career = CAREERS.includes(UI.career) ? UI.career : '정년유지';
+  const sims = SCN.map(n => simulate(n, career));
+  $('#retTitle').textContent = career === '정년유지'
+    ? `${sims[0].endY}년말 은퇴 요약` : `${sims[0].endY}년 은퇴 요약 · ${career}`;
   const eok1 = v => (v / 10000).toFixed(1);
+  /* 월 흐름 네 줄은 **반올림한 값끼리 더해 맞아떨어지게** 한다 (2026-09-30, 사용자 요청:
+     세전 월 인출액 + 국민연금 − 세금·건보료 = 월 현금흐름). 셋을 따로 반올림하면 1만원이 어긋날 수
+     있어 그 단수를 세금·건보료 줄이 받는다 — 그 줄만 제 값을 반올림한 것과 1만원까지 다를 수 있다
+     (제 값과는 1.5만원 안쪽).
+     `|| 0` 은 −0 이 '-0' 으로 찍히지 않게 하려는 것이다. 단 **계산이 깨진 값(NaN)은 그대로 둔다** —
+     `NaN || 0` 은 0 이라, 입력이 잘못돼도 0 + 연금 − 연금 = 0 처럼 맞아떨어지는 숫자가 떴다(2026-10-01 리뷰).
+     fmt 가 NaN 을 '—' 로 찍는다. */
+  const r0 = v => isFinite(v) ? (Math.round(v) || 0) : NaN;
+  const taxShown = s => { const t = -(r0(s.drawPreM) + r0(s.penH) - r0(s.cashM)); return isFinite(t) ? (t || 0) : NaN; };
   const ROWS = [
     /* 여섯째 값 'info' — **합산에 안 들어가는 참고 줄**이다 (2026-09-11, 사용자 요청).
        위 셋(부동산·금융·DC)만 더하면 총 순자산이고, 아래 셋은 그 돈이 어디로 나갔는지
@@ -6212,16 +6359,21 @@ function renderPlan() {
     ['<span class="sub2">기타지출 <span class="u">기간균등</span></span>', s => -s.miscNom, '억', 0, 0, 'info'],
     ['<span class="sub2">국민연금 공백지출</span>', s => -s.crevasse, '억', 0, 0, 'info'],
     ['은퇴 인출가능', s => s.avail, '억', 1],
-    ['국민연금(월) <span class="u">부부 합산</span>', s => s.penH, '만', 0],
-    ['보유세 <span class="u">재산·종부세 · 연</span>', s => -s.taxProp, '만', 0],
-    ['세후 월 인출액', s => s.drawM, '만', 0],
-    ['월 현금흐름 <span class="u">자산유지</span>', s => s.cashM, '만', 1],
+    /* 월 흐름 (2026-09-30, 사용자 요청) — 위에서부터 더하고 빼면 월 현금흐름이 된다.
+       예전 '세후 월 인출액'(= 월 현금흐름 − 국민연금)은 인출세만이 아니라 보유세·건보료·
+       연금소득세까지 뺀 값이라 이름과 뜻이 달랐다(docs/10 §4). 보유세 줄도 세금·건보료에 넣었다.
+       세금·건보료 = 인출세 16.5% + 연금소득세 + 건보료(재산분 + 공적연금분) + 보유세, 월로 나눈 것 */
+    ['세전 월 인출액 <span class="u">자산유지</span>', s => r0(s.drawPreM), '만', 0],
+    [s => `국민연금 <span class="u">부부 합산${s.penAdd > 0 ? ` · 연장 +${fmt(s.penAdd, 0)}` : ''}</span>`, s => r0(s.penH), '만', 0],
+    ['세금·건보료 <span class="u">보유세 포함</span>', taxShown, '만', 0],
+    ['월 현금흐름 <span class="u">자산유지 · 세후</span>', s => r0(s.cashM), '만', 1],
     ['필요생활비 <span class="u">부부 적정</span>', s => s.needOk, '만', 0],
     /* 다섯째 값 'sgn' — 부호가 곧 판정인 줄이다. 모자라면 빨강, 남으면 녹색.
        다른 줄의 마이너스(파랑)는 '빼는 항목' 일 뿐 나쁘다는 뜻이 아니라 색을 달리 한다.
        자산소진 줄은 따로 보여 주지 않고 **적정과의 차이**로만 적는다 (2026-09-11, 사용자 요청) —
        판단에 필요한 것은 '얼마냐' 가 아니라 '모자라냐 남느냐' 이기 때문이다. */
-    ['└ 자산유지 − 적정', s => s.cashM - s.needOk, '만', 0, 'sgn'],
+    /* 화면의 두 줄(월 현금흐름·필요생활비)을 반올림한 값끼리 뺀다 — 눈으로 빼 본 값과 같게 */
+    ['└ 자산유지 − 적정', s => r0(s.cashM) - r0(s.needOk), '만', 0, 'sgn'],
     [s => `└ 자산소진 − 적정 <span class="u">${fmt(s.depAge, 0)}세</span>`, s => s.cashMUse - s.needOk, '만', 0, 'sgn']
   ];
   $('#retTbl').innerHTML =
@@ -6235,7 +6387,7 @@ function renderPlan() {
         const v = fn(s);
         if (HIDE && mk) return `<td>${MASK}<span class="u">${unit}</span></td>`;
         const txt = unit === '억' ? eok1(v) : fmt(v, 0);
-        const cls = sgn ? (v < 0 ? 'sgn-neg' : 'sgn-pos') : (row ? '' : (v < 0 ? 'neg' : ''));
+        const cls = !isFinite(v) ? '' : sgn ? (v < 0 ? 'sgn-neg' : 'sgn-pos') : (row ? '' : (v < 0 ? 'neg' : ''));
         return `<td class="${cls}">${txt}<span class="u">${unit}</span></td>`;
       }).join('') + `</tr>`).join('');
 
@@ -6255,8 +6407,11 @@ function renderPlan() {
     ['kidGift', '자녀증여', '인당 · 만원 · 20세', num(P.kidGift), 1000],
     ['misc', '기타지출', '만원 · 차량·가전 등', num(P.misc), 1000],
     ['pen', '국민연금 <span class="u2">부부 합산</span>', '만원/월', num(P.pen), 5],
-    ['retireYear', '은퇴 연도', '년', P.retireYear, 1],
+    ['retireYear', '은퇴 연도', '년 · 정년', P.retireYear, 1],
     ['crevasseMonths', '연금 공백', '개월', P.crevasseMonths, 1],
+    /* 만 65세가 되는 해. 생년(= 이 값 − 65)으로 나이와 자산소진 햇수를 내고,
+       재고용·정년연장은 이 해 생일 달까지 일한다 (2026-09-30) */
+    ['pensionYear', '연금 개시 연도', '년 · 만 65세', num(P.pensionYear), 1],
     ['depleteAge', '자산소진 나이', '세', num(P.depleteAge) || DEPLETE_AGE, 1]
   ].map(([k, l, u, v, st]) => HIDE && k === 'targetRE'
     /* 가리는 동안에는 칸을 잠근다 — 가린 글자가 값으로 저장되면 안 된다 */
@@ -6273,7 +6428,9 @@ function renderPlan() {
     + `<p class="note" style="padding:4px 15px 0">금액은 모두 <b>현재가치</b>입니다.
        연 저축액·DC 연 불입액은 매년 같은 값을 넣는데, 이는 명목으로 물가상승률만큼
        매년 늘어난다는 뜻입니다. <b>연금 공백</b>은 은퇴 후 국민연금을 받기 전까지의
-       기간으로, 그만큼을 미리 떼어 두고 인출액을 계산합니다.
+       기간으로, 그만큼을 미리 떼어 두고 인출액을 계산합니다(정년유지만). <b>은퇴 연도나 연금 개시 연도를
+       바꾸면 연금 공백은 저절로 따라가지 않습니다</b> — 정년 다음 해 1월부터 연금을 받기 전 달까지의 개월 수로
+       함께 고쳐 주세요.
        <br><b>부동산 잔금</b>은 은퇴후 부동산가 − 장부의 <b>부동산 순자산</b>(대출 뺀 값,
        지금 ${HIDE ? MASK : fmt(calc(latest()).reT, 0)}만원) = <b>${HIDE ? MASK : fmt(num(P.targetRE) - calc(latest()).reT, 0)}만원</b>이고,
        ${P.baseYear + 1}년에 <b>금융자산부터 쓰고 모자라는 만큼만 대출</b>합니다. 지금 대출도 이 안에
@@ -6298,6 +6455,45 @@ function renderPlan() {
        수령액은 가입이력이 정하는 것이지 투자수익률이 정하는 것이 아닙니다.
        국민연금공단 <b>내 연금 알아보기</b>(csa.nps.or.kr)에서 부부 각자 조회해
        더한 값을 넣으세요.</p>`;
+
+  /* 재고용·정년연장 — 입력 둘과, 연장 해마다 무엇이 들어가는지를 화면이 직접 적는다.
+     연장 해의 저축·DC·국민연금은 수익률과 무관해 어느 시나리오로 불러도 같다 */
+  const cx = { 재고용: simulate('현재', '재고용'), 정년연장: simulate('현재', '정년연장') };
+  const man = v => fmt(v, 0);
+  /* 해마다 같은 값이면 한 번만 적는다 (재고용 저축 0 → 0 → 0 … 은 읽기만 번거롭다) */
+  const seq = a => a.every(v => man(v) === man(a[0])) ? man(a[0]) : a.map(man).join(' → ');
+  const extLine = x => x.extRows.length
+    ? `연 저축 ${seq(x.extRows.map(r => r.save))} · DC ${seq(x.extRows.map(r => r.dc))}만원 · 국민연금 본인 <b>+${fmt(x.penAdd, 1)}만원/월</b>`
+    : '연금 개시 연도가 정년보다 늦지 않아 늘어나는 해가 없습니다';
+  const ey = cx.재고용.extRows;
+  $('#planCareer').innerHTML = [
+    ['rehireWage', '재고용 연봉', '만원 · 현재가치', num(P.rehireWage), 100],
+    ['peakCut', '임금피크 감액', '% · 정년연장 · 매년', pct(num(P.peakCut)), 1],
+    /* 비워 두면(0) 연금 공백에서 되짚은 값을 쓴다 — birthMonthOf */
+    ['birthMonth', '생일 달', '월 · 만 60·65세', cx.재고용.bm, 1]
+  ].map(([k, l, u, v, st]) => `<div class="erow"><label>${l} <span class="u">${u}</span></label>
+     <input class="num" type="number" step="${st}" data-pc="${k}" value="${v}"></div>`).join('')
+    + `<p class="note" style="padding:4px 15px 0">두 시나리오 모두 정년(${P.retireYear}) 다음 해부터
+       <b>연금 개시 연도(${num(P.pensionYear)})의 만 65세 생일 달(${cx.재고용.bm}월)까지</b> 일하고 다음 달부터 국민연금을 받습니다 —
+       <b>연금 공백이 없고</b>, ${num(P.pensionYear)}년 소득은 <b>1년치의 절반</b>으로 봅니다.
+       요약은 <b>퇴직 시점</b> 기준(현재가치)입니다 — ${num(P.pensionYear)}년 자산·대출은 ${cx.재고용.bm}개월치만 불립니다.
+       ${num(P.birthMonth) ? '' : '생일 달은 연금 공백에서 되짚은 값입니다(공백 = 정년 다음 해 1월 ~ 연금 받기 전 달).'}
+       ${ey.length ? `<br>연장 해 ${ey.map(r => r.y).join(' · ')}` : ''}
+       <br><b>재고용</b> — ${extLine(cx.재고용)}
+       <br><b>정년연장</b> — ${extLine(cx.정년연장)}
+       <br>DC 불입은 <b>연봉의 1/12</b>로 봅니다. 재고용은 ${man(num(P.rehireWage))} ÷ 12,
+       정년연장은 지금 DC 연 불입액(${man(num(P.dcAdd))})에서 출발해 매년 ${pct(num(P.peakCut))}%씩 줄어듭니다.
+       물가만큼 오르는 몫은 현재가치에 이미 들어 있어 따로 넣지 않습니다.
+       정년연장의 연 저축은 입력값 그대로입니다 — 기타지출은 정년까지 다 모았습니다.
+       <br><b>국민연금 증가분</b>은 60세 이후 <b>임의계속가입</b>으로 보험료를 계속 낸다고 보고,
+       한 해마다 월 <b>1.29 × (A값 ${man(NPS.A)}만 + 그해 월급) ÷ 240</b> 을 더합니다
+       (2026년 이후 소득대체율 43%). 월급은 기준소득월액 상한 ${man(NPS.cap)}만원까지만 칩니다.
+       ${cx.재고용.preM ? `정년 해(${P.retireYear})의 60세 생일 뒤 <b>${cx.재고용.preM}개월</b>도 그때 월급으로 넣습니다
+       (공단 예상연금은 보통 60세 생일까지만 낸 것으로 잡습니다 — 정년유지는 입력값 그대로).` : ''}
+       공단 <b>내 연금 알아보기</b>의 예상연금과 다르면 그쪽이 맞습니다.
+       <br>임의계속가입 보험료는 <b>전액 본인</b>이 냅니다(2033년부터 기준소득월액의 13% —
+       재고용 월 ${man(Math.min(num(P.rehireWage) / 12, NPS.cap) * 0.13)}만, 상한이면 월 ${man(NPS.cap * 0.13)}만).
+       이 돈은 <b>따로 빼지 않았습니다</b> — 재고용 저축 0 · 정년연장 저축 입력값 안에서 낸다고 봅니다.</p>`;
 
   $('#planSc').innerHTML = SCN.map(n => {
     const s = P.sc[n];
@@ -6427,6 +6623,7 @@ function segBind(sel, key, after) {
 }
 segBind('#scopeSeg', 'scope', renderSummary);
 segBind('#planSeg', 'plan', renderPlan);
+segBind('#careerSeg', 'career', renderPlan);
 segBind('#anaSeg', 'ana', renderAnalysis);
 segBind('#ibSeg', 'ib', renderIB);
 /* 중분류 접기·펴기 */
@@ -6557,7 +6754,23 @@ document.getElementById('p-plan').addEventListener('change', e => {
   if (t.dataset.plan) { state[t.dataset.plan] = +t.value; planSave(); toast('반영했습니다'); return; }
   if (t.dataset.pc) {
     const k = t.dataset.pc;
-    P[k] = (k === 'infl' || k === 'loanRate') ? +t.value / 100 : +t.value;
+    const v = (k === 'infl' || k === 'loanRate' || k === 'peakCut') ? +t.value / 100 : +t.value;
+    /* 칸을 비우고 나가면 +'' = 0 이 저장돼 '만 2,107세' 같은 값이 그럴듯하게 떴다(2026-10-01 리뷰).
+       연도·달·감액률·연봉은 말이 되는 범위만 받고, 아니면 도로 그려 원래 값으로 돌린다 */
+    const by = num(P.baseYear);
+    const OK = {
+      retireYear: x => Number.isInteger(x) && x >= by + 2 && x <= by + 60,
+      pensionYear: x => Number.isInteger(x) && x > by && x <= by + 80,
+      birthMonth: x => Number.isInteger(x) && x >= 0 && x <= 12,
+      peakCut: x => x >= 0 && x < 1,
+      rehireWage: x => x >= 0,
+      crevasseMonths: x => Number.isInteger(x) && x >= 0 && x <= 240
+    };
+    if (t.value === '' || !isFinite(v) || (OK[k] && !OK[k](v))) {
+      toast(k === 'birthMonth' ? '생일 달은 1~12 (비우려면 0)' : k === 'peakCut' ? '감액은 0~99%' : '그 값은 받을 수 없습니다');
+      renderPlan(); return;
+    }
+    P[k] = v;
     planSave(); return;
   }
   if (t.dataset.ky) {
