@@ -289,6 +289,11 @@ input[type=number],input.num{font-family:"IBM Plex Mono",monospace;font-variant-
 /* 라벨 안에 또 들어가는 부가 설명 — .u 가 이미 감싼 자리에 겹쳐 쓰지 않으려고 둔다 */
 .erow label .u2{font-size:10.5px;color:var(--muted);margin-left:4px;font-weight:400}
 .erow input{width:118px;flex:none;padding:6px 8px;font-size:12.5px}
+/* 실적/계획 › 시뮬레이션 설정 — 칸 높이를 고르게 (2026-10-02, 사용자 요청).
+   details.inl 의 위 여백 12px 가 구분선 **바깥**에 붙어, 접힌 네 칸이 66 · 54 · 54 · 42px 로
+   들쭉날쭉했고 글자도 칸 위쪽에 쏠렸다. 안쪽 줄은 입력칸 줄 높이(48px)에 맞춘다 — 체크 칸 줄이 38px 였다 */
+.pset>details.inl{margin-top:0}
+.pset .erow{min-height:48px}
 
 /* parsed cards */
 .pc{border:1px solid var(--line);border-radius:10px;padding:10px 12px;margin-top:8px;background:var(--surf2)}
@@ -652,7 +657,7 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
       </details>
 
       <h2 class="sec">시뮬레이션 설정</h2>
-      <div class="card">
+      <div class="card pset">
         <details class="inl bare"><summary>공통 가정</summary><div class="dbody" id="planCommon"></div></details>
         <details class="inl bare"><summary>재고용·정년연장</summary><div class="dbody" id="planCareer"></div></details>
         <details class="inl bare"><summary>시나리오별 수익률</summary><div class="dbody" id="planSc"></div></details>
@@ -723,7 +728,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-02 08:55';
+const BUILD = '2026-10-02 09:02';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -6552,7 +6557,8 @@ function renderPlan() {
   $('#planABC').innerHTML =
     `<div class="erow"><label>앱의 현재 값을 그대로 사용</label>
       <input type="checkbox" id="useLive" style="width:18px;height:18px;flex:none;accent-color:var(--brass)" ${P.useLive ? 'checked' : ''}></div>`
-    + [['a', '금융자산 (무매·VR·레버리지·예수금)'], ['b', '자녀자산'], ['c', 'DC']].map(([k, l]) =>
+    /* 금융자산 = 주식 계좌 전부(무매·VR·레버리지 + 예수금, calc 의 stockAcct). 폰(360px)에서 한 줄에 들게 줄였다 (2026-10-02) */
+    + [['a', '금융자산 <span class="u2">주식·예수금</span>'], ['b', '자녀자산'], ['c', 'DC']].map(([k, l]) =>
       `<div class="erow"><label>${l} <span class="u">만원</span></label>
        <input class="num" type="number" step="100" data-abc="${k}" value="${Math.round(S[k])}" ${P.useLive ? 'disabled style="opacity:.5"' : ''}></div>`).join('');
 
