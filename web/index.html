@@ -728,7 +728,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-02 09:02';
+const BUILD = '2026-10-06 08:57';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -7007,7 +7007,16 @@ const STALE_H = 48;
    **메리츠 알림은 건드리지 않는다** — 종목명에 미래에셋이 든 메리츠 체결(`[메리츠증권] … 종목명 : 미래에셋…`)을
    조용히 버리면 체결이 사라진다. 버린 행은 'ignored' 로 넘길 뿐 원문은 서버에 남는다 */
 const INBOX_SKIP = ['미래에셋'];
-const inboxSkip = raw => { const s = String(raw || ''); return !s.includes('메리츠') && INBOX_SKIP.some(w => s.includes(w)); };
+/* '체결' 이 한 글자도 없는 알림도 읽지 않는다 (2026-10-06, 사용자: "불필요한 카카오톡 알림들이 수집됨").
+   단톡방 잡담('…가 매수했다네요')이 수집기 4.38 까지의 규칙(카카오 · '매수' + 숫자)에 걸렸고, 카카오가 읽지 않은 글을
+   이어 붙여 갱신하므로 그 뒤 글마다 다시 올라와 검토 카드가 21장 쌓였다. 수집기는 4.39 에서 좁혔다(NotifRule) —
+   이것은 이미 올라온 행과 4.39 를 깔기 전까지 올라올 행을 걷는다.
+   **안전한 이유**: parseKakao 는 '체결' 이 든 조각만 읽는다. 없으면 어떤 길로도 반영될 수 없는 행이라 카드만 남는다.
+   '체결' 이 있는데 못 읽는 행은 그대로 검토로 간다 — 알림톡 모양이 바뀐 진짜 체결일 수 있다 */
+const inboxSkip = raw => {
+  const s = String(raw || '');
+  return !s.includes('체결') || (!s.includes('메리츠') && INBOX_SKIP.some(w => s.includes(w)));
+};
 
 function tradeSig(p) { return [p.grp, p.slot, p.side, num(p.qty), num(p.price).toFixed(2)].join('|'); }
 /* 원장에 적힌 체결(tr)에서 같은 모양의 서명을 만든다. px 가 없던 옛 기록은
@@ -7131,7 +7140,7 @@ async function sbDrainInbox() {
   const x = latest(); let n = 0, logged = 0; const doneIds = [], reviewIds = [], dupIds = [], skipIds = [];
   rows.forEach(r => {
     if (state.applied[r.id]) { doneIds.push(r.id); return; }
-    if (inboxSkip(r.raw)) { skipIds.push(r.id); return; }   // 메리츠가 아닌 증권사 안내(INBOX_SKIP)
+    if (inboxSkip(r.raw)) { skipIds.push(r.id); return; }   // 체결이 없는 글 · 메리츠가 아닌 증권사 안내(inboxSkip)
     if (folded.has(r.id)) { dupIds.push(r.id); return; }   // 뒤 행이 통째로 품고 있다
     const ps = parseKakao(r.raw);
     const ok = ps.filter(p => !p.errs.length);
@@ -7448,7 +7457,7 @@ async function fetchReview() {
     /* 파싱을 여기서 한 번만 해 둔다. 오류가 있는 건도 버리지 않는다 —
        parseKakao 는 값을 다 채운 **뒤에** errs 를 붙이므로, 못 읽은 항목도
        종목·매매구분·수량은 대개 나온다. 그것만 보여도 두 알림을 구별할 수 있다. */
-    /* 이미 검토에 올라가 있던 미래에셋 안내도 걷는다(INBOX_SKIP) — 배출 규칙보다 먼저 올라온 것들 */
+    /* 이미 검토에 올라가 있던 것도 걷는다(inboxSkip) — 미래에셋 안내 · 체결이 없는 단톡방 글. 배출 규칙보다 먼저 올라온 것들 */
     const skip = rows.filter(r => inboxSkip(r.raw)).map(r => r.id);
     if (skip.length) {
       sbReq('/rest/v1/inbox?id=in.(' + skip.join(',') + ')', {
