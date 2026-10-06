@@ -455,6 +455,13 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         <p class="note" style="margin:8px 3px 12px">앱이 스스로 읽지 못했거나, 오늘 계획한 주문과 달라 사람 확인이 필요한 알림입니다. 카드 내용이 맞으면 <b>N건 반영하기</b>를 누르세요 — 그 한 번으로 원장에 들어갑니다(잘못 눌렀으면 아래 <b>금일 반영내역</b>에서 되돌립니다). 관계없는 알림이면 <b>무시</b>를 누르세요. 일부를 읽지 못한 알림만 <b>입력칸에서 고치기</b>로 바뀝니다.</p>
       </div>
 
+      <!-- DC 좌수가 바뀐 날 — 불입(원금)인지 배당(수익)인지 고른다 (2026-10-06) -->
+      <div id="dcAskWrap" style="display:none">
+        <h2 class="sec">DC 좌수 변경 확인 <span class="tag" id="dcAskCount" style="margin-left:4px"></span></h2>
+        <div class="card rows" id="dcAskList"></div>
+        <p class="note" style="margin:8px 3px 12px"><b>불입</b>은 DC 원금에 더해 손익이 그대로이고, <b>배당</b>은 원금을 그대로 두어 수익으로 잡힙니다. 둘이 섞였으면 <b>불입 금액만</b> 넣고 불입을 누르세요 — 나머지는 수익이 됩니다. <b>정정·갈아타기</b>는 원금에 아무것도 하지 않습니다. 고르기 전까지는 예전처럼 늘어난 만큼이 수익으로 잡힙니다.</p>
+      </div>
+
       <div id="recentWrap" style="display:none">
         <h2 class="sec">금일 반영내역</h2>
         <div class="card rows" id="recentList"></div>
@@ -498,6 +505,12 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
       <details class="secd">
         <summary>보유 현황</summary>
         <div class="card" id="holdEdit"></div>
+      </details>
+
+      <details class="secd" id="dcLogWrap">
+        <summary>DC 불입·배당 <span class="sm" id="dcLogSum"></span></summary>
+        <div class="card rows" id="dcLog"></div>
+        <p class="note" style="margin:8px 3px 0">DC 좌수를 고치면 위에 <b>DC 좌수 변경 확인</b>이 뜹니다. 거기서 고른 것이 여기 쌓입니다. <b>지우기</b>를 누르면 그날을 다시 묻습니다.</p>
       </details>
 
       <details class="secd">
@@ -728,7 +741,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-06 09:29';
+const BUILD = '2026-10-06 10:16';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1353,7 +1366,7 @@ function plRows() {
     { cat: 'core', grp: '보유주식', n: 'ISA 레버리지', v: c.isaV - man(num(B['주식 레버리지'].cost)), cost: man(num(B['주식 레버리지'].cost)) },
     { cat: 'core', grp: '환차손익', n: '환차손익', sub: '매입금액 + 달러예수금 × 환율차', v: (usdCost + num(x.usd)) * (fx - fx0) / 1e4, cost: (usdCost + num(x.usd)) * fx0 / 1e4 },
     { cat: 'ex', grp: '자산 외', n: '자녀 QLD', sub: '환차손익 포함', v: c.kidV - man(num(B['자녀 QLD'].cost)), cost: man(num(B['자녀 QLD'].cost)) },
-    { cat: 'ex', grp: '자산 외', n: 'DC 퇴직연금', v: c.dcv - man(num(B['DC'].cost)), cost: man(num(B['DC'].cost)) }
+    { cat: 'ex', grp: '자산 외', n: 'DC 퇴직연금', sub: dcDivWon() ? `배당 ${fmt(dcDivWon() / 1e4, 1)}만원 포함` : '', v: c.dcv - man(dcCostWon()), cost: man(dcCostWon()) }   // 원금 = 손익기준 + 9/1 뒤 불입(dcCostWon)
   ];
   /* 주식 반영수익 = (DC·자녀 제외 전체 금융자산) − 원금 */
   const realized = { n: '주식 반영수익', sub: '무매+VR+레버리지 − 원금', v: c.stockAcct - num(state.principal), cost: num(state.principal) };
@@ -1443,7 +1456,7 @@ function renderAnalysis() {
   const man0 = w => w / 1e4;
   const total = UI.ana === 'total';
   const mz = meritz(c);
-  const kidCost = man0(num(B0['자녀 QLD'].cost)), dcCost = man0(num(B0['DC'].cost));
+  const kidCost = man0(num(B0['자녀 QLD'].cost)), dcCost = man0(dcCostWon());   // 9/1 뒤 불입까지 (2026-10-06)
   const val = total ? mz + c.kidV + c.dcv : mz;
   const denom = total ? num(state.principal) + kidCost + dcCost : num(state.principal);
   const y1 = val - denom;
@@ -1535,7 +1548,7 @@ function renderAnalysis() {
      미국주식은 usBasis() 가 주는 '수량 × 평단 − 누적실현' 을 쓴다. */
   const usB = IB_SLOTS.reduce((a, sl) => a + usBasis(sl, x).cost, 0);
   const totalCost = (usB + num(x.usd)) * num(state.fx0) / 1e4
-    + man(num(B['자녀 QLD'].cost)) + man(num(B['DC'].cost)) + man(num(B['주식 레버리지'].cost)) + num(B['부동산'].cost)
+    + man(num(B['자녀 QLD'].cost)) + man(dcCostWon()) + man(num(B['주식 레버리지'].cost)) + num(B['부동산'].cost)
     + c.krw + c.savT;
   const direct = c.total - totalCost;
   const sumAll = allRows.reduce((a, r) => a + r.v, 0);
@@ -1834,6 +1847,197 @@ function renderFlows() {
       <div class="vals"><div class="v num ${f.s > 0 ? 'up' : 'dn'}">${f.s > 0 ? '+' : '−'}${fmt(f.amt, 0)}</div></div>
       <button class="ghost" data-undo="${i}" style="padding:4px 8px;font-size:11.5px;flex:none">되돌리기</button></div>`;
   }).join('') : `<div class="row"><div class="nm" style="color:var(--muted)">기록 없음</div></div>`;
+}
+
+/* ===================== DC 불입·배당 (2026-10-06, 사용자 요청) =====================
+   사용자: "DC계좌에 배당금 입금 시 원금말고 수익으로 반영할 수 있는 방법" → "매달 입금 불입액 — 기존 종목 중
+   추가매수하고 보유수량을 변경하고 있음(기존방식 유지). 배당수익 — 역시 기존 종목 중 추가매수할 예정이지만
+   수익으로 잡고 싶음."
+
+   DC 평가액은 좌수 × 그날 종가뿐이고(calc), 원금은 엑셀 '손익기준' 시트의 **'9/1기준 매입금액'** 하나에 묶여
+   있었다. 그래서 9/1 뒤에 좌수가 늘면 **무엇이든 수익**이 됐다 — 배당은 그게 맞지만 **불입까지 수익으로 잡혔다**
+   (10/1 의 좌수 증가가 9/29 불입이었는데 그대로 수익으로 잡혀 DC 손익·'전체' 누적수익이 그만큼 부풀었다 — 금액은 docs/02).
+
+   금액을 따로 넣지 않는다 — 넣고 나서 좌수를 또 고치면 같은 돈이 두 번 들어간다(사용자가 짚은 것).
+   좌수 고치기는 그대로 두고, **원장에서 좌수가 바뀐 날**을 찾아 그날 늘어난 돈이 무엇인지만 묻는다.
+   불입과 배당은 평가액에서는 똑같이 늘고, 갈리는 것은 **원금에 더하느냐** 하나다.
+     불입  원금 + 금액          → 손익 그대로
+     배당  원금 그대로(기록만)  → 손익 + 금액
+     정정·갈아타기  아무것도 안 함
+   둘이 섞인 날은 불입 금액만 넣고 불입 — 나머지가 수익이 된다. 고르기 전에는 예전처럼 수익이다.
+
+   기록은 돈에 관한 사실이고 좌수 변경은 묻는 계기일 뿐이다. 나중에 그날 좌수를 또 고치면 다시 묻지만,
+   기록(원금)은 사람이 다시 고를 때까지 그대로 센다 — 말없이 원금이 빠지면 손익이 튄다. */
+const DC_BASIS_AT = '2026-09-01';          // 엑셀 손익기준 시트의 DC 는 '9/1기준 매입금액' — 그날까지의 불입은 이미 들어 있다
+const DC_KIND = { in: '불입', div: '배당', fix: '정정·갈아타기' };
+const dcFlows = () => state.dcFlows || [];
+/* DC 원금(원) = 손익기준 + 9/1 뒤 불입 */
+function dcCostWon() {
+  const b = num(((SEED.basis || {})['DC'] || {}).cost);
+  return b + dcFlows().filter(f => f.kind === 'in').reduce((a, f) => a + num(f.amt), 0);
+}
+const dcDivWon = () => dcFlows().filter(f => f.kind === 'div').reduce((a, f) => a + num(f.amt), 0);
+/* 원장에서 DC 좌수가 바뀐 날(기준일 뒤) — 늘어난 좌수와 그날 종가로 잰 금액(원) */
+function dcEvents() {
+  const ks = dayKeys(), out = [];
+  for (let i = 1; i < ks.length; i++) {
+    const d = ks[i]; if (d <= DC_BASIS_AT) continue;
+    const a = state.days[ks[i - 1]].dc || {}, b = state.days[d].dc || {}, px = state.days[d].px || {};
+    const q = {}; let v = 0;
+    DC_KEYS.forEach(k => { const dq = +(num(b[k]) - num(a[k])).toFixed(4); if (dq) { q[k] = dq; v += dq * num(px[k]); } });
+    if (Object.keys(q).length) out.push({ d, q, v: Math.round(v) });
+  }
+  return out;
+}
+const dcSameQ = (p, q) => DC_KEYS.every(k => num((p || {})[k]) === num((q || {})[k]));
+/* 아직 고르지 않은 날 — 기록이 없거나, 기록한 뒤 그날 좌수가 또 바뀐 날 */
+const dcAsks = () => dcEvents().map(e => ({ ...e, rec: dcFlows().find(f => f.d === e.d) }))
+  .filter(e => !e.rec || !dcSameQ(e.rec.q, e.q));
+/* 좌수 변경이 사라진 기록 — 'DC 과거 시세 채우기' 로 그날 좌수를 다른 날로 옮기거나 되돌리면 생긴다(적대적 검토).
+   돈은 실제로 들어왔으므로 원금에는 **계속 센다.** 대신 옮기거나 지우라고 묻는다 — 말없이 두면 새 날짜 카드에서
+   같은 불입을 또 넣어 원금이 두 번 들어간다 */
+const dcOrphans = () => { const ev = new Set(dcEvents().map(e => e.d)); return dcFlows().filter(f => f.kind !== 'fix' && !ev.has(f.d)); };
+const dcNeed = () => dcAsks().length + dcOrphans().length;
+const dcQText = q => DC_KEYS.filter(k => q[k]).map(k => `${k} ${q[k] > 0 ? '+' : '−'}${fmt(Math.abs(q[k]), 0)}좌`).join(' · ');
+
+/* 미래에셋 '퇴직연금 입금안내' 의 금액을 불입 금액으로 미리 채운다 — 서버 inbox 에 원문이 남아 있다
+   (웹은 '체결' 이 없어 ignored 로 넘기지만 원문은 그대로다). 수집기 4.39 부터는 홀로 온 안내는 안 올라오고, 같은 대화방의
+   체결 안내와 **이어 붙어** 올 때만 올라온다 — 그러면 같은 안내가 여러 행에 거듭 실린다.
+   그래서 행이 아니라 **안내 한 건**(본문의 날짜 · 금액)으로 센다. 한 행에 안내가 여럿이면 다 읽는다(적대적 검토 —
+   행마다 하나씩 더하면 같은 불입이 세 배로 채워졌다). 날짜가 본문에 없으면 받은 날(서울) */
+let dcHints = null, dcHintsAt = 0;
+async function dcFetchHints() {
+  if (dcHints || !SB || !sbTok || !dcAsks().length || Date.now() - dcHintsAt < 600e3) return;
+  dcHints = []; dcHintsAt = Date.now();
+  try {
+    const rows = await sbReq('/rest/v1/inbox?raw=like.' + encodeURIComponent('*퇴직연금*입금*')
+      + '&select=raw,received_at&order=received_at.desc&limit=30') || [];
+    const seen = new Set();
+    rows.forEach(r => {
+      for (const m of String(r.raw || '').matchAll(/(?:(\d{4})\.(\d{1,2})\.(\d{1,2})\s*)?DC\s*퇴직연금\s*([\d,]+)\s*원이?\s*입금/g)) {
+        const day = m[1] ? `${m[1]}-${pad2(+m[2])}-${pad2(+m[3])}` : kstDay(new Date(r.received_at).getTime());
+        const amt = +m[4].replace(/,/g, ''), key = day + '|' + amt;
+        if (amt > 0 && !seen.has(key)) { seen.add(key); dcHints.push({ day, amt, key }); }
+      }
+    });
+  } catch (e) { dcHints = null; return; }      // 실패하면 10분 쉬고 다시(dcHintsAt) — 그리기마다 서버를 두드리지 않게
+  renderDcAsk();
+}
+const kstDay = ms => new Date(ms + 9 * 3600e3).toISOString().slice(0, 10);
+const mdDot = d => +d.slice(5, 7) + '.' + +d.slice(8, 10);              // 2026-10-01 → 10.1 (반영내역과 같은 꼴)
+function dcHint(d) {
+  const lo = iso(new Date(new Date(d + 'T00:00:00').getTime() - 10 * 864e5));
+  /* 입금안내 하나는 **그 뒤 처음 좌수가 바뀐 날** 하나에만 붙인다. 10일 창만 보면 다음 좌수 변경(배당 재투자 등)에도
+     같은 금액이 다시 채워져, 그대로 불입을 누르면 원금이 두 번 들어간다(시험에서 잡았다).
+     **다른 날의 불입 기록이 이미 가져간 안내도 뺀다**(f.hints) — 좌수 변경 날짜를 옮긴 뒤 새 날짜에 또 채우지 않게(검토) */
+  const used = new Set(dcFlows().filter(f => f.d !== d).flatMap(f => f.hints || []));
+  const evs = dcEvents().map(e => e.d);
+  const hs = (dcHints || []).filter(h => h.day >= lo && h.day <= d && !used.has(h.key) && evs.find(x => x >= h.day) === d)
+    .sort((a, b) => a.day < b.day ? -1 : 1);
+  /* 두 번 입금된 뒤 한 번에 샀으면 합친다 */
+  return hs.length ? { amt: hs.reduce((a, h) => a + h.amt, 0), keys: hs.map(h => h.key),
+    txt: hs.map(h => `${mdDot(h.day)} · ${fmt(h.amt, 0)}원`).join(' + ') } : null;
+}
+
+function renderDcAsk() {
+  const wrap = $('#dcAskWrap'), list = $('#dcAskList');
+  if (!wrap || !list) return;
+  const asks = dcAsks(), orph = dcOrphans();
+  renderReviewBadge();
+  if (!asks.length && !orph.length) { wrap.style.display = 'none'; list.innerHTML = ''; }
+  else {
+    wrap.style.display = '';
+    $('#dcAskCount').textContent = asks.length + orph.length;
+    /* 금액 칸에 손으로 넣던 값은 다시 그려도 남긴다 — 시세가 들어올 때마다 지워지면 안 된다 */
+    const typed = {}; $$('#dcAskList [data-dcamt]').forEach(el => { if (el.dataset.touched) typed[el.dataset.dcamt] = el.value; });
+    const paired = new Set();
+    const cards = asks.map(e => {
+      const h = dcHint(e.d), r = e.rec;
+      /* 같은 좌수 변경을 가진 고아 기록이 있으면 그 기록을 이 날로 옮기는 것이 먼저다 — 새로 불입을 넣으면 두 번이다 */
+      const o = !r && orph.find(x => !paired.has(x.d) && dcSameQ(x.q, e.q));
+      if (o) paired.add(o.d);
+      const amt = typed[e.d] != null ? typed[e.d] : String(h ? h.amt : Math.max(0, e.v));
+      /* 입금안내 합이 늘어난 좌수로 잰 금액과 10% 넘게 다르면 알린다 — 다른 입금이 섞였거나 덜 산 것일 수 있다 */
+      const off = h && e.v > 0 && Math.abs(h.amt - e.v) > e.v * 0.1;
+      return `<div class="row" style="align-items:stretch;flex-direction:column;gap:7px">
+        <div class="nm" style="width:100%;display:flex;align-items:center;gap:6px">
+          <span>${esc(mdDot(e.d))}</span>
+          <span class="sub" style="margin-left:auto">평가액 ${e.v >= 0 ? '+' : '−'}${fmt(Math.abs(e.v) / 1e4, 1)}만원 <span style="color:var(--muted)">(그날 종가)</span></span></div>
+        <div class="note" style="margin:-2px 0 0">${esc(dcQText(e.q))}</div>
+        ${h ? `<div class="note" style="margin:0">미래에셋 입금안내 <b>${esc(h.txt)}</b> — 금액에 넣어 두었습니다${off
+          ? ` <span style="color:var(--up)">· 늘어난 좌수로 잰 ${fmt(e.v, 0)}원과 차이가 큽니다. 금액을 확인해 주세요</span>` : ''}</div>` : ''}
+        ${r ? `<div class="note" style="margin:0;color:var(--up)">${r.kind === 'fix' ? '정정·갈아타기로'
+          : esc(DC_KIND[r.kind] || r.kind) + ' ' + fmt(num(r.amt), 0) + '원으로'} 고른 뒤 그날 좌수가 또 바뀌었습니다(기록 ${esc(dcQText(r.q || {}))}). 다시 골라 주세요 — 그때까지는 기록대로 셉니다</div>` : ''}
+        ${o ? `<div class="note" style="margin:0;color:var(--up)">${esc(mdDot(o.d))} 에 넣은 ${esc(DC_KIND[o.kind] || o.kind)} ${fmt(num(o.amt), 0)}원 기록과 좌수 변경이 같습니다 —
+          좌수 변경을 이 날로 옮긴 것이면 <b>기록 옮기기</b>를 누르세요(새로 넣으면 두 번 들어갑니다)</div>
+          <button class="act" data-dcmove="${o.d}|${e.d}" style="width:100%;padding:8px;font-size:12.5px">${esc(mdDot(o.d))} 기록을 ${esc(mdDot(e.d))} 로 옮기기</button>` : ''}
+        <div class="erow" style="padding:0"><label>금액 <span class="u">원</span></label>
+          <input class="num" type="number" step="1" inputmode="numeric" data-dcamt="${e.d}"${typed[e.d] != null ? ' data-touched="1"' : ''} value="${esc(amt)}"></div>
+        <div style="display:flex;gap:6px;width:100%">
+          <button class="${o ? 'ghost' : 'act'}" data-dcset="${e.d}|in" style="flex:1;padding:8px;font-size:12.5px">불입 · 원금</button>
+          <button class="ghost" data-dcset="${e.d}|div" style="flex:1;padding:8px;font-size:12.5px">배당 · 수익</button>
+          <button class="ghost" data-dcset="${e.d}|fix" style="flex:none;padding:8px 9px;font-size:12px">정정·갈아타기</button>
+        </div></div>`;
+    });
+    /* 짝이 없는 고아 기록 — 옮길 날이 없으면 지우거나(잘못 넣은 것) 그날 좌수를 되살린다 */
+    const lone = orph.filter(o => !paired.has(o.d)).map(o => `<div class="row" style="align-items:stretch;flex-direction:column;gap:7px">
+        <div class="nm" style="width:100%">${esc(mdDot(o.d))} ${esc(DC_KIND[o.kind] || o.kind)} ${fmt(num(o.amt), 0)}원</div>
+        <div class="note" style="margin:-2px 0 0;color:var(--up)">그날 원장의 좌수 변경이 없어졌습니다(기록 ${esc(dcQText(o.q || {}))}). 원금에는 그대로 셉니다.
+          좌수 변경을 다른 날로 옮겼으면 그날 카드에서 옮기고, 잘못 넣은 기록이면 지우세요.</div>
+        <button class="ghost" data-dcdel="${o.d}" style="width:100%;padding:8px;font-size:12.5px">이 기록 지우기</button></div>`);
+    list.innerHTML = cards.concat(lone).join('');
+    dcFetchHints();
+  }
+  renderDcLog();
+}
+function renderDcLog() {
+  const el = $('#dcLog'), sm = $('#dcLogSum'); if (!el) return;
+  const fl = dcFlows().slice().sort((a, b) => a.d < b.d ? 1 : -1);
+  const ev = new Set(dcEvents().map(e => e.d));
+  const base = num(((SEED.basis || {})['DC'] || {}).cost), ins = fl.filter(f => f.kind === 'in');
+  const inSum = ins.reduce((a, f) => a + num(f.amt), 0), div = dcDivWon();
+  if (sm) sm.textContent = `원금 ${fmt(dcCostWon() / 1e4, 0)}만원` + (div ? ` · 배당 ${fmt(div / 1e4, 1)}만원` : '');
+  /* 요약은 줄을 나눠 적는다 — 한 줄(.nm + .sub)로 붙이면 360px 에서 화면이 옆으로 넘쳤다 */
+  el.innerHTML = `<div class="row" style="display:block"><div class="nm">DC 원금 <b>${fmt(dcCostWon() / 1e4, 1)}만원</b></div>
+      <div class="note" style="margin:3px 0 0">손익기준(9/1) ${fmt(base / 1e4, 1)} + 불입 ${ins.length}건 ${fmt(inSum / 1e4, 1)} · 배당 누적 ${fmt(div / 1e4, 1)}만원</div></div>`
+    + (fl.length ? fl.map(f => `<div class="row"><div style="min-width:0"><div class="nm">${esc(DC_KIND[f.kind] || f.kind)}
+        <span class="sub">${esc(mdDot(f.d))} · ${esc(dcQText(f.q || {}))}${ev.has(f.d) ? '' : ' · <b style="color:var(--up)">그날 좌수 변경 없음</b>'}</span></div></div>
+      <div class="vals"><div class="v num ${f.kind === 'div' ? 'up' : 'fl'}">${f.kind === 'fix' ? '—' : '+' + fmt(num(f.amt) / 1e4, 1)}</div></div>
+      <button class="ghost" data-dcdel="${f.d}" style="padding:4px 8px;font-size:11.5px;flex:none">지우기</button></div>`).join('')
+      : `<div class="row"><div class="nm" style="color:var(--muted)">기록 없음</div></div>`);
+}
+function dcSet(d, kind) {
+  const e = dcEvents().find(x => x.d === d); if (!e || !DC_KIND[kind]) return;
+  const inp = document.querySelector(`[data-dcamt="${d}"]`);
+  const amt = Math.round(num((inp || {}).value));
+  if (kind !== 'fix' && !(amt > 0)) { toast('금액을 넣어 주세요'); return; }
+  /* 불입이면 이 날에 붙은 입금안내를 가져간 것으로 적는다 — 다른 날 카드가 같은 안내를 또 채우지 않게 */
+  const h = kind === 'in' ? dcHint(d) : null;
+  state.dcFlows = dcFlows().filter(f => f.d !== d)
+    .concat([Object.assign({ d, kind, amt: kind === 'fix' ? 0 : amt, q: e.q, ts: Date.now() }, h ? { hints: h.keys } : {})])
+    .sort((a, b) => a.d < b.d ? -1 : 1);
+  schedulePush(); saveLocal(); renderAll();
+  toast(kind === 'in' ? `불입 ${fmt(amt, 0)}원 · DC 원금 ${fmt(dcCostWon() / 1e4, 0)}만원`
+    : kind === 'div' ? `배당 ${fmt(amt, 0)}원 · 수익으로 잡힙니다` : '원금은 그대로입니다');
+}
+/* 고아 기록을 새 좌수 변경 날로 옮긴다 — 금액·갈래·가져간 입금안내는 그대로 */
+function dcMove(from, to) {
+  const f = dcFlows().find(x => x.d === from), e = dcEvents().find(x => x.d === to);
+  if (!f || !e || dcFlows().some(x => x.d === to)) return;
+  state.dcFlows = dcFlows().map(x => x === f ? Object.assign({}, x, { d: to, q: e.q, ts: Date.now() }) : x)
+    .sort((a, b) => a.d < b.d ? -1 : 1);
+  schedulePush(); saveLocal(); renderAll();
+  toast(`${mdDot(from)} 기록을 ${mdDot(to)} 로 옮겼습니다 · DC 원금 그대로`);
+}
+function dcDel(d) {
+  const f = dcFlows().find(x => x.d === d); if (!f) return;
+  const hasEv = dcEvents().some(e => e.d === d);
+  /* 그날 좌수 변경이 없으면 다시 묻지 않는다 — 불입을 지우면 그만큼이 수익으로 돌아간다는 것을 말한다(검토) */
+  const msg = hasEv ? '그날 좌수 변경을 다시 묻습니다.'
+    : `그날 좌수 변경이 없어 다시 묻지 않습니다.${f.kind === 'in' ? ' 이 불입은 원금에서 빠져 수익으로 돌아갑니다.' : ''}`;
+  if (!confirm(`${d} ${DC_KIND[f.kind] || f.kind} 기록을 지웁니다. ${msg} 계속할까요?`)) return;
+  state.dcFlows = dcFlows().filter(x => x.d !== d);
+  schedulePush(); saveLocal(); renderAll();
 }
 
 /* ===================== 입력 탭 ===================== */
@@ -6315,7 +6519,7 @@ function cumulative() {
   const stPast = num(state.stPast != null ? state.stPast : (past['주식'] || 0) / 1e4);
   const stock = stPast + (c.stockAcct - num(state.principal));
   const re = reNow - reCost + rePast;
-  const dc = c.dcv - num((B['DC'] || {}).cost) / 1e4;
+  const dc = c.dcv - dcCostWon() / 1e4;                   // 원금 = 손익기준 + 9/1 뒤 불입 (2026-10-06)
   const kid = c.kidV - num((B['자녀 QLD'] || {}).cost) / 1e4;
   return { stock, re, dc, kid, asset: stock + re, totalCol: stock + dc + kid, total: stock + dc + kid + re };
 }
@@ -6662,7 +6866,7 @@ document.addEventListener('focusout', e => {
 
 /* ===================== 렌더 & 이벤트 ===================== */
 function renderAll() {
-  renderSummary(); renderAnalysis(); renderInput(); renderPlan(); renderFlows(); renderIB();
+  renderSummary(); renderAnalysis(); renderInput(); renderPlan(); renderFlows(); renderDcAsk(); renderIB();
   const b = $('#emptyBanner');
   if (b) b.innerHTML = isEmptyLedger()
     ? `<div class="warn"><span>◔</span><div>아직 기록이 없습니다. <b>입력 › 서버 연결</b> 에서 Supabase에 연결하면 지금까지의 기록을 받아옵니다.</div></div>` : '';
@@ -6710,7 +6914,7 @@ function showTab(t) {
   if (t === 'sum') renderSummary();
   if (t === 'plan') renderPlan();
   if (t === 'ib') { renderIB(); ibPlanStatus(); latestVerify(true); }
-  if (t === 'in') { renderReviewList(); renderRecentApplied(); }
+  if (t === 'in') { renderReviewList(); renderRecentApplied(); renderDcAsk(); }
 }
 function goTab(t) { if (UI.tab !== t) showTab(t); }
 $$('nav button').forEach(b => b.addEventListener('click', () => {
@@ -6762,6 +6966,8 @@ $('#holdEdit').addEventListener('change', e => {
      다시 넣지 않게(mtsAssetCommit · divCands). 사람이 메리츠 값을 보고 맞춘 것으로 본다 */
   if (p === 'usd') { state.usdChk = state.usdChk || { d: '', t: 0, log: [] }; state.usdChk.fixT = Date.now(); schedulePush(); }
   markDirty(latestKey()); saveLocal(); renderSummary(); renderAnalysis(); renderPlan();
+  /* DC 좌수를 고쳤으면 그 자리에서 불입인지 배당인지 묻는다 (2026-10-06) */
+  if (p.startsWith('dc.')) renderDcAsk();
   toast(m ? '수정 반영됨 · 이 시각 이전 알림은 검토로 갑니다' : '수정 반영됨');
 });
 $('#fx0').addEventListener('change', e => { state.fx0 = +e.target.value; schedulePush(); saveLocal(); renderAnalysis(); });
@@ -6780,6 +6986,17 @@ $('#flowIn').addEventListener('click', () => flowGo(1));
 $('#flowOut').addEventListener('click', () => flowGo(-1));
 $('#flowList').addEventListener('click', e => {
   const b = e.target.closest('[data-undo]'); if (b) undoFlow(+b.dataset.undo);
+});
+/* DC 좌수 변경 확인 — 불입·배당·정정 버튼과 금액 칸. 손으로 넣은 금액은 다시 그려도 남긴다(touched) */
+$('#dcAskList')?.addEventListener('click', e => {
+  const mv = e.target.closest('[data-dcmove]'); if (mv) { const [f, t] = mv.dataset.dcmove.split('|'); dcMove(f, t); return; }
+  const dl = e.target.closest('[data-dcdel]'); if (dl) { dcDel(dl.dataset.dcdel); return; }
+  const b = e.target.closest('[data-dcset]'); if (!b) return;
+  const [d, kind] = b.dataset.dcset.split('|'); dcSet(d, kind);
+});
+$('#dcAskList')?.addEventListener('input', e => { if (e.target.dataset.dcamt) e.target.dataset.touched = '1'; });
+$('#dcLog')?.addEventListener('click', e => {
+  const b = e.target.closest('[data-dcdel]'); if (b) dcDel(b.dataset.dcdel);
 });
 const sbEl = id => document.getElementById(id);
 if (sbEl('sbSave')) {
@@ -6985,6 +7202,8 @@ async function sbPushMeta(planNow) {
     /* 예수금 이자 기준일·마지막으로 본 읽기(수집기 4.12). 이것이 기기마다 따로 놀면
        **같은 이자를 두 번 넣거나** 한도를 잘못 재게 된다 */
     { k: 'usdChk', v: state.usdChk || {} },
+    /* DC 불입·배당 기록 (2026-10-06) — DC 원금이 여기서 나온다. 기기마다 따로 놀면 기기마다 DC 손익이 다르다 */
+    { k: 'dcFlows', v: state.dcFlows || [] },
     /* 주문표를 만들다 터져도 나머지 동기화까지 막으면 안 된다.
        예전에는 이게 sbPushMeta 안에서 그대로 던져서, 실패하면 그날 원장이
        통째로 안 올라갔다. */
@@ -7487,7 +7706,7 @@ async function fetchReview() {
   if (UI.tab === 'in') renderReviewList();
 }
 function renderReviewBadge() {
-  const n = reviewInbox.length, b = $('#inBadge');
+  const n = reviewInbox.length + dcNeed(), b = $('#inBadge');   // DC 좌수 변경 확인(고아 기록 포함)도 함께 센다
   if (!b) return;
   b.hidden = n === 0;
   b.textContent = n > 9 ? '9+' : String(n);
@@ -7622,6 +7841,7 @@ async function initSupabase() {
       if (meta.undone) state.undone = meta.undone;
       if (meta.fixed) state.fixed = meta.fixed;
       if (meta.usdChk) state.usdChk = meta.usdChk;
+      if (meta.dcFlows) state.dcFlows = meta.dcFlows;
       state.ts = meta.ts; ensureMeta(); ensurePlan(); saveLocal(); renderAll();
       toast('서버에서 최신 기록을 불러왔습니다');
     } else if (!isEmptyLedger()) {
