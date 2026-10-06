@@ -674,7 +674,7 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         <details class="inl bare"><summary>공통 가정</summary><div class="dbody" id="planCommon"></div></details>
         <details class="inl bare"><summary>재고용·정년연장</summary><div class="dbody" id="planCareer"></div></details>
         <details class="inl bare"><summary>시나리오별 수익률</summary><div class="dbody" id="planSc"></div></details>
-        <details class="inl bare"><summary>26년말 출발 자산</summary><div class="dbody" id="planABC"></div></details>
+        <details class="inl bare"><summary id="planABCt">출발 자산</summary><div class="dbody" id="planABC"></div></details>
       </div>
       <div style="height:8px"></div>
     </section>
@@ -741,7 +741,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-06 10:16';
+const BUILD = '2026-10-06 18:51';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1797,6 +1797,12 @@ function ensurePlan() {
     if (num(state.plan.pensionYear) === num(state.plan.retireYear) + 4) state.plan.pensionYear = num(state.plan.retireYear) + 5;
     state.plan.pyFix = 1;
   }
+  /* 부동산 잔금 연도를 못 박는다 (2026-10-02, 사용자: 잔금은 아직 안 치렀고 그 해에 치를 예정).
+     예전 모델은 잔금을 늘 '기준연도 다음 해' 에 치렀다. 기준연도가 장부를 따라 넘어가게 되면서(planBaseYear)
+     그대로 두면 해가 바뀔 때마다 잔금도 한 해씩 밀린다 — 그래서 옛 기준연도(저장된 baseYear) + 1 로 한 번 채운다 */
+  if (!num(state.plan.reYear)) state.plan.reYear = num(state.plan.baseYear || d.baseYear) + 1;
+  /* 이미 직접 넣어 둔 출발 자산은 '26년말' 제목 아래 넣은 값이다 — 그 해에 묶어 둔다(planBaseYear) */
+  if (!state.plan.useLive && !num(state.plan.abcY)) state.plan.abcY = num(state.plan.baseYear || d.baseYear);
   const B = SEED.basis || {}, past = SEED.past || {};
   if (state.reCost == null && B['부동산']) state.reCost = num(B['부동산'].cost);
   if (state.rePast == null && past['부동산'] != null) state.rePast = num(past['부동산']);
@@ -5995,6 +6001,10 @@ const PLAN_BASE = {
      생년과 생일 달이 나온다(birthMonthOf). 실제 값은 서버 plan 에 있고, 로컬 개인 빌드는 build.py 의
      비공개 PLAN 이 덮는다. 아래는 아무의 것도 아닌 자리값이다(되짚으면 6월 — 가운데 값). */
   baseYear: 2026, retireYear: 2045, pensionYear: 2050, crevasseMonths: 54,
+  /* baseYear 는 **장부가 없을 때만** 쓴다 — 기준연도는 장부 최신 날짜의 해다(planBaseYear, 2026-10-02).
+     reYear 는 부동산 잔금 연도. 0 이면 ensurePlan 이 옛 기준연도 + 1 로 한 번 채운다(예전 모델이 늘 그 해에 치렀다).
+     실제 연도는 서버 plan 에만 둔다 — 공개 빌드에 적지 않는다 */
+  reYear: 0,
   /* 재고용·정년연장 (2026-09-30, 사용자 요청). 정년(retireYear) 뒤 연금 개시까지 더 일하는 경우다.
      rehireWage 재고용 연봉(현재가치), peakCut 정년연장 임금피크 감액(연, 현재가치로 매년). */
   rehireWage: 5000, peakCut: 0.10,
@@ -6205,7 +6215,25 @@ const planDefaults = () => {
 const SCN = ['예상', '현재', '목표'];
 const pmt = (r, n, pv) => pv * r / (1 - Math.pow(1 + r, -n));
 
-/* 26년말 출발 자산 — 앱의 실시간 값을 쓰거나 직접 넣은 값을 쓴다.
+/* ── 기준연도 = 장부 최신 날짜의 해 (2026-10-02, 사용자 요청) ──────────────────
+   출발 자산(앱의 현재 값)은 **기준연도 말** 자산으로 본다. 예전에는 기준연도가 2026 으로 박혀 있어
+   해가 바뀌어도 그해 장부 값을 '26년말' 로 읽고 그 위에 그해 1년치(저축·수익·DC 불입)를 또 얹었다 —
+   지난 달만큼이 두 번 들어가 연말로 갈수록 낙관적이었다. 이제 장부를 따라 넘어간다.
+   1월 장부를 그해 말 값으로 보므로 연초에는 그해 저축·수익이 빠진 만큼 보수적이다(올해 10월이 지금 그렇듯).
+   기기 시계가 아니라 **장부 날짜**를 따른다 — 출발 값과 연도가 같은 날에서 나와야 한다.
+   장부가 비어 있으면 plan.baseYear(자리값).
+   **직접 넣은 출발 자산**('앱의 현재 값' 끔)은 넣은 해(plan.abcY)에 묶는다 — 장부를 따라 넘기면 같은 숫자가
+   해마다 한 해 늦은 값으로 읽힌다(2026-10-06 검토). 실시간 값만 장부와 함께 넘어간다. */
+function ledgerYear() {
+  const k = latestKey(), y = k ? +String(k).slice(0, 4) : NaN;
+  return y >= 2000 && y < 2200 ? y : num(state.plan.baseYear);
+}
+function planBaseYear() {
+  const P = state.plan;
+  return !P.useLive && num(P.abcY) ? num(P.abcY) : ledgerYear();
+}
+
+/* 출발 자산(기준연도 말) — 앱의 실시간 값을 쓰거나 직접 넣은 값을 쓴다.
    '예상'은 2012년 이후 주식 투자를 하지 않았다는 가정이므로
    주식 누적수익(과거 실현 + 현재 평가)을 걷어낸 금액에서 출발한다.        */
 function startAssets(scenario) {
@@ -6233,8 +6261,9 @@ function simulate(name, career = '정년유지') {
      개시 연도가 정년보다 앞서면 늘어나는 해가 없고, 연금이 이미 나오므로 공백도 없다. */
   const ext = career === '재고용' || career === '정년연장';
   const endY = ext ? Math.max(P.retireYear, num(P.pensionYear)) : P.retireYear;
-  const nYears = endY - P.baseYear;                          // 기준연도 → 정년 (연장이면 연금 개시 연도)
-  const nAccum = P.retireYear - P.baseYear;                  // 기타지출을 나누는 햇수 — 늘 정년까지
+  const BY = planBaseYear();                                 // 기준연도 — 장부 최신 날짜의 해 (2026-10-02)
+  const nYears = endY - BY;                                  // 기준연도 → 정년 (연장이면 연금 개시 연도)
+  const nAccum = P.retireYear - BY;                          // 기타지출을 나누는 햇수 — 늘 정년까지
 
   /* 기타지출은 **모으는 동안 저축을 깎는** 방식이다 (2026-09-10, 사용자 요청).
 
@@ -6243,11 +6272,20 @@ function simulate(name, career = '정년유지') {
      사용자 말대로 "기타지출 1.8억 = 18년간 연 저축액 0.1억 차감" 으로 본다 —
      안 모은 돈은 불어나지도 않는다.
 
-     나누는 햇수는 모으는 기간(기준연도 → **정년**)이다. 저축보다 크면 저축이
-     0 이 될 뿐 음수로 가지 않는다. 연장 근무를 해도 햇수를 늘리지 않는다 — 세 근로 시나리오가
-     정년 앞까지 똑같이 가야 연장의 효과만 견줄 수 있다(사용자 선택: 연장 기간 저축은 입력값 그대로). */
+     나누는 햇수는 모으는 기간(기준연도 → **정년**)이다. 연장 근무를 해도 햇수를 늘리지 않는다 — 세 근로 시나리오가
+     정년 앞까지 똑같이 가야 연장의 효과만 견줄 수 있다(사용자 선택: 연장 기간 저축은 입력값 그대로).
+
+     ── 총액은 늘 다 뗀다 (2026-10-06) ──
+     예전에는 저축보다 크면 저축이 0 이 될 뿐이라 **넘친 몫이 아무 데서도 안 빠졌다.** 기준연도가 2026 에
+     박혀 있을 땐 저축 0 같은 설정에서만 났는데, 기준연도가 장부를 따라 넘어가면서 정년이 가까워질수록
+     햇수가 줄어 누구에게나 난다(기타지출 ÷ 남은 햇수 > 연 저축이 되는 해부터). 이제 넘친 몫(miscOver)은
+     그해 **금융에서** 뺀다 — 저축은 0 아래로 안 내린다(대출 상환이 '저축이 닿는 만큼' 이라 음수면 빚이 는다).
+     모을 해가 하나도 안 남았으면(기준연도 ≥ 정년 — 연장 근무 중) 총액을 **출발 금융에서** 뗀다. */
   const miscYr = nAccum > 0 ? num(P.misc) / nAccum : 0;
   const save = Math.max(0, P.save - miscYr);
+  const miscOver = Math.max(0, miscYr - num(P.save));          // 저축으로 못 막는 몫 — 금융에서
+  const overAt = y => y <= P.retireYear ? miscOver : 0;
+  const miscStart = nAccum > 0 ? 0 : num(P.misc);              // 모을 해가 없으면 출발 시점에 한꺼번에
 
   /* 해마다의 저축·DC 불입. 정년까지는 예전 그대로이고 연장 해만 근로 시나리오를 따른다.
      half   연금 개시 연도(만 65세, 생일 달까지 근무)는 1년치의 50% (사용자 지정)
@@ -6309,13 +6347,13 @@ function simulate(name, career = '정년유지') {
   /* 기타지출 때문에 **덜 쌓인 금액**을 해마다 같이 굴린다. 은퇴 시점에 그만큼이
      비어 있고, 표에는 그 값을 적는다. 닫힌 식(연금 미래가치)을 쓰지 않는 것은
      대출 상환·부동산 잔금 때문에 저축이 그대로 안 들어가는 해가 있어서다. */
-  let miscAcc = 0;
+  let miscAcc = miscStart;                                   // 출발 시점에 뗀 몫도 은퇴까지 같이 굴린다
   const miscTick = (y, k = 1 + fr) => { miscAcc = miscAcc * k + (y <= P.retireYear ? miscYr : 0); };
 
-  /* ── 27년 잔금 = 은퇴후 부동산가 − 장부의 부동산 순자산 (2026-09-13, 사용자 결정) ──
+  /* ── 잔금 = 은퇴후 부동산가 − 장부의 부동산 순자산 (2026-09-13, 사용자 결정) ──
      엑셀 원래 규칙 그대로다: "11.5억 − 26년 부동산 − 27년 금융자산 = 대출금".
      순자산(reT = 시세 + 대출(음수))에는 지금 대출이 이미 빠져 있으므로, 지금 대출도
-     같은 규칙으로 **27년 금융자산부터 쓰고 모자라는 만큼만** 대출로 남는다.
+     같은 규칙으로 **잔금 연도의 금융자산부터 쓰고 모자라는 만큼만** 대출로 남는다.
 
      예전에는 '26년말 부동산가' 를 따로 받았다. 그 값이 순자산보다 크면 차이를
      '기존 대출' 로 잡아 27년 금융자산으로 갚지 않았다(2026-09-04). 그러면 넣은 값에
@@ -6326,42 +6364,57 @@ function simulate(name, career = '정년유지') {
      칸이 아예 없다. 은퇴후 부동산가가 순자산보다 낮으면(줄여 가면) 남는 돈이 금융으로 온다. */
   const reNet0 = calc(latest()).reT;
 
-  const B = [0], C = [0], D = [save], E = [S.a], F = [S.c], G = [S.b];
-  const rows = [{ y: P.baseYear, B: 0, C: 0, D: save, E: S.a, F: S.c, G: S.b }];
-
-  // 27년: 부동산 잔금 — 금융자산부터 쓰고 모자라면 대출
   const gap = P.targetRE - reNet0;
-  const pool = E[0] * (1 + fr) + saveAt(P.baseYear + 1);
-  B.push(Math.max(0, gap - pool));
-  C.push(0); D.push(0);
-  kidGrow(); miscTick(P.baseYear + 1);
-  E.push(Math.max(0, pool - gap) - giveAt(P.baseYear + 1));
-  F.push(F[0] * (1 + dr) + dcAt(P.baseYear + 1));
-  G.push(kidSum());
-  rows.push({ y: P.baseYear + 1, B: B[1], C: C[1], D: D[1], E: E[1], F: F[1], G: G[1] });
-
-  const loan0 = B[1];                                        // 원리금균등 기준 원금
+  /* ── 잔금 연도 (2026-10-02, 사용자: 잔금은 아직 안 치렀고 그해에 치를 예정) ──
+     예전엔 늘 기준연도 다음 해였다. 기준연도가 장부를 따라 넘어가면서 잔금 연도는 plan.reYear 로 못 박았다
+     (ensurePlan 이 옛 기준연도 + 1 로 채운다). jI = 잔금 연도 − 기준연도:
+       jI ≥ 1  그해에 치른다 — 그 전 해는 대출 없이 그냥 쌓인다. 1 이면 예전과 한 비트도 다르지 않다
+       jI = 0  잔금이 기준연도 안이다(또는 이미 지났다) — **출발 자산에서 바로 치른다.**
+               출발 자산이 곧 기준연도 말 값이라 잔금 뒤의 상태가 출발점이다.
+               그해 저축·수익을 따로 얹지 않는 것은 '오늘 값 = 그해 말 값' 이라는 같은 가정이다
+     잔금을 치른 뒤 장부에 새 집·대출이 들어오면 순자산(reNet0)이 따라 바뀌어 남은 잔금이 줄어든다.
+     은퇴 연도 앞(nYears − 1)까지만 둔다 — 은퇴 연도 계산은 남은 대출을 갚기만 한다. */
+  const jI = Math.max(0, Math.min(nYears - 1, (Math.round(num(P.reYear)) || BY + 1) - BY));
   /* 목표는 30년 원리금균등. 은행 원리금균등은 **명목 상환액이 고정**이다 — 은행 금리로
-     PMT 를 내고, 해마다 물가만큼 줄어든 실질 값으로 갚는다(2028년이 첫 상환).
+     PMT 를 내고, 해마다 물가만큼 줄어든 실질 값으로 갚는다(잔금 다음 해가 첫 상환).
      처음에는 실질 금리로 PMT 를 냈는데 그러면 상환액이 **실질로 일정**한, 은행에 없는 대출이
      된다. 초반 상환이 작아 그 돈이 금융에 남아 목표를 월 4.4만 부풀렸다(2026-09-13 리뷰).
      은행 금리가 0 이면 PMT 식이 0/0 이라 그냥 나눈다. 잔액을 넘게 갚지는 않는다. */
-  const payNom = Math.abs(num(P.loanRate)) > 1e-9 ? pmt(num(P.loanRate), 30, loan0) : loan0 / 30;
+  const payOf = loan0 => Math.abs(num(P.loanRate)) > 1e-9 ? pmt(num(P.loanRate), 30, loan0) : loan0 / 30;
+  let payNom = 0;
+
+  const a0 = miscStart ? S.a - miscStart : S.a;               // 모을 해가 없으면 기타지출을 출발 금융에서
+  const B = [0], C = [0], D = [save], E = [a0], F = [S.c], G = [S.b];
+  if (jI === 0) { B[0] = Math.max(0, gap - a0); E[0] = Math.max(0, a0 - gap); payNom = payOf(B[0]); }
+  const rows = [{ y: BY, B: B[0], C: 0, D: save, E: E[0], F: S.c, G: S.b }];
+
   /* 연장 해에도 같은 규칙으로 굴린다 — 대출은 그해 저축이 닿는 만큼 갚는다(재고용은 저축 0 이라
      못 갚고 불어난다), 목표는 원리금균등을 계속 낸다. 남은 대출은 은퇴 연도에 한꺼번에 갚는다. */
-  for (let i = 2; i < nYears; i++) {
-    const y = P.baseYear + i, sv = saveAt(y);
-    const pb = B[i - 1];
-    let c = 0;
-    if (pb > 0) c = (name === '목표')
-      ? Math.min(pb * (1 + lr), payNom / Math.pow(1 + P.infl, i - 1))
-      : Math.min(pb * (1 + lr), sv);
-    B.push(Math.max(0, pb * (1 + lr) - c));
-    C.push(c); D.push(sv - c);
-    kidGrow(); miscTick(y);
-    E.push(grow(E[i - 1]) + (sv - c) - giveAt(y));
-    F.push(F[i - 1] * (1 + dr) + dcAt(y));
-    G.push(kidSum());
+  for (let i = 1; i < nYears; i++) {
+    const y = BY + i, sv = saveAt(y);
+    if (i === jI) {
+      // 잔금 해 — 금융자산부터 쓰고 모자라면 대출
+      const pool = E[i - 1] * (1 + fr) + sv - overAt(y);
+      B.push(Math.max(0, gap - pool));
+      C.push(0); D.push(0);
+      kidGrow(); miscTick(y);
+      E.push(Math.max(0, pool - gap) - giveAt(y));
+      F.push(F[i - 1] * (1 + dr) + dcAt(y));
+      G.push(kidSum());
+      payNom = payOf(B[i]);                                  // 원리금균등 기준 원금
+    } else {
+      const pb = B[i - 1];
+      let c = 0;
+      if (pb > 0) c = (name === '목표')
+        ? Math.min(pb * (1 + lr), payNom / Math.pow(1 + P.infl, i - jI))
+        : Math.min(pb * (1 + lr), sv);
+      B.push(Math.max(0, pb * (1 + lr) - c));
+      C.push(c); D.push(sv - c);
+      kidGrow(); miscTick(y);
+      E.push(grow(E[i - 1]) + (sv - c) - giveAt(y) - overAt(y));
+      F.push(F[i - 1] * (1 + dr) + dcAt(y));
+      G.push(kidSum());
+    }
     rows.push({ y, B: B[i], C: C[i], D: D[i], E: E[i], F: F[i], G: G[i] });
   }
   // 은퇴 연도: 잔여 대출 일시 상환 + 자녀 목표액 정산
@@ -6371,7 +6424,7 @@ function simulate(name, career = '정년유지') {
   const giveLast = giveAt(endY);
   const g = kidSum();                                        // 아직 스무 살이 안 된 자녀 몫
   const f = F[i - 1] * gf(dr) + dcAt(endY);
-  const e = (E[i - 1] >= 0 ? E[i - 1] * gf(fr) : E[i - 1] * gf(lr)) + saveAt(endY) - loanLeft - giveLast;
+  const e = (E[i - 1] >= 0 ? E[i - 1] * gf(fr) : E[i - 1] * gf(lr)) + saveAt(endY) - loanLeft - giveLast - overAt(endY);
   rows.push({ y: endY, B: 0, C: 0, D: saveAt(endY), E: e, F: f, G: g });
 
   /* ── 은퇴 뒤에 나갈 증여 (2026-10-02, 사용자 선택: 할인해서 미리 뗀다) ──────────
@@ -6504,8 +6557,9 @@ function simulate(name, career = '정년유지') {
     drawUse: use.draw, cashMUse: use.cashM, drawMUse: use.cashM - penH,
     /* 견줄 기준선. 국민연금연구원 국민노후보장패널 10차(2024) 부부 기준
        적정 298.1 / 최소 216.6 만원을 기준연도 현재가치로 올린 값이다. */
-    needOk: NEED_COUPLE.ok * Math.pow(1 + P.infl, P.baseYear - NEED_COUPLE.y),
-    needMin: NEED_COUPLE.min * Math.pow(1 + P.infl, P.baseYear - NEED_COUPLE.y)
+    needOk: NEED_COUPLE.ok * Math.pow(1 + P.infl, BY - NEED_COUPLE.y),
+    needMin: NEED_COUPLE.min * Math.pow(1 + P.infl, BY - NEED_COUPLE.y),
+    baseY: BY, reY: BY + jI                                  // 기준연도 · 실제로 잔금을 치른 해(출발 시점이면 기준연도) — 대조용
   };
 }
 
@@ -6589,9 +6643,12 @@ function renderPlan() {
      simulate 를 SCN.map 에 그대로 넘기면 둘째 인자로 배열 번호가 들어가므로 감싸서 부른다. */
   const career = CAREERS.includes(UI.career) ? UI.career : '정년유지';
   const sims = SCN.map(n => simulate(n, career));
-  $('#retTitle').textContent = career === '정년유지'
-    ? `${sims[0].endY}년말 은퇴 요약` : `${sims[0].endY}년 은퇴 요약 · ${career}`;
-  const eok1 = v => (v / 10000).toFixed(1);
+  /* 장부가 은퇴 연도에 이르면(기준연도가 장부를 따라 넘어가므로 언젠가 온다) 더 굴릴 해가 없다 — 표는 '—' 이고
+     제목이 까닭을 말한다(2026-10-06). 은퇴 뒤 시점의 요약은 따로 정할 일이다 */
+  const atEnd = sims[0].baseY >= sims[0].endY;
+  $('#retTitle').textContent = (career === '정년유지'
+    ? `${sims[0].endY}년말 은퇴 요약` : `${sims[0].endY}년 은퇴 요약 · ${career}`) + (atEnd ? ' · 장부가 은퇴 연도에 이르러 계산 안 함' : '');
+  const eok1 = v => isFinite(v) ? (v / 10000).toFixed(1) : '—';     // 계산이 깨진 값은 'NaN억' 대신 '—' (fmt 와 같게)
   /* 월 흐름 네 줄은 **반올림한 값끼리 더해 맞아떨어지게** 한다 (2026-09-30, 사용자 요청:
      세전 월 인출액 + 국민연금 − 세금·건보료 = 월 현금흐름). 셋을 따로 반올림하면 1만원이 어긋날 수
      있어 그 단수를 세금·건보료 줄이 받는다 — 그 줄만 제 값을 반올림한 것과 1만원까지 다를 수 있다
@@ -6657,7 +6714,8 @@ function renderPlan() {
   const pct = v => (v * 100).toFixed(1);
   /* 기타지출이 실제로 연 얼마를 깎는지 화면이 직접 말하게 한다 — 사용자가 머릿속으로
      잡은 햇수(18년)와 모으는 기간(16년)이 다를 수 있어서다. */
-  const nAcc = Math.max(1, P.retireYear - P.baseYear);
+  const BY = planBaseYear(), reY = num(P.reYear) || BY + 1;  // 기준연도(장부를 따라 넘어간다) · 잔금 연도(simulate 와 같은 대비)
+  const nAcc = Math.max(1, P.retireYear - BY);
   const miscYrNow = num(P.misc) / nAcc;
   /* 라벨 안에 <span class="u"> 를 또 넣으면 바깥 span 과 겹쳐 보이므로 u2 로 쓴다 */
   $('#planCommon').innerHTML = [
@@ -6691,17 +6749,23 @@ function renderPlan() {
        함께 고쳐 주세요.
        <br><b>부동산 잔금</b>은 은퇴후 부동산가 − 장부의 <b>부동산 순자산</b>(대출 뺀 값,
        지금 ${HIDE ? MASK : fmt(calc(latest()).reT, 0)}만원) = <b>${HIDE ? MASK : fmt(num(P.targetRE) - calc(latest()).reT, 0)}만원</b>이고,
-       ${P.baseYear + 1}년에 <b>금융자산부터 쓰고 모자라는 만큼만 대출</b>합니다. 지금 대출도 이 안에
-       들어 있습니다. 장부의 부동산 시세나 대출을 고치면 잔금도 따라 움직입니다.
+       ${reY > BY
+         ? `${reY}년에 <b>금융자산부터 쓰고 모자라는 만큼만 대출</b>합니다.`
+         : `잔금(${reY}년)이 출발 시점(${BY}년말)보다 앞이라 <b>출발 금융자산부터 써서 치른 것으로</b> 보고 모자라는 만큼만 대출합니다.`}
+       지금 대출도 이 안에 들어 있습니다. 장부의 부동산 시세나 대출을 고치면 잔금도 따라 움직입니다${reY > BY ? ''
+         : ' — 잔금을 치르고 장부에 새 집·대출이 들어오면 남은 잔금이 그만큼 줄어듭니다'}.
        <br><b>대출 금리</b>는 은행 금리(명목)를 넣습니다. 계산에서는 수익률처럼 물가를 빼
        <b>실질 ${pct(num(P.loanRate) - P.infl)}%</b>로 불립니다 — 대출은 금액이 고정된 돈이라
        물가가 오르는 만큼 실제 부담이 줄기 때문입니다. 금융이 마이너스인 해에도 이 금리입니다.
        <br><b>기타지출</b>은 차량·가전처럼 목돈으로 나갈 것을 미리 적어 두는 칸입니다.
        <b>모으는 동안 연 저축액을 그만큼 깎는</b> 방식입니다 — 안 모은 돈은 불어나지도
        않으므로, 은퇴 시점에 총액만 빼는 것보다 정직합니다.
-       지금 값은 <b>${fmt(num(P.misc), 0)}만원 ÷ ${fmt(nAcc, 0)}년 = 연 ${fmt(miscYrNow, 0)}만원</b>
-       이고, 연 저축액이 ${fmt(num(P.save), 0)} → <b>${fmt(Math.max(0, num(P.save) - miscYrNow), 0)}만원</b>이 됩니다.
-       (모으는 햇수는 기준연도 ${P.baseYear} → 은퇴연도 ${P.retireYear} 입니다)
+       ${P.retireYear > BY
+         ? `지금 값은 <b>${fmt(num(P.misc), 0)}만원 ÷ ${fmt(nAcc, 0)}년 = 연 ${fmt(miscYrNow, 0)}만원</b>
+       이고, 연 저축액이 ${fmt(num(P.save), 0)} → <b>${fmt(Math.max(0, num(P.save) - miscYrNow), 0)}만원</b>이 됩니다${miscYrNow > num(P.save)
+         ? ` — 저축으로 못 막는 연 ${fmt(miscYrNow - num(P.save), 0)}만원은 그해 금융에서 뺍니다` : ''}.
+       (모으는 햇수는 기준연도 ${BY} → 은퇴연도 ${P.retireYear} 입니다)`
+         : `정년(${P.retireYear})이 지나 모을 해가 없어 <b>${fmt(num(P.misc), 0)}만원을 출발 금융에서</b> 뗍니다.`}
        <br><b>자녀증여</b>는 <b>인당</b> 금액이고 <b>스무 살·서른 살</b>에 두 번 나갑니다
        (${(P.kidY || []).map(y => `${num(y)}·${num(y) + KID_AGE30}`).join(' / ')}).
        스무 살 때는 그 자녀 계좌의 돈(원금 + 그때까지의 수익)을 먼저 쓰고 <b>모자라는 만큼만 보태</b>
@@ -6770,7 +6834,15 @@ function renderPlan() {
     /* 금융자산 = 주식 계좌 전부(무매·VR·레버리지 + 예수금, calc 의 stockAcct). 폰(360px)에서 한 줄에 들게 줄였다 (2026-10-02) */
     + [['a', '금융자산 <span class="u2">주식·예수금</span>'], ['b', '자녀자산'], ['c', 'DC']].map(([k, l]) =>
       `<div class="erow"><label>${l} <span class="u">만원</span></label>
-       <input class="num" type="number" step="100" data-abc="${k}" value="${Math.round(S[k])}" ${P.useLive ? 'disabled style="opacity:.5"' : ''}></div>`).join('');
+       <input class="num" type="number" step="100" data-abc="${k}" value="${Math.round(S[k])}" ${P.useLive ? 'disabled style="opacity:.5"' : ''}></div>`).join('')
+    /* 기준연도가 장부를 따라 넘어간다는 것을 이 칸이 말한다 (2026-10-02, planBaseYear) */
+    + (P.useLive
+      ? `<p class="note" style="padding:4px 15px 0">출발 자산은 <b>${BY}년말</b> 자산으로 봅니다. 기준연도는
+       <b>장부 최신 날짜</b>${latestKey() ? `(${latestKey()})` : ''}의 해라 <b>해가 바뀌면 따라 넘어갑니다</b>.
+       그날 값을 그해 말 값으로 보므로 연초에는 그해 저축·수익이 빠진 만큼 보수적이고, 연말로 갈수록 맞아 갑니다.</p>`
+      : `<p class="note" style="padding:4px 15px 0">직접 넣은 값은 <b>넣은 해(${BY}년)의 말</b> 자산으로 봅니다 —
+       해가 바뀌어도 그 해에 머뭅니다${BY < ledgerYear() ? ` (장부는 ${ledgerYear()}년 — 새 값을 넣으면 그 해로 옮겨 갑니다)` : ''}.</p>`);
+  $('#planABCt').textContent = `${String(BY).slice(-2)}년말 출발 자산`;
 
   /* ── 연도별 자산 그래프 ── */
   if (!SEED.years.length && isEmptyLedger()) {
@@ -6804,7 +6876,7 @@ function renderPlan() {
     const y = +k.slice(0, 4), c = calc(state.days[k]);
     yrPast[y] = { tot: c.total, stock: c.stockAcct };
   });
-  const pastYs = Object.keys(yrPast).map(Number).sort((a, b) => a - b).filter(y => y <= P.baseYear);
+  const pastYs = Object.keys(yrPast).map(Number).sort((a, b) => a - b).filter(y => y <= BY);
   const expo = {};                                             // 주식 잔액 누적합
   let run = 0;
   pastYs.forEach(y => { run += Math.max(0, yrPast[y].stock); expo[y] = run; });
@@ -6812,8 +6884,9 @@ function renderPlan() {
   const gainAt = y => run > 0 ? cumStock * (expo[y] / run) : 0;
 
   // sims 는 위 은퇴 요약표에서 이미 만들어 둔 것을 그대로 쓴다 (SCN 순서 그대로)
-  /* 부동산은 simulate() 와 **같은 값**을 쓴다 — 그리는 점은 기준연도 다음 해부터라
-     (아래 filter) 늘 은퇴후 부동산가다.
+  /* 부동산은 simulate() 와 **같은 값**을 쓴다 — 잔금 해부터는 은퇴후 부동산가, 그 전 해는 장부의 부동산 순자산이다.
+     잔금이 기준연도 다음 해(또는 출발 시점)면 그리는 점은 전부 은퇴후 부동산가다(아래 filter).
+     잔금이 두 해 넘게 뒤면 그 사이는 잔금 돈이 아직 금융에 있으므로 은퇴후 부동산가로 그리면 두 번 센다(2026-10-06).
      예전에는 은퇴후 부동산가가 비면(0) 지금 부동산으로 대신 그렸다. 27년부터 부동산이
      통째로 빠지는 절벽을 막으려던 것인데, 2026-09-13 부터 simulate() 가 잔금을
      `은퇴후 부동산가 − 장부 순자산` 으로 내므로 0 이면 집값이 **금융으로 넘어간다.**
@@ -6824,15 +6897,16 @@ function renderPlan() {
      빼므로, 여기서는 G 를 그대로 더하면 된다 — 증여한 해에 딱 그만큼 내려간다.
      예전에는 은퇴 연도만 kidTarget 으로 갈아끼우는 예외가 있었다. 증여가 은퇴 시점
      한 번이 아니게 되면서 그 예외가 필요 없어졌다. */
-  const totalOf = r => reTarget + r.E + r.F + r.G - r.B;       // 대출은 부채라 뺀다
+  const reNow = calc(latest()).reT;
+  const totalOf = (r, s) => (r.y < s.reY ? reNow : reTarget) + r.E + r.F + r.G - r.B;   // 대출은 부채라 뺀다
 
   const series = SCN.map((n, i) => {
     const pts = pastYs.map(y => ({
       t: new Date(y, 11, 31), label: y + '', est: false,
       v: yrPast[y].tot - (n === '예상' ? gainAt(y) : 0)
     }));
-    const rows = sims[i].rows.filter(r => r.y > P.baseYear);
-    rows.forEach(r => pts.push({ t: new Date(r.y, 11, 31), label: r.y + '', est: true, v: totalOf(r) }));
+    const rows = sims[i].rows.filter(r => r.y > BY);
+    rows.forEach(r => { const v = totalOf(r, sims[i]); if (isFinite(v)) pts.push({ t: new Date(r.y, 11, 31), label: r.y + '', est: true, v }); });
     return { name: n, color: ['--c3', '--c1', '--c4'][i], pts, dash: i === 0 ? '2 2' : i === 2 ? '7 3' : null };
   });
   drawChart($('#ch-plan'), $('#tip-plan'), series, { scale: 'y', mask: HIDE });
@@ -7030,9 +7104,9 @@ document.getElementById('p-plan').addEventListener('change', e => {
     const v = (k === 'infl' || k === 'loanRate' || k === 'peakCut') ? +t.value / 100 : +t.value;
     /* 칸을 비우고 나가면 +'' = 0 이 저장돼 '만 2,107세' 같은 값이 그럴듯하게 떴다(2026-10-01 리뷰).
        연도·감액률·연봉·증여액은 말이 되는 범위만 받고, 아니면 도로 그려 원래 값으로 돌린다 */
-    const by = num(P.baseYear);
+    const by = planBaseYear();
     const OK = {
-      retireYear: x => Number.isInteger(x) && x >= by + 2 && x <= by + 60,
+      retireYear: x => Number.isInteger(x) && x >= by + 1 && x <= by + 60,   // 기준연도가 넘어가도 지금 정년을 다시 넣을 수 있게 (+2 → +1, 2026-10-06)
       pensionYear: x => Number.isInteger(x) && x > by && x <= by + 80,
       peakCut: x => x >= 0 && x < 1,
       rehireWage: x => x >= 0,
@@ -7052,10 +7126,10 @@ document.getElementById('p-plan').addEventListener('change', e => {
     P.sc[n][k] = +t.value / 100;      // 시나리오 칸에는 이제 수익률만 있다
     planSave(); return;
   }
-  if (t.dataset.abc) { P[t.dataset.abc] = +t.value; planSave(); return; }
+  if (t.dataset.abc) { P[t.dataset.abc] = +t.value; P.abcY = ledgerYear(); planSave(); return; }   // 넣은 해에 묶는다 (planBaseYear)
   if (t.id === 'useLive') {
     P.useLive = t.checked;
-    if (!P.useLive) { const S = startAssets(); P.a = Math.round(S.a); P.b = Math.round(S.b); P.c = Math.round(S.c); }
+    if (!P.useLive) { const S = startAssets(); P.a = Math.round(S.a); P.b = Math.round(S.b); P.c = Math.round(S.c); P.abcY = ledgerYear(); }
     planSave(); return;
   }
 });
