@@ -275,6 +275,14 @@ button.act:hover{filter:brightness(1.07)}
 button.act:disabled{opacity:.45;cursor:default;filter:none}
 button.ghost{font:inherit;font-size:12.5px;font-weight:500;border-radius:8px;padding:8px 12px;cursor:pointer;border:1px solid var(--line2);background:var(--surf);color:var(--ink2)}
 button.ghost:hover{background:var(--surf2)}
+/* 검증 버튼 아래 한 줄 — 마지막 검증 시각과 판정. 누르면 그 검증의 자세한 내역 (2026-10-07) */
+.vfyCol{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:2px}
+.vfyS{font:inherit;font-size:11px;line-height:1.3;background:none;border:0;padding:4px 1px;margin:0;color:var(--muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;text-align:center;border-radius:6px;font-variant-numeric:tabular-nums}
+.vfyS:hover{background:var(--surf2)}
+.vfyS:disabled{cursor:default;background:none}
+.vfyS .ok{color:var(--c2);font-weight:600}
+.vfyS .bad{color:var(--up);font-weight:600}
 select{font:inherit;color:var(--ink);background:var(--surf2);border:1px solid var(--line2);border-radius:9px;padding:8px 10px}
 textarea,input{font:inherit;color:var(--ink);background:var(--surf2);border:1px solid var(--line2);border-radius:9px;padding:9px 10px;width:100%}
 textarea{min-height:110px;resize:vertical;font-size:12.5px;line-height:1.5}
@@ -434,10 +442,14 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
       <!-- 셋 다 같은 폭 한 줄. 글자를 줄여 두 줄짜리 버튼을 없앴다.
            '주문표 띄우기' 는 2026-10-06 에 뺐다(사용자 요청) — 주문표는 동기화마다 서버에 올라가고, 폰에서는
            빠른설정 '무매 주문표' 타일·홈 화면 아이콘으로 띄운다. 그 자리에 DC 검증(미래에셋 국내주식 잔고 대조) -->
+      <!-- 버튼마다 바로 아래 한 줄 — 마지막 검증 시각과 판정. 누르면 그 검증의 자세한 내역 (2026-10-07, 사용자 요청) -->
       <div style="display:flex;gap:7px;margin-top:10px">
-        <button class="ghost" id="vfyIB" style="flex:1 1 0;min-width:0;padding:10px 2px;font-size:12.5px">무매 검증</button>
-        <button class="ghost" id="vfyVR" style="flex:1 1 0;min-width:0;padding:10px 2px;font-size:12.5px">VR 검증</button>
-        <button class="ghost" id="vfyDC" style="flex:1 1 0;min-width:0;padding:10px 2px;font-size:12.5px">DC 검증</button>
+        <div class="vfyCol"><button class="ghost" id="vfyIB" style="width:100%;padding:10px 2px;font-size:12.5px">무매 검증</button>
+          <button class="vfyS" data-vs="ib" disabled>—</button></div>
+        <div class="vfyCol"><button class="ghost" id="vfyVR" style="width:100%;padding:10px 2px;font-size:12.5px">VR 검증</button>
+          <button class="vfyS" data-vs="vr" disabled>—</button></div>
+        <div class="vfyCol"><button class="ghost" id="vfyDC" style="width:100%;padding:10px 2px;font-size:12.5px">DC 검증</button>
+          <button class="vfyS" data-vs="dc" disabled>—</button></div>
       </div>
       <div id="vfyOut"></div>
       </div>
@@ -739,7 +751,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-07 14:48';
+const BUILD = '2026-10-07 19:27';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -3548,6 +3560,7 @@ function ibPick(k) {
 }
 
 function renderIB() {
+  renderVfyStat();                                   // 검증 버튼 아래 줄 (2026-10-07)
   const body = $('#ibBody'); if (!body) return;
   /* **끝난 판을 먼저 적는다.** 새 사이클을 시작하면 replay 의 시작일이 오늘로 옮겨져
      지난 판이 통째로 사라진다 — 그때 적어 두지 않으면 영영 없다.
@@ -4434,6 +4447,7 @@ async function latestVerify(quiet) {
   if (box.innerHTML.trim() || stale()) return;
   const what = best.what === 'vr' ? 'vr' : 'ib', txt = String(best.text || '');
   if (!quiet) { goTab('ib'); ibPick('all'); }
+  if (txt.startsWith('ERR')) recordVfy(what, num(best.t), -1, txt.replace(/^ERR\s*/, '').split(/\r?\n/)[0]);
   box.innerHTML = txt.startsWith('ERR')
     ? `<div class="warn" style="margin-top:9px"><span>◔</span><div>
         <b>${what === 'vr' ? 'VR' : '무매'} 앱을 읽지 못했습니다.</b><br>${esc(txt.replace(/^ERR\s*/, ''))}</div></div>`
@@ -4497,11 +4511,12 @@ async function pollVerify(what, t0, resumed) {
       vfyBusy = false; vfySet(null);
       const txt = String(v.text || '');
       if (txt.startsWith('ERR')) {
+        recordVfy(what === 'vr' ? 'vr' : 'ib', num(v.t), -1, txt.replace(/^ERR\s*/, '').split(/\r?\n/)[0]);
         box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div>
           <b>${lbl} 앱을 읽지 못했습니다.</b><br>${esc(txt.replace(/^ERR\s*/, ''))}</div></div>`;
         return;
       }
-      box.innerHTML = verifyReport(what, txt);
+      box.innerHTML = verifyReport(what, txt, num(v.t));
       /* 수집기 4.12 — 무매 검증 뒤에는 **메리츠 자산 대조**가 이어진다(사용자 요청).
          무매 결과를 먼저 그려 두고 그것만 따로 기다린다. 폰은 지문을 기다리느라 1~2분이 걸릴 수 있다. */
       if (what !== 'vr') await pollAsset(t0, box, gen);
@@ -4655,6 +4670,165 @@ async function vrAutoFlow(t0) {
 /* 마지막으로 그린 검증의 판정 — { what, bad, seen } */
 let vfyLast = null;
 
+/* ===================== 검증 줄 (2026-10-07, 사용자 요청) =====================
+   사용자: "각 검증버튼 바로 아래에 한 줄로 해당버튼 검증시각 및 양호여부 표시. 누르면 검증 시 나왔던 세부내역 볼 수 있도록 할 것."
+
+   판정은 **처음 견준 때** 적어 둔다(`state.vfyStat` · `meta.vfyStat` 로 기기 동기화). 다음 날 같은 읽기를 오늘 원장과 다시
+   견주면 주문표가 바뀌어 엉뚱한 '불일치' 가 나오기 때문이다. **같은 날** 다시 견준 것은 덮는다 — DC 를 반영해 맞추면 '양호' 로 바뀐다.
+   자리: ib = 무매(fire gate) · ia = 메리츠 자산 대조(무매 검증·18:30 자동진행이 읽는다 — 무매 줄에 합쳐 보인다) · vr = VR · dc = DC.
+   n: 0 양호 · 양수 = 확인할 것 · −1 = 읽지 못함 · null = 판정 없음(그날 견주지 못한 지난 읽기) */
+const sameDay = (a, b) => iso(new Date(num(a))) === iso(new Date(num(b)));
+/* 판정은 **처음 한 번만** 적는다(검토). 같은 읽기를 나중에 다시 견주면(탭 다시 열기 · 줄 누르기 · 밤에 체결이 들어온 뒤)
+   원장·시세가 바뀐 만큼 엉뚱한 ⚠ 가 나와 멀쩡했던 검증을 덮었다. 덮는 것은 **사람이 맞춘 직후**(DC 반영 · 계좌 다시 맞춤 — force) 뿐이다.
+   지난 날 읽기는 판정하지 않는다(n = null) — 오늘 원장과 견주는 것이라 그때의 판정이 아니다.
+   u = 적은 시각 — 같은 읽기를 두 기기가 적었으면 나중 것(맞춘 쪽)이 이긴다 */
+function recordVfy(k, t, n, why, force) {
+  if (!(num(t) > 0)) return;
+  const st = state.vfyStat || (state.vfyStat = {});
+  const o = st[k];
+  if (o && num(o.t) > num(t)) return;                                       // 더 새 읽기의 판정이 있다
+  if (o && num(o.t) === num(t) && !force) return;                           // 이미 적었다
+  const old = !sameDay(t, Date.now()) && !force;
+  const v = { t: num(t), n: old || n == null ? null : n, why: old ? '' : String(why || '').replace(/<[^>]*>/g, '').slice(0, 200), u: Date.now() };
+  if (o && o.t === v.t && o.n === v.n && o.why === v.why) return;
+  st[k] = v; saveVfyLocal(); pushVfyStat(); renderVfyStat();
+}
+const vfyNewer = (a, b) => !b || num(a.t) > num(b.t) || (num(a.t) === num(b.t) && num(a.u) > num(b.u));
+/* 판정은 원장 시각(state.ts)을 **올리지 않는다**(검토). saveLocal 은 ts 를 올리는데, 부팅 중 서버 원장을 받기 전에 ts 가 오르면
+   이 기기의 옛 원장이 서버의 새 원장을 덮어 올라갔다. 판정 기록은 원장이 아니다 */
+function saveVfyLocal() { try { localStorage.setItem(LS, JSON.stringify(state)); } catch (e) { } }
+/* 서버에는 **vfyStat 한 키만**, 서버 것과 자리마다 합쳐서 올린다 — 통째로 올리면 다른 기기의 더 새 판정을 덮는다(검토).
+   그래서 sbPushMeta 에는 넣지 않는다(옛 원장 기기의 전체 meta 올리기가 판정까지 되돌리지 않게) */
+let vfyPushT = null;
+function pushVfyStat() {
+  clearTimeout(vfyPushT);
+  vfyPushT = setTimeout(async () => {
+    if (!SB || !sbTok) return;
+    try {
+      const rows = await sbReq('/rest/v1/meta?k=eq.vfyStat&select=v');
+      const srv = (rows && rows[0] && rows[0].v) || {}, st = state.vfyStat || (state.vfyStat = {});
+      const out = Object.assign({}, srv);
+      Object.keys(st).forEach(k => { if (st[k] && vfyNewer(st[k], out[k])) out[k] = st[k]; });
+      await sbReq('/rest/v1/meta', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify([{ k: 'vfyStat', v: out }]) });
+      Object.keys(out).forEach(k => { if (vfyNewer(out[k], st[k])) st[k] = out[k]; });
+      saveVfyLocal(); renderVfyStat();
+    } catch (e) { }
+  }, 1200);
+}
+/* 버튼 아래에 보일 판정 — 무매는 fire gate(ib)와 메리츠 대조(ia) 중 **나중 것과 같은 날** 것을 합친다 */
+function vfyLine(k) {
+  const st = state.vfyStat || {};
+  if (k !== 'ib') return st[k] || null;
+  const all = [st.ib, st.ia].filter(Boolean).sort((p, q) => num(q.t) - num(p.t));
+  if (!all.length) return null;
+  const grp = all.filter(p => sameDay(p.t, all[0].t)), ns = grp.map(p => p.n);
+  const n = ns.some(v => v != null && v < 0) ? -1 : ns.every(v => v == null) ? null : ns.reduce((a, v) => a + (v > 0 ? v : 0), 0);
+  return { t: all[0].t, n, why: grp.map(p => p.why).filter(Boolean).join(' · ') };
+}
+function vfySay(s) {
+  return s.n == null ? '<span>보기</span>' : s.n < 0 ? '<span class="bad">못 읽음</span>'
+    : s.n === 0 ? '<span class="ok">✓ 양호</span>' : `<span class="bad">⚠ ${fmt(s.n, 0)}건</span>`;
+}
+function vfyWhen(t) {
+  const d = new Date(num(t)), hm = d.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return sameDay(t, Date.now()) ? hm : `${d.getMonth() + 1}.${d.getDate()}`;             // 지난 날은 날짜만 — 한 줄에 들어가게
+}
+function renderVfyStat() {
+  $$('.vfyS[data-vs]').forEach(b => {
+    const s = vfyLine(b.dataset.vs);
+    if (!s) { b.textContent = '아직 없음'; b.disabled = true; b.title = ''; return; }
+    b.innerHTML = `${esc(vfyWhen(s.t))} ${vfySay(s)}`;
+    b.disabled = false;
+    b.title = new Date(num(s.t)).toLocaleString('ko-KR') + (s.why ? ' · ' + s.why : '');
+  });
+}
+/* 서버의 마지막 읽기를 보고 아직 판정이 없는 것을 채운다 — 검증을 이 기기에서 안 봤어도(18:30 자동진행·다른 기기) 줄이 선다.
+   **오늘 읽은 것만** 견준다. 지난 읽기는 시각만 적는다(판정 없음) */
+let vfyPrimeAt = 0;
+async function refreshVfyStat() {
+  renderVfyStat();
+  if (!SB || !sbTok || vfyBusy || Date.now() - vfyPrimeAt < 60e3) return;
+  vfyPrimeAt = Date.now();
+  let rows = null;
+  try { rows = await sbReq('/rest/v1/meta?k=in.(guideIB,guideVR,dcAsset,mtsAsset)&select=k,v'); } catch (e) { return; }
+  if (vfyBusy) return;
+  const keepL = vfyLast, keepD = dcLast;                 // 판정만 낸다 — 화면·자동진행이 쓰는 값은 그대로
+  const map = { guideIB: 'ib', guideVR: 'vr', dcAsset: 'dc', mtsAsset: 'ia' };
+  let mts = null;
+  (rows || []).forEach(r => {
+    const v = r.v, k = map[r.k];
+    if (!k || !v || !num(v.t)) return;
+    const o = (state.vfyStat || {})[k];
+    if (o && num(o.t) >= num(v.t)) return;
+    if (!sameDay(v.t, Date.now())) { recordVfy(k, v.t, null); return; }
+    if (k === 'ia') { mts = v; return; }
+    try {
+      const txt = String(v.text || '');
+      if (k === 'dc') dcVerifyReport(v);
+      else if (txt.startsWith('ERR')) recordVfy(k, v.t, -1, txt.replace(/^ERR\s*/, '').split(/\r?\n/)[0]);
+      else verifyReport(k, txt, num(v.t));
+    } catch (e) { }
+  });
+  vfyLast = keepL; dcLast = keepD;
+  /* 메리츠는 부팅 때와 같은 길 — 배당·이자를 먼저 보고(한 번만 반영) 그 뒤의 판정을 적는다(검토: 배당 날 '⚠' 가 남았다) */
+  if (mts) try { await takeMtsAsset(mts, null); } catch (e) { }
+}
+/* 줄을 누르면 그 검증의 자세한 내역 — 서버의 그 읽기를 다시 그린다. 지난 날 것이면 그때 판정을 위에 적는다 */
+async function showVfyDetail(k) {
+  if (vfyBusy) return;
+  const box = $('#vfyOut'); if (!box) return;
+  goTab('ib'); ibPick('all');
+  if (!SB || !sbTok) {
+    box.innerHTML = '<div class="warn" style="margin-top:9px"><span>◔</span><div>서버에 연결되어 있어야 검증 내역을 받아 올 수 있습니다. 입력 탭에서 로그인해 주세요.</div></div>';
+    return;
+  }
+  const keys = k === 'ib' ? 'guideIB,mtsAsset' : k === 'vr' ? 'guideVR' : 'dcAsset';
+  let rows = null;
+  try { rows = await sbReq(`/rest/v1/meta?k=in.(${keys})&select=k,v`); } catch (e) { }
+  if (vfyBusy) return;
+  const get = n => ((rows || []).find(r => r.k === n) || {}).v;
+  const keepL = vfyLast;
+  const lbl = k === 'vr' ? 'VR' : k === 'dc' ? 'DC' : '무매';
+  /* **읽기마다** 날짜를 본다(검토: 오늘 메리츠 ✓ 줄을 누르면 며칠 전 fire gate 대조가 오늘 것처럼 떴다). 오늘 것이 아니면 그 카드 앞에
+     '그때 판정' 과 '지금 원장과 다시 견준 것' 을 적는다. 버튼 아래 줄은 처음 견준 판정이다 */
+  const oldNote = (sk, t, what) => {
+    if (sameDay(t, Date.now())) return '';
+    const s = (state.vfyStat || {})[sk];
+    return `<p class="note" style="margin:9px 3px 0">${esc(new Date(num(t)).toLocaleString('ko-KR'))} 에 읽은 ${what}입니다${s && num(s.t) === num(t) && s.n != null ? ' — 그때 판정 ' + vfySay(s) : ''}.
+      아래는 <b>지금 원장과 다시 견준 것</b>이라 그 뒤 체결·주문표가 바뀐 만큼 다르게 나올 수 있습니다.</p>`;
+  };
+  box.innerHTML = '';
+  let any = false;
+  if (k === 'dc') {
+    const v = get('dcAsset');
+    if (v && num(v.t)) { box.insertAdjacentHTML('beforeend', oldNote('dc', v.t, 'DC 검증') + dcVerifyReport(v)); any = true; }
+  } else {
+    const g = get(k === 'vr' ? 'guideVR' : 'guideIB'), txt = String((g || {}).text || '');
+    if (g && num(g.t)) {
+      any = true;
+      box.insertAdjacentHTML('beforeend', oldNote(k, g.t, lbl + ' 앱 읽기') + (txt.startsWith('ERR')
+        ? `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>${lbl} 앱을 읽지 못했습니다.</b><br>${esc(txt.replace(/^ERR\s*/, ''))}</div></div>`
+        : verifyReport(k, txt, num(g.t))));
+    }
+    const m = k === 'ib' ? get('mtsAsset') : null;
+    if (m && num(m.t)) {
+      any = true;
+      if (sameDay(m.t, Date.now())) await takeMtsAsset(m, box);              // 오늘 것 — 보통 길과 같다(이자 반영 포함, 한 번만)
+      else if (String(m.text || '').startsWith('ERR')) { box.insertAdjacentHTML('beforeend', oldNote('ia', m.t, '메리츠 자산 대조')); await takeMtsAsset(m, box); }
+      else {
+        box.insertAdjacentHTML('beforeend', oldNote('ia', m.t, '메리츠 자산 대조'));
+        const res = mtsAssetDiff(m);
+        if (res.cash) res.cash.applied = num((state.usdChk || {}).t) >= num(m.t);
+        box.insertAdjacentHTML('beforeend', assetReport(res, num(m.t)) + trailBtn());
+      }
+    }
+  }
+  vfyLast = keepL;
+  if (!any) box.insertAdjacentHTML('beforeend', `<p class="note" style="margin:9px 3px 0">서버에 ${lbl} 검증 기록이 없습니다.</p>`);
+  box.scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+
 /* 폰이 떠 온 글자를 자리별로 갈라 각각 대조한다.
    무매는 TQQQ·SOXL 둘 다 본다 — 한 화면에 카드 둘이 이어져 있다. */
 function verifyReport(what, txt, at) {
@@ -4745,6 +4919,8 @@ function verifyReport(what, txt, at) {
   });
   /* VR 자동진행(수집기 4.31)이 이 판정을 그대로 쓴다 — 화면에 뜨는 '전부 양호' 와 같은 기준이어야 한다 */
   vfyLast = { what, bad, seen, strict, t: Date.now(), why: whys.join(' · ') };
+  /* 버튼 아래 줄 — 서버에서 받은 읽기일 때만(at). 손으로 붙여 넣은 글자는 검증 기록이 아니다 */
+  if (at) recordVfy(what === 'vr' ? 'vr' : 'ib', at, seen ? bad : -1, seen ? whys.join(' · ') : '앱 화면에서 표를 못 찾음');
   const head = !seen ? '읽은 것이 없습니다'
     : bad === 0 ? `<b style="color:var(--c2)">전부 양호</b> — 앱과 같습니다`
       : `<b style="color:var(--up)">${bad}건이 다릅니다</b>`;
@@ -4844,11 +5020,163 @@ function usdAnchor() {
   return ks[0] || iso(new Date());
 }
 
+/* ===================== 평가액·수익·총자산 대조 (2026-10-07, 사용자 요청) =====================
+   사용자: "무매,VR,DC검증할 때 메리츠와 미래에셋 앱에 접속하는데 기존 검증항목 외에도 웹앱에서 관리되는 보유수량,평가액,수익 및
+   총자산 측면에서 오류가 발생하고 있지 않은지 추가 점검할 수 있는 부분이 있으면 점검하는 기능을 구현해줘."
+
+   수집기는 메리츠 MY자산의 **읽은 글자 원문**을 늘 함께 올린다(`-- 읽은 글자 --`). 지금까지는 보유수량·외화예수금만 견줬는데
+   원문에는 총 자산 · 상품별 평가금액(국내주식·해외주식·원화예수금·외화예수금) · 종목별 **평균단가**·원화 평가금액 · 환율이 다 있다.
+   새 수집기 없이 여기서 읽는다. **알리기만 한다** — 원장은 건드리지 않는다(보유수량 대조와 같다).
+     · 평단 — 메리츠 평균단가 = 무매 엔진 평단(VR 은 장부 평단). 수익의 바탕(원가)이다. 어긋나면 빠진 체결·잘못된 앵커
+     · 시세 — 메리츠 원화 평가금액 ÷ 수량 ÷ 메리츠 환율 = 그때 시세. 원장 시세가 멈췄거나 엉뚱하면 평가액·수익이 다 틀린다
+     · 국내주식(ISA) · 원화예수금 · 총 자산 — 메리츠 환율로 바꿔 견준다(종합 탭은 원장 환율이라 그 차이만큼은 원래 다르다)
+     · 메리츠에 있는데 원장에 없는 자산 유형(펀드·채권 등) — 총자산에서 통째로 빠진다
+     · 환율 — 원장 환율(시장 환율)과 메리츠 환율이 크게 벌어지면 원장 환율이 멈춘 것이다
+   시세는 **읽은 때**(대개 전날 종가)와 원장 시세의 시각이 다르다 — 원장 마지막 날·그 전날 중 가까운 쪽과 견주고 ±2% 까지 같다고 본다 */
+const VX_TOT = 0.01, VX_FX = 0.03, VX_KRW = 10000;
+/* 시세가 같다고 보는 폭 (검토로 조였다·넓혔다). 메리츠는 장 밖에도 **시간외·프리마켓** 가격으로 평가해 3배 ETF 는 종가와 몇 % 벌어진다 —
+   미국 3배는 늘 5%. 한국 것은 **장이 닫힌 뒤 읽었으면** 앱의 값이 곧 종가라 좁게(ISA 1.5% — 20주 남짓 빠진 체결도 잡히게, DC 1%),
+   장중이면 넓게(ISA 2배 4%, DC 3%). 원장 시세가 낮에 받은 값으로 남아 있을 수 있어 0 까지는 안 조인다 */
+const VX_US = 0.05;
+const krxOpen = t => { const d = new Date(num(t) + 9 * 3600e3), wd = d.getUTCDay(), m = d.getUTCHours() * 60 + d.getUTCMinutes(); return wd >= 1 && wd <= 5 && m >= 540 && m < 945; };
+/* 원 금액 한 줄 — `12,345,678원` · `+123,456원    |` · `-98,765원` (공개 빌드 — 주석에 실제 값을 적지 않는다) */
+function wonOf(t) {
+  const m = String(t || '').replace(/\s*\|\s*$/, '').trim().match(/^([+\-−]?)([\d,]+)원$/);
+  return m ? (m[1] === '-' || m[1] === '−' ? -1 : 1) * +m[2].replace(/,/g, '') : null;
+}
+function parseAssetRaw(txt) {
+  const s = String(txt || ''), i = s.indexOf('-- 읽은 글자 --');
+  if (i < 0) return null;
+  const L = s.slice(i + 13).split(/\r?\n/).map(t => t.trim()).filter(Boolean);
+  const out = { total: null, prod: null, holds: [], fx: null };
+  L.forEach((t, j) => {
+    if (t.replace(/\s/g, '') === '총자산') { const v = wonOf(L[j + 1]); if (v != null) out.total = v; }     // 마지막 것(늦게 읽은 것)
+    const m = t.match(/^환율\s*([\d,]+(?:\.\d+)?)$/); if (m) out.fx = +m[1].replace(/,/g, '');
+  });
+  /* 상품별 — 마지막 '자산유형' 머리 뒤, '전체' 앞. 이름표 다음 줄이 평가금액(그다음 줄은 평가손익) */
+  let h = -1; L.forEach((t, j) => { if (t === '자산유형') h = j; });
+  if (h >= 0) {
+    out.prod = {};
+    for (let j = h + 1; j < L.length; j++) {
+      const t = L[j]; if (t === '전체' || t === 'ACNO') break;
+      if (/\d/.test(t) || /^(평가금액|평가손익|자산비중)$/.test(t)) continue;
+      const v = wonOf(L[j + 1]); if (v != null) out.prod[t] = v;
+    }
+  }
+  /* 보유잔고 — `XXXX-XXXX-01(계좌이름)` · `TICK` · `10주` · `12.3400`(평균단가) · `USD` · `1,234,567원`(원화 평가금액) · 평가손익 */
+  for (let j = 0; j < L.length; j++) {
+    const m = L[j].match(/^(\d{4}-\d{4}-\d{2})\(/); if (!m) continue;
+    const tk = L[j + 1] || '', qm = String(L[j + 2] || '').match(/^([\d,]+)주$/);
+    if (!/^[A-Z]{1,6}$/.test(tk) || !qm) continue;
+    const avg = /^\d+(?:\.\d+)?$/.test(L[j + 3] || '') ? +L[j + 3] : null;
+    let krw = null, pl = null;
+    for (let q = j + 4; q < Math.min(L.length, j + 10); q++) {
+      const v = wonOf(L[q]); if (v == null) continue;
+      if (krw == null) krw = v; else { pl = v; break; }
+    }
+    out.holds = out.holds.filter(x => !(x.acct === m[1] && x.tick === tk))
+      .concat([{ acct: m[1], tick: tk, qty: +qm[1].replace(/,/g, ''), avg, krw, pl }]);
+  }
+  return out;
+}
+/* 원장 시세 중 읽은 값에 가까운 쪽 — 마지막 날과 그 전날 */
+function pxNear(k, v) {
+  const ks = dayKeys(), c = ks.slice(-2).map(d => num((state.days[d].px || {})[k])).filter(p => p > 0);
+  if (!c.length) return 0;
+  if (!(v > 0)) return c[c.length - 1];
+  return c.reduce((b, p) => Math.abs(v / p - 1) < Math.abs(v / b - 1) ? p : b);
+}
+const pctTxt = p => (p >= 0 ? '+' : '−') + fmt(Math.abs(p) * 100, Math.abs(p) < 0.1 ? 2 : 1) + '%';
+const wonTxt = v => (v < 0 ? '−' : '') + fmt(Math.abs(v), 0) + '원';
+/* 견준 줄들. 각 줄: g(무엇) · n(자리) · them(앱) · mine(원장) · d(차이 글) · ok · info(세지 않는 참고) */
+function mtsExtra(txt, at) {
+  const r = parseAssetRaw(txt);
+  if (!r) return null;
+  const x = latest(), rows = [], fxM = num(r.fx), fxL = num(x.px.FX);
+  const isaTol = krxOpen(at) ? 0.04 : 0.015;
+  /* 평단·시세 — 자리마다. 메리츠가 0주라 목록에 없거나 못 읽은 자리는 보유수량 줄이 말한다 */
+  let usd = 0;
+  IB_SLOTS.forEach(sl => {
+    const q = num(x[sl.g][sl.s].q);
+    const h = r.holds.find(h => h.acct.slice(0, 4) === sl.acct && h.tick === PX_NAME[sl.s]);
+    const p = h && h.qty > 0 && h.krw > 0 && fxM > 0 ? h.krw / h.qty / fxM : 0;
+    usd += q * pxNear(sl.px, p);
+    /* 수량이 다르면 보유수량 줄이 이미 센다 — 평단·시세를 또 세지 않는다(검토: 빠진 체결 하나가 3건이 됐다) */
+    if (!h || !(h.qty > 0) || h.qty !== q) return;
+    /* 평단 — 무매는 엔진 평단(이동평균)과만 견준다. **VR 은 참고**: 장부 평단은 차감법이라 판 뒤로는 메리츠 이동평균과 원래 다르다(검토) */
+    const rr = sl.vr ? null : ibRun(sl.k);
+    const avg = sl.vr ? (q > 0 ? num(x[sl.g][sl.s].c) / q : 0) : num(rr && rr.st && rr.st.avg);
+    if (h.avg > 0 && avg > 0) {
+      const d = avg - h.avg;
+      rows.push({ g: '평단', n: sl.n, them: '$' + fmt(h.avg, 4), mine: '$' + fmt(avg, 4), ok: sl.vr || Math.abs(d) <= AVG_TOL, info: !!sl.vr,
+        d: (Math.abs(d) < 0.00005 ? '같음' : (d > 0 ? '+' : '−') + '$' + fmt(Math.abs(d), 4)) + (sl.vr ? ' · 장부 평단(차감법)' : '') });
+    }
+    if (p > 0) {
+      const near = pxNear(sl.px, p);
+      if (near > 0) rows.push({ g: '시세', n: sl.n, them: '$' + fmt(p, 2), mine: '$' + fmt(near, 2), ok: Math.abs(p / near - 1) <= VX_US, d: pctTxt(p / near - 1) });
+    }
+  });
+  if (!(fxM > 0)) return { rows, bad: rows.filter(o => !o.ok && !o.info).length, fxM: 0 };
+  /* 상품별 — 메리츠 환율로 바꿔 견준다 */
+  const P = r.prod || {}, isaQ = num(x.isa.q);
+  const isaPx = isaQ > 0 ? pxNear('LEV', num(P['국내주식']) > 0 ? num(P['국내주식']) / isaQ : 0) : 0;
+  const ours = { '국내주식': isaQ * isaPx, '해외주식': usd * fxM, '원화예수금': num(x.krw) * 1e4, '외화예수금': num(x.usd) * fxM };
+  const KNOWN = Object.keys(ours);
+  KNOWN.forEach(k => {
+    const them = P[k] != null ? num(P[k]) : (r.prod ? 0 : null);
+    if (them == null || (!them && !ours[k])) return;
+    const d = them - ours[k];
+    /* 해외주식·외화예수금은 위 평단·시세·수량 줄과 외화예수금(달러) 줄이 이미 센다 — 여기서는 참고로만(두 번 세지 않게) */
+    const info = k === '해외주식' || k === '외화예수금';
+    const ok = k === '원화예수금' ? Math.abs(d) < VX_KRW : Math.abs(d) <= Math.max(1, Math.abs(ours[k])) * (k === '국내주식' ? isaTol : VX_US);
+    rows.push({ g: '상품', n: k === '국내주식' ? '국내주식(ISA)' : k, them: wonTxt(them), mine: wonTxt(ours[k]), info, ok, money: true,
+      d: (d >= 0 ? '+' : '−') + fmt(Math.abs(d), 0) + '원' + (ours[k] ? ' · ' + pctTxt(d / ours[k]) : ''), dp: ours[k] ? pctTxt(d / ours[k]) : '' });
+  });
+  /* 원장에 없는 자산 유형 — 총자산에서 빠진다 */
+  Object.keys(P).filter(k => !KNOWN.includes(k) && Math.abs(num(P[k])) > 0)
+    .forEach(k => rows.push({ g: '상품', n: k, them: wonTxt(num(P[k])), mine: '원장에 없음', ok: false, money: true, d: '원장에 없는 자산 유형', dp: '원장에 없는 자산 유형' }));
+  /* 총자산 — 메리츠 '총 자산' 과 원장의 메리츠 몫(위 넷)을 메리츠 환율로 */
+  if (num(r.total) > 0) {
+    const sum = KNOWN.reduce((a, k) => a + num(ours[k]), 0), d = num(r.total) - sum;
+    rows.push({ g: '총 자산', n: '메리츠', them: wonTxt(num(r.total)), mine: wonTxt(sum), ok: sum > 0 && Math.abs(d) <= sum * VX_TOT, money: true,
+      d: (d >= 0 ? '+' : '−') + fmt(Math.abs(d), 0) + '원 · ' + (sum > 0 ? pctTxt(d / sum) : ''), dp: sum > 0 ? pctTxt(d / sum) : '' });
+  }
+  /* 환율 — 원장(시장 환율)과 메리츠(고시 환율)는 원래 조금 다르다. 3% 넘게 벌어지면 원장 환율이 멈춘 것이다 */
+  if (fxL > 0) rows.push({ g: '환율', n: '원/달러', them: fmt(fxM, 2), mine: fmt(fxL, 2), ok: Math.abs(fxM / fxL - 1) <= VX_FX, d: pctTxt(fxM / fxL - 1) });
+  return { rows, bad: rows.filter(o => !o.ok && !o.info).length, fxM };
+}
+
+/* 대조 카드 — 메리츠·DC 공통. 금액 줄은 가리기를 켜면 가린다(차이 %만 남긴다 — 앱 쪽 금액으로 총액이 되짚어진다) */
+function xcCard(title, x, note) {
+  if (!x || !x.rows.length) return '';
+  const head = x.bad ? '<b style="color:var(--up)">' + x.bad + '건 확인 필요</b>' : '<b style="color:var(--c2)">전부 맞습니다</b>';
+  const rows = x.rows.map(o => {
+    const hide = HIDE && o.money, tone = !o.ok ? 'var(--up)' : o.info ? 'var(--ink2)' : 'var(--c2)';
+    const sub = '원장 ' + (hide ? MASK : o.mine) + ' · ' + (hide ? (o.dp || '') : o.d) + (o.info ? ' · 참고' : '');
+    return '<div class="row"><div style="min-width:0"><div class="nm">' + esc(o.n)
+      + ' <span style="color:var(--muted);font-weight:400">' + esc(o.g) + '</span>'
+      + '<span class="sub">' + esc(sub) + '</span></div></div>'
+      + '<div class="vals" style="flex:none"><div class="v num" style="color:' + tone + ';font-size:13.5px;white-space:nowrap">' + esc(hide ? MASK : o.them) + '</div></div></div>';
+  }).join('');
+  return '<div class="card rows" style="margin-top:10px"><div class="grp-h" style="padding-left:15px">' + title + ' · ' + head + '</div>' + rows + '</div>'
+    + (note ? '<details class="inl bare" style="margin-top:6px"><summary style="padding:8px 3px 6px;font-size:11.5px;color:var(--muted)">판정 기준</summary>'
+      + '<p class="note" style="margin:0 3px 6px">' + note + '</p></details>' : '');
+}
+const MTS_XNOTE = '오른쪽 값이 메리츠, 아래 줄이 원장입니다. <b>평단</b>은 메리츠 평균단가와 무매 엔진 평단 — $0.01 까지 같다고 봅니다. '
+  + 'VR 은 장부 평단이 차감법이라 판 뒤로는 메리츠와 원래 달라 참고입니다. 수량이 다른 자리는 보유수량 줄이 세므로 평단·시세를 안 봅니다. '
+  + '<b>시세</b>는 메리츠 원화 평가금액 ÷ 수량 ÷ 메리츠 환율로 되짚은 값과 원장 시세(마지막 날·그 전날 중 가까운 쪽) — 메리츠는 시간외·프리마켓 값으로도 '
+  + '평가해 미국 3배 ETF 는 ±5% 까지 같다고 봅니다. '
+  + '<b>상품·총 자산</b>은 원장 값을 <b>메리츠 환율</b>로 바꿔 견줍니다(종합 탭은 원장 환율이라 그만큼은 원래 다릅니다). '
+  + '국내주식(ISA)은 장이 닫힌 뒤 읽었으면 1.5%, 장중이면 4% 안 · 원화예수금은 만원 단위라 1만원 안 · 총 자산은 1% 안. '
+  + '해외주식·외화예수금 상품 줄은 위 줄들이 이미 세므로 참고, 총 자산도 다른 줄이 어긋났으면 그 탓이라 참고입니다. '
+  + '<b>환율</b>은 원장(시장)과 메리츠(고시)가 원래 조금 다르고, 3% 넘게 벌어지면 원장 환율이 멈춘 것으로 봅니다. '
+  + '<b>알리기만 합니다</b> — 원장은 고치지 않습니다. 버튼 아래 줄은 <b>처음 견준 판정</b>입니다.';
+
 /* 견주기만 한다 — 원장은 건드리지 않는다. 고치는 곳은 mtsAssetCommit 하나뿐이다 */
 function mtsAssetDiff(obj) {
   const a = parseAsset(obj && obj.text);
   const x = latest(), today = iso(new Date());
-  const out = { t: num(obj && obj.t), holds: [], cash: null };
+  const out = { t: num(obj && obj.t), holds: [], cash: null, extra: mtsExtra(obj && obj.text, obj && obj.t) };
 
   /* **다 팔면 목록에서 빠진다** (2026-09-22, 사용자 지적: "무매SOXL 실제 보유 0주 인데
      앱 화면에 없음 이라고 나옴. 없는게 당연"). 메리츠 보유잔고는 0주짜리를 안 보여 준다 —
@@ -5112,8 +5440,18 @@ function assetReport(res, at) {
       + c.other.map(o => esc(o.acct)).join(' · ') + '<span class="sub">합계에서 뺐습니다</span></div></div>';
   }
 
-  const bad = res.holds.filter(h => !same(h)).length
+  const bad0 = res.holds.filter(h => !same(h)).length
     + (c && (c.act === 'check' || ((c.act === 'interest' || c.act === 'dividend') && c.applied === false)) ? 1 : 0);
+  const ex = res.extra;
+  /* 총 자산은 다른 줄이 이미 어긋났으면 그 탓이다 — 참고로 내린다(검토: 기록 안 한 입금 하나가 '2건' 이 됐다) */
+  if (ex) {
+    const others = bad0 + ex.rows.filter(o => !o.ok && !o.info && o.g !== '총 자산').length;
+    if (others) ex.rows.forEach(o => { if (o.g === '총 자산' && !o.ok) { o.info = true; o.d += ' · 위 줄 탓'; o.dp = (o.dp || '') + ' · 위 줄 탓'; } });
+    ex.bad = ex.rows.filter(o => !o.ok && !o.info).length;
+  }
+  const bad = bad0 + (ex ? ex.bad : 0);
+  if (at) recordVfy('ia', at, bad, [bad0 ? '메리츠 수량·예수금 ' + bad0 + '건' : '',
+    ex && ex.bad ? ex.rows.filter(o => !o.ok && !o.info).map(o => o.n + ' ' + o.g).join(', ') : ''].filter(Boolean).join(' · '));
   const head = bad === 0 ? '<b style="color:var(--c2)">전부 맞습니다</b>'
     : '<b style="color:var(--up)">' + bad + '건 확인 필요</b>';
   const when = at ? ' <span class="u">' + new Date(at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }) + ' 읽음</span>' : '';
@@ -5121,6 +5459,7 @@ function assetReport(res, at) {
   return '<div class="card rows" style="margin-top:10px">'
     + '<div class="grp-h" style="padding-left:15px">메리츠 자산 대조 · ' + head + when + '</div>'
     + hl + cl + '</div>'
+    + xcCard('메리츠 평가액·수익·총자산', ex, MTS_XNOTE)
     + (log.length ? '<details class="inl bare" style="margin-top:6px">'
       + '<summary style="padding:8px 3px 6px;font-size:11.5px;color:var(--muted)">예수금 이자·배당 반영 내역</summary>'
       + '<p class="note" style="margin:0 3px 6px">'
@@ -5141,6 +5480,7 @@ async function takeMtsAsset(v, box) {
   const txt = String(v.text || '');
   mtsAssetRaw = `메리츠 대조 ${new Date(num(v.t)).toLocaleString('ko-KR')}\n` + txt;
   if (txt.startsWith('ERR')) {
+    recordVfy('ia', num(v.t), -1, '메리츠 ' + txt.replace(/^ERR\s*/, '').split(/\r?\n/)[0]);
     if (box) box.insertAdjacentHTML('beforeend', '<div class="warn" style="margin-top:9px"><span>◔</span><div>'
       + '<b>메리츠 자산을 읽지 못했습니다.</b><br>'
       + esc(txt.replace(/^ERR\s*/, '').split(/\r?\n/).slice(0, 3).join(' · ')).slice(0, 400) + '<br>' + trailBtn() + '</div></div>');
@@ -5161,7 +5501,9 @@ async function takeMtsAsset(v, box) {
     mtsCashAcct = { t: num(v.t), cash };
     if (!put && UI.tab === 'ib' && UI.ib === 'all') renderIB();
   }
-  if (box) box.insertAdjacentHTML('beforeend', assetReport(res, num(v.t)) + trailBtn());
+  /* 판정은 그리지 않아도 적는다(부팅의 syncMtsAsset · 줄 채우기) — 배당·이자를 반영한 **뒤의** 판정이어야 한다(검토) */
+  const rep = assetReport(res, num(v.t));
+  if (box) box.insertAdjacentHTML('beforeend', rep + trailBtn());
   if (put) {
     renderAll();
     const c = res.cash;
@@ -5295,15 +5637,59 @@ function dcAssetDiff(v) {
   if (out.bad.length) out.why.push(`${out.bad.join('·')} 줄의 수량이 금액과 안 맞습니다(잘못 읽음)`);
   if (out.dup.length) out.why.push(`${out.dup.join('·')} 가 두 줄입니다`);
   if (out.unknown.length) out.why.push(`모르는 종목 ${out.unknown.map(r => esc(r.name)).join(', ')}`);
-  if (Date.now() - num(v.t) > DC_FRESH) out.why.push('오래된 읽기입니다 — 다시 검증해 주세요');
+  out.stale = Date.now() - num(v.t) > DC_FRESH;            // 반영만 막는다 — 판정(버튼 아래 줄)에는 세지 않는다
+  if (out.stale) out.why.push('오래된 읽기입니다 — 다시 검증해 주세요');
   if (state.dcChk && num(state.dcChk.t) >= num(v.t)) out.done = true;              // 이미 반영(또는 기준으로 적은) 읽기
   out.ok = !out.why.length;
   return out;
 }
 
+/* DC 평가액·수익 대조 (2026-10-07, 사용자 요청 — 위 '평가액·수익·총자산 대조' 참고). 알리기만 한다.
+     · 시세 — 미래에셋 현재가와 원장 시세(마지막 날·그 전날 중 가까운 쪽), ±2%
+     · 평가액 — 미래에셋 평가금액 합계와 원장 좌수 × 원장 시세, 1% 안. 좌수가 다를 때는 위 표가 말하므로 안 견준다
+     · **원금 + 배당 = 매입금액** — 미래에셋 매입금액은 산 돈의 합이고, 불입도 배당도 기존 종목을 산다. 그래서
+       손익기준(9/1 매입금액) + 불입 + 배당 이 미래에셋 매입금액과 같아야 한다. 'DC 좌수 변경 확인' 카드에 **금액을 잘못 적었거나**
+       빠뜨렸으면 여기서 드러난다(불입/배당을 서로 바꿔 고른 것은 합이 같아 못 잡는다). 남은 예수금 몇 만원은 같다고 본다.
+       정정·갈아타기를 고른 적이 있으면 판 차익이 섞이므로 참고로만 */
+const DC_COST_TOL = 30000;
+function dcExtra(v, d) {
+  const rows = [], x = latest(), byK = {};
+  (v.rows || []).forEach(r => { const k = dcKeyOf(r.name); if (k && !byK[k]) byK[k] = r; });
+  Object.keys(byK).forEach(k => {
+    const p = num(byK[k].px), near = p > 0 ? pxNear(k, p) : 0;
+    if (near > 0) rows.push({ g: '시세', n: k, them: wonTxt(p), mine: wonTxt(near), ok: Math.abs(p / near - 1) <= (krxOpen(v.t) ? 0.03 : 0.01), d: pctTxt(p / near - 1) });
+  });
+  if (d.complete && !d.changed) {
+    const led = DC_KEYS.reduce((a, k) => a + num((x.dc || {})[k]) * pxNear(k, byK[k] ? num(byK[k].px) : 0), 0), them = num(v.sumEval);
+    if (them > 0 && led > 0) {
+      const dd = them - led;
+      /* 시세 줄이 이미 센다 — 평가액은 그 가중합이라 참고(검토: 시세는 다 맞는데 평가액만 어긋나는 일이 생겼다) */
+      rows.push({ g: '평가액', n: 'DC 합계', them: wonTxt(them), mine: wonTxt(led), money: true, info: true, ok: true,
+        d: (dd >= 0 ? '+' : '−') + fmt(Math.abs(dd), 0) + '원 · ' + pctTxt(dd / led), dp: pctTxt(dd / led) });
+    }
+    const base = num(((SEED.basis || {})['DC'] || {}).cost);
+    if (base > 0 && num(v.sumBuy) > 0) {
+      const ins = dcCostWon() - base, divs = dcDivWon(), want = base + ins + divs, dd = num(v.sumBuy) - want;
+      /* 판 기록(갈아타기)이 있으면 매입금액에 실현손익이 섞여 등식이 안 선다 — 참고로만(검토: 불입으로 고른 갈아타기 날 뒤로 영영 ⚠ 였다) */
+      const fix = dcFlows().some(f => f.kind === 'fix') || dcEvents().some(e => Object.values(e.q).some(q => q < 0));
+      rows.push({ g: '원금', n: '매입금액 = 원금 + 배당', them: wonTxt(num(v.sumBuy)), mine: wonTxt(want), money: true, info: fix,
+        ok: fix || Math.abs(dd) <= Math.max(DC_COST_TOL, (ins + divs) * 0.01),
+        d: '원금 ' + wonTxt(base + ins) + ' + 배당 ' + wonTxt(divs) + ' · ' + (dd >= 0 ? '+' : '−') + fmt(Math.abs(dd), 0) + '원'
+          + (fix ? ' · 판 기록이 있어 참고' : ''), dp: pctTxt(dd / want) });
+    }
+  }
+  return { rows, bad: rows.filter(o => !o.ok && !o.info).length };
+}
+const DC_XNOTE = '오른쪽 값이 미래에셋, 아래 줄이 원장입니다. <b>시세</b>는 미래에셋 현재가와 원장 시세(마지막 날·그 전날 중 가까운 쪽) — '
+  + '장이 닫힌 뒤 읽었으면 1%, 장중이면 3% 안. <b>평가액</b>은 시세 줄의 가중합이라 참고입니다. '
+  + '<b>매입금액 = 원금 + 배당</b> — 불입도 배당도 기존 종목을 사므로 손익기준(9/1 매입금액) + 불입 + 배당이 미래에셋 매입금액과 같아야 합니다. '
+  + "다르면 'DC 좌수 변경 확인' 에 적은 금액이 틀렸거나 빠진 것입니다(3만원 · 1% 안은 남은 예수금으로 봅니다). 판 기록(갈아타기)이 있으면 실현손익이 섞여 참고입니다. "
+  + '<b>알리기만 합니다.</b>';
+
 function dcVerifyReport(v) {
   const at = new Date(num(v.t)).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   if (!v.ok || !(v.rows || []).length) {
+    recordVfy('dc', num(v.t), -1, v.err || '줄을 하나도 못 읽었습니다');
     return `<div id="dcvWrap" class="warn" style="margin-top:9px"><span>◔</span><div><b>미래에셋 잔고를 읽지 못했습니다</b> <span class="u">${at}</span>
       <br>${esc(v.err || '줄을 하나도 못 읽었습니다')}
       ${v.trail ? `<details style="margin-top:6px"><summary style="font-size:11.5px">발자취</summary><pre style="white-space:pre-wrap;font-size:10.5px;margin:4px 0 0">${esc(v.trail)}</pre></details>` : ''}</div></div>`;
@@ -5314,6 +5700,13 @@ function dcVerifyReport(v) {
       <td>${r.mir == null ? '<span style="color:var(--muted)">못 봄</span>' : fmt(r.mir, 0)}</td>
       <td class="${r.dq > 0 ? 'up' : r.dq < 0 ? 'dn' : ''}">${r.mir == null ? '' : r.dq ? (r.dq > 0 ? '+' : '−') + fmt(Math.abs(r.dq), 0) : '✓'}</td></tr>`).join('');
   const ledEvalMan = calc(latest()).dcv;                    // 원장 DC 평가액(만원) — 좌수 × 종가, 없으면 손으로 넣은 값
+  const ex = dcExtra(v, d);
+  /* 버튼 아래 줄 — 고를 것(좌수 다름) · 못 믿을 읽기 · 대조 어긋남을 센다. '오래된 읽기' 는 반영만 막는 것이라 안 센다 */
+  const chg = d.changed && !d.done ? d.rows.filter(r => r.dq) : [];
+  const whyN = d.why.filter(w => !/^오래된 읽기/.test(w));
+  recordVfy('dc', num(v.t), whyN.length + chg.length + ex.bad, [
+    chg.length ? '좌수 ' + chg.map(r => r.k + ' ' + (r.dq > 0 ? '+' : '−') + fmt(Math.abs(r.dq), 0)).join(' · ') : '',
+    whyN.join(' · '), ex.rows.filter(o => !o.ok && !o.info).map(o => o.n + ' ' + o.g).join(', ')].filter(Boolean).join(' · '), dcvForce);
   let act = '';
   if (d.ok && d.changed && !d.done) {
     act = `<div class="note" style="margin:8px 0 0">${esc(d.rows.filter(r => r.dq).map(r => `${r.k} ${r.dq > 0 ? '+' : '−'}${fmt(Math.abs(r.dq), 0)}좌`).join(' · '))} —
@@ -5336,13 +5729,13 @@ function dcVerifyReport(v) {
       ${d.acctMoved && d.why.length === 1 ? `<div style="margin-top:6px"><button class="ghost" data-dcv="acct" style="padding:6px 9px;font-size:12px">
         DC 계좌가 바뀌었으면 — 이 계좌(${esc(d.acct)})로 다시 맞춤</button></div>` : ''}</div></div>`;
   }
-  return `<div id="dcvWrap" class="card" style="margin-top:9px;padding:10px 12px">
+  return `<div id="dcvWrap"><div class="card" style="margin-top:9px;padding:10px 12px">
       <div class="pc-h" style="gap:6px">DC 검증 <span class="u">미래에셋 ${at}</span>
         <span style="margin-left:auto;font-size:12px;color:${d.ok && !d.changed ? 'var(--pos)' : 'var(--ink2)'}">${d.ok && !d.changed ? '좌수 일치 ✓' : d.changed ? '좌수가 다릅니다' : ''}</span></div>
       <div class="u" style="margin-top:3px;font-size:11.5px">계좌 ${esc(v.acct || '—')}</div>
       <table class="tbl" style="width:100%;margin-top:6px"><tr><th style="text-align:left">종목</th><th>원장</th><th>미래에셋</th><th>차이</th></tr>${rows}</table>
-      <p class="note" style="margin:6px 0 0">평가금액 미래에셋 ${HIDE ? MASK : fmt(num(v.sumEval) / 1e4, 0)}만 · 원장 ${HIDE ? MASK : fmt(ledEvalMan, 0)}만원
-        <span class="u">(현재가 시각이 달라 조금 다를 수 있습니다)</span></p>${act}</div>`;
+      ${ex.rows.some(o => o.g === '평가액') ? '' : `<p class="note" style="margin:6px 0 0">평가금액 미래에셋 ${HIDE ? MASK : fmt(num(v.sumEval) / 1e4, 0)}만 · 원장 ${HIDE ? MASK : fmt(ledEvalMan, 0)}만원
+        <span class="u">(현재가 시각이 달라 조금 다를 수 있습니다)</span></p>`}${act}</div>${xcCard('DC 평가액·수익', ex, DC_XNOTE)}</div>`;
 }
 
 /* 좌수가 그대로인 읽기는 다음 금액 계산의 기준으로만 적는다 — 원장은 안 건드린다 */
@@ -5354,10 +5747,15 @@ function dcTakeBaseline(v, d) {
   saveLocal(); schedulePush();
 }
 
+let dcvForce = false;            // 사람이 맞춘 직후 다시 그릴 때만 — 버튼 아래 줄의 판정을 덮는다(recordVfy)
 function dcVerifyApply(kind) {
   const v = dcLast; if (!v) return;
   const d = dcAssetDiff(v);
-  const redraw = () => { const w = $('#dcvWrap'), box = $('#vfyOut'); if (w) w.outerHTML = dcVerifyReport(v); else if (box) box.innerHTML = dcVerifyReport(v); };
+  const redraw = () => {
+    const w = $('#dcvWrap'), box = $('#vfyOut');
+    dcvForce = true;
+    try { if (w) w.outerHTML = dcVerifyReport(v); else if (box) box.innerHTML = dcVerifyReport(v); } finally { dcvForce = false; }
+  };
   /* DC 계좌 번호가 정말 바뀐 경우(이직·제도 이전) — 사람이 확인하고 새 번호로 다시 묶는다. 지난 기준(매입금액)은 다른 계좌 것이라 버린다 */
   if (kind === 'acct') {
     if (!d.acctMoved || !d.acct) return;
@@ -5453,6 +5851,8 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
         : '읽을 줄이 없습니다 — 날짜 둘과 종목이 한 줄에 있어야 합니다');
     return;
   }
+  const vs = e.target.closest('.vfyS[data-vs]');
+  if (vs) { if (!vs.disabled) showVfyDetail(vs.dataset.vs); return; }       // 버튼 아래 줄 — 그 검증의 자세한 내역
   if (e.target.closest('#vfyIB')) { runVerify('ib'); return; }
   if (e.target.closest('#vfyVR')) { runVerify('vr'); return; }
   if (e.target.closest('#vfyDC')) { runVerify('dc'); return; }
@@ -7183,7 +7583,7 @@ function showTab(t) {
   window.scrollTo({ top: 0, behavior: 'instant' });
   if (t === 'sum') renderSummary();
   if (t === 'plan') renderPlan();
-  if (t === 'ib') { renderIB(); latestVerify(true); }
+  if (t === 'ib') { renderIB(); latestVerify(true); refreshVfyStat(); }
   if (t === 'in') { renderReviewList(); renderRecentApplied(); renderDcAsk(); }
 }
 function goTab(t) { if (UI.tab !== t) showTab(t); }
@@ -8089,6 +8489,12 @@ async function initSupabase() {
   if (!sbTok) return false;
   try {
     const { days, meta } = await sbPull();
+    /* 검증 줄(2026-10-07) — 어느 쪽 원장이 새것이든 **자리마다 더 새 읽기**를 남긴다. 아래 갈래 안에 두면 이 기기 원장이 새것일 때
+       서버의 다른 기기 판정을 안 받고 제 것을 도로 올려 덮는다 */
+    if (meta.vfyStat && typeof meta.vfyStat === 'object') {
+      const st = state.vfyStat || (state.vfyStat = {});
+      Object.entries(meta.vfyStat).forEach(([k, v]) => { if (v && num(v.t) && vfyNewer(v, st[k])) st[k] = v; });
+    }
     if (meta.seed && meta.seed.months) { SEED = Object.assign({ days: [], labels: {}, plan: {} }, meta.seed); ensurePlan(); }
     if (Object.keys(days).length && ((meta.ts || 0) > (state.ts || 0) || isEmptyLedger())) {
       state.days = days;
@@ -8239,6 +8645,7 @@ PROVIDERS.splice(1, 0, {
        서버에 붙은 뒤라야 결과를 읽을 수 있어 이 자리다. 새 탭으로 열렸어도
        무매/VR 탭으로 옮겨 결과를 띄운다. */
     resumeVerify(true);
+    refreshVfyStat();                                  // 검증 버튼 아래 줄 — 다른 기기·18:30 자동진행이 읽은 것도
     /* 수집기가 VR 자동진행으로 열었으면(#vrauto=…) 여기서 받는다 — 서버에 붙은 뒤라야 반영·업로드가 된다 */
     vrAutoResume();
   });
