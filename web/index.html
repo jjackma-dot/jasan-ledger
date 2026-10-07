@@ -431,17 +431,15 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
         <button data-v="vr.T" aria-pressed="false">VR TQQQ</button>
       </div>
       <div id="ibCommon">
-      <!-- 셋 다 같은 폭 한 줄. 글자를 줄여 두 줄짜리 버튼을 없앴다 -->
+      <!-- 셋 다 같은 폭 한 줄. 글자를 줄여 두 줄짜리 버튼을 없앴다.
+           '주문표 띄우기' 는 2026-10-06 에 뺐다(사용자 요청) — 주문표는 동기화마다 서버에 올라가고, 폰에서는
+           빠른설정 '무매 주문표' 타일·홈 화면 아이콘으로 띄운다. 그 자리에 DC 검증(미래에셋 국내주식 잔고 대조) -->
       <div style="display:flex;gap:7px;margin-top:10px">
-        <button class="ghost" id="ibOverlay" style="flex:1 1 0;min-width:0;padding:10px 2px;font-size:12.5px">주문표 띄우기</button>
         <button class="ghost" id="vfyIB" style="flex:1 1 0;min-width:0;padding:10px 2px;font-size:12.5px">무매 검증</button>
         <button class="ghost" id="vfyVR" style="flex:1 1 0;min-width:0;padding:10px 2px;font-size:12.5px">VR 검증</button>
+        <button class="ghost" id="vfyDC" style="flex:1 1 0;min-width:0;padding:10px 2px;font-size:12.5px">DC 검증</button>
       </div>
       <div id="vfyOut"></div>
-      <p class="note" id="ibOverlayNote" style="margin:6px 3px 0">
-        수집기 앱이 깔린 폰에서 누르면 메리츠 MTS 위에 주문표가 뜹니다.
-        빠른설정에 <b>무매 주문표</b> 타일을 올려 두면 MTS 를 보다가 쓸어내려 바로 띄울 수도 있고,
-        홈 화면의 <b>무매 주문표</b> 아이콘으로도 됩니다.</p>
       </div>
       <div id="ibBody"></div>
     </section>
@@ -741,7 +739,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-06 18:51';
+const BUILD = '2026-10-07 14:48';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -3813,64 +3811,8 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
    예수금은 계좌 하나로만 들고 있어 자리별로 가를 수가 없다. 그래서 어림값을 넣어 두고
    사용자가 고치게 한다. 0 으로 두면 주문표가 아예 안 나와서 켠 티가 나지 않는다 —
    실제로 "켬을 눌러도 켜지지 않는다" 로 보고됐던 것이 이 때문이다. */
-/* 폰의 수집기 앱에 주문표를 띄우라고 알린다.
-   웹 페이지는 다른 앱 위에 그릴 수 없다 — 브라우저에 그런 권한이 없다. 대신
-   안드로이드의 intent:// 링크로 수집기 앱의 OverlayLauncherActivity 를 부른다.
-   그쪽이 오버레이만 띄우고 즉시 사라지므로 화면이 튀지 않는다.
-   앱이 없거나 안드로이드가 아니면 아무 일도 일어나지 않으므로 안내를 함께 띄운다. */
-document.getElementById('ibOverlay')?.addEventListener('click', async () => {
-  const note = $('#ibOverlayNote');
-  const say = h => { if (note) note.innerHTML = h; };
-
-  /* 반드시 **먼저 서버에 올린다.**
-     예전에는 곧바로 앱을 불렀는데, 웹은 상태가 바뀔 때만 올리므로 설정만 해 두고
-     아무것도 안 바꾸면 서버에 주문표가 없었다. 폰에서는 "주문표를 받지 못했습니다"
-     라고만 뜨고 왜 그런지 알 수 없었다. 이제 누를 때마다 새로 만들어 올린다. */
-  if (!(SB && sbTok)) {
-    say('서버에 연결되어 있지 않습니다. <b>입력 › 서버 연결</b> 에서 로그인해 주세요 — '
-      + '주문표는 서버를 거쳐 폰으로 갑니다.');
-    return;
-  }
-  let plan;
-  try { plan = ibPlanPayload(); } catch (e) { say('주문표를 만들지 못했습니다: ' + esc(e.message)); return; }
-  if (!plan.slots.length) {
-    say('올릴 주문표가 없습니다. 아래에서 <b>무매</b> 또는 <b>VR</b> 을 켜고 '
-      + '시드·시작일을 넣으면 그날 낼 주문이 여기 생깁니다.');
-    return;
-  }
-  say('주문표를 서버에 올리는 중…');
-  try { await sbPushMeta(); }
-  catch (e) { say('올리지 못했습니다: ' + esc(e.message) + ' — 잠시 뒤 다시 눌러 주세요'); return; }
-
-  const n = plan.slots.reduce((a, s2) => a + s2.rows.length, 0);
-  say(`<b>${plan.slots.map(s2 => esc(s2.n)).join(' · ')}</b> 주문 ${n}줄을 올렸습니다.`
-    + (/Android/i.test(navigator.userAgent)
-      ? ' 폰에서 띄웁니다…'
-      : ' <b>이제 폰에서</b> 빠른설정의 <b>무매 주문표</b> 타일이나 홈 화면 아이콘으로 띄우세요 '
-        + '(이 버튼으로 바로 띄우는 것은 안드로이드에서만 됩니다).'));
-  if (/Android/i.test(navigator.userAgent)) {
-    location.href = 'intent://orders#Intent;scheme=jasan;package=kr.jasan.collector;end';
-  }
-});
-
-/* 서버에 주문표가 실제로 올라가 있는지 화면에 보여 준다.
-   폰에서 "받지 못했습니다" 가 뜨면 여기가 비어 있는지부터 보면 된다. */
-async function ibPlanStatus() {
-  const note = $('#ibOverlayNote'); if (!note) return;
-  if (!(SB && sbTok)) return;
-  try {
-    const rows = await sbReq('/rest/v1/meta?k=eq.ibPlan&select=v');
-    const v = rows && rows[0] && rows[0].v;
-    if (!v || !v.slots || !v.slots.length) {
-      note.innerHTML = '<b>서버에 올라간 주문표가 없습니다.</b> 위 버튼을 누르면 지금 만들어 올립니다.';
-      return;
-    }
-    const n = v.slots.reduce((a, s2) => a + (s2.rows || []).length, 0);
-    const when = v.at ? new Date(v.at).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '?';
-    note.innerHTML = `서버에 <b>${v.slots.map(s2 => esc(s2.n)).join(' · ')}</b> 주문 ${n}줄이 올라가 있습니다 `
-      + `<span class="u">${when} 기준</span>. 폰에서 빠른설정 <b>무매 주문표</b> 타일이나 위 버튼으로 띄우세요.`;
-  } catch (e) { /* 조회 실패는 조용히 — 버튼은 그대로 쓸 수 있다 */ }
-}
+/* 웹의 '주문표 띄우기' 버튼과 서버 주문표 상태 줄은 2026-10-06 에 뺐다(사용자 요청 — 그 자리에 DC 검증).
+   주문표(meta.ibPlan)는 sbPushMeta 가 동기화마다 올리고, 폰에서는 빠른설정 타일·홈 화면 아이콘으로 띄운다. */
 
 function ibSeedGuess() {
   const sl = IB_SLOTS.find(s => s.k === UI.ib) || IB_SLOTS[0];
@@ -4414,13 +4356,22 @@ const vfySet = v => { try { v ? localStorage.setItem(VFY_KEY, JSON.stringify(v))
    넓혔더니, 검증한 날에는 웹을 열 때마다 무매/VR 탭에서 시작했다. 첫 화면은 종합이다.
    결과는 무매/VR 탭에 들어가면 그때 채워진다(showTab 에서 latestVerify(true)). */
 function resumeVerify(force) {
-  const h = (location.hash || '').match(/vfy=(ib|vr)/);
+  const h = (location.hash || '').match(/vfy=(dcold|ib|vr|dc)/);
   /* 해시가 붙어 왔으면 **돌던 것을 끊고** 새로 받는다. 브라우저가 탭을 재사용하면
      페이지는 그대로고 주소만 바뀌므로, 앞서 돌던 폴링이 남아 있을 수 있다. */
   if (!h && vfyBusy) return;
   if (h) {
     /* 주소의 표시는 한 번만 쓴다. 새로고침할 때마다 다시 도는 것을 막는다 */
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { }
+    /* 'DC 검증' 주소를 수집기가 못 받았다 — 크롬이 되돌림 주소로 돌려보냈다 (4.40 · runVerify 참고) */
+    if (h[1] === 'dcold') {
+      vfyGen++; vfyBusy = false; vfySet(null);
+      goTab('ib'); ibPick('all');
+      const box = $('#vfyOut');
+      if (box) box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>수집기가 DC 검증을 받지 못했습니다.</b>
+        DC 검증은 수집기 <b>4.40 이상</b>이 있어야 합니다 — 새 버전을 설치한 뒤 다시 눌러 주세요.</div></div>`;
+      return;
+    }
     const p = vfyPending();
     vfySet(null);
     goTab('ib'); ibPick('all');                      // 결과 칸은 공통에만 있다 (2026-09-25)
@@ -4444,13 +4395,31 @@ function resumeVerify(force) {
    무매/VR 탭을 열면 보이는 것이 맞다.
 
    화면에 이미 무언가 떠 있으면 건드리지 않는다. 사람이 방금 누른 것을 덮으면 안 된다. */
+let lvGen = 0;
 async function latestVerify(quiet) {
   if (!SB || !sbTok || vfyBusy) return;
   const box = $('#vfyOut'); if (!box || box.innerHTML.trim()) return;
+  /* **겹쳐 불리면 나중 것만 그린다** (2차 검토). 부팅과 탭 열기가 거의 같이 부르거나, 폴링이 그사이 결과를 그리면
+     예전엔 카드가 두 장 붙었다. 기다린 뒤마다 더 새 호출·새 폴링이 있었는지 본다 */
+  const g = ++lvGen, vg = vfyGen, stale = () => g !== lvGen || vg !== vfyGen || vfyBusy;
   let rows = null;
-  try { rows = await sbReq('/rest/v1/meta?k=in.(guideIB,guideVR)&select=k,v'); } catch (e) { return; }
-  let best = null;
-  (rows || []).forEach(r => { const v = r.v; if (v && num(v.t) && (!best || num(v.t) > num(best.t))) best = v; });
+  try { rows = await sbReq('/rest/v1/meta?k=in.(guideIB,guideVR,dcAsset)&select=k,v'); } catch (e) { return; }
+  if (stale() || box.innerHTML.trim()) return;
+  let best = null, dcv = null;
+  (rows || []).forEach(r => {
+    const v = r.v; if (!v || !num(v.t)) return;
+    if (r.k === 'dcAsset') dcv = v;
+    else if (!best || num(v.t) > num(best.t)) best = v;
+  });
+  /* DC 검증(2026-10-06)은 **덧붙인다** — 그날 것이면 무매/VR 결과·메리츠 자산 대조와 함께 보인다.
+     처음엔 DC 가 그날 마지막이면 그것만 그리고 돌아가, 18:30 자산 대조의 '보유수량 다름' 같은 알림이
+     그날 내내 안 보였다(검토). 더 나중 것이 위에 온다 */
+  const dcToday = dcv && iso(new Date(num(dcv.t))) === iso(new Date());
+  const dcFirst = dcToday && (!best || num(dcv.t) > num(best.t));
+  const putDc = () => {
+    if (dcToday && !stale() && !box.querySelector('#dcvWrap')) box.insertAdjacentHTML(dcFirst ? 'afterbegin' : 'beforeend', dcVerifyReport(dcv));
+  };
+  if (dcToday && !quiet) { goTab('ib'); ibPick('all'); }
   /* **그날 안에는 계속 보여 준다.** 예전에는 5분이었다. 폰이 검증을 마치면 알림을
      하나 남겼는데, 그 알림을 누르면 원래 쓰던 크롬 탭이 아니라 엉뚱한 브라우저가
      열렸다. 그래서 알림을 아예 없앴고(OverlayLauncher), 대신 결과가 이 화면에
@@ -4459,9 +4428,10 @@ async function latestVerify(quiet) {
      폰이 혼자 읽어 둔 날이 그렇다(수집기 4.12). 그날은 guideIB 가 갱신되지 않는다 */
   if (!best || !num(best.t) || iso(new Date(num(best.t))) !== iso(new Date())) {
     try { await syncMtsAsset(box); } catch (e) { }
+    putDc();
     return;
   }
-  if (box.innerHTML.trim()) return;
+  if (box.innerHTML.trim() || stale()) return;
   const what = best.what === 'vr' ? 'vr' : 'ib', txt = String(best.text || '');
   if (!quiet) { goTab('ib'); ibPick('all'); }
   box.innerHTML = txt.startsWith('ERR')
@@ -4470,6 +4440,7 @@ async function latestVerify(quiet) {
     : verifyReport(what, txt, num(best.t));
   /* 메리츠 자산 대조도 그날 것이 있으면 이어서 붙인다 (수집기 4.12) */
   try { await syncMtsAsset(box); } catch (e) { }
+  putDc();
 }
 
 async function runVerify(what) {
@@ -4484,12 +4455,20 @@ async function runVerify(what) {
   vfySet({ what, t0 });
   /* 돌아올 주소는 넘기지 않는다. 폰이 브라우저를 열지 않기 때문이다 —
      결과는 이 화면이 서버에서 직접 받아 온다(latestVerify). */
-  try { location.href = `intent://verify?what=${what}#Intent;scheme=jasan;package=kr.jasan.collector;end`; }
-  catch (e) { }
+  /* DC 검증은 **주소를 따로** 쓴다(jasan://dcverify, 수집기 4.40 · 검토). 옛 수집기는 verify 의 what 이 vr 이 아니면
+     전부 무매 길로 보내 fire gate 를 열고 메리츠 MY자산 지문까지 갔다. 새 주소를 못 받는 수집기면 크롬이
+     되돌림 주소(#vfy=dcold)로 이 화면에 돌아와 '4.40 이 필요하다' 고 말한다 */
+  const back = encodeURIComponent(location.href.split('#')[0] + '#vfy=dcold');
+  try {
+    location.href = what === 'dc'
+      ? `intent://dcverify#Intent;scheme=jasan;package=kr.jasan.collector;S.browser_fallback_url=${back};end`
+      : `intent://verify?what=${what}#Intent;scheme=jasan;package=kr.jasan.collector;end`;
+  } catch (e) { }
   pollVerify(what, t0, false);
 }
 
 async function pollVerify(what, t0, resumed) {
+  if (what === 'dc') return pollDc(t0, resumed);            // DC 검증은 미래에셋 잔고 — 결과 모양이 다르다 (2026-10-06)
   const gen = ++vfyGen;
   const box = $('#vfyOut'); if (!box) return;
   const key = what === 'vr' ? 'guideVR' : 'guideIB';
@@ -5233,6 +5212,220 @@ async function pollAsset(t0, box, gen) {
     + '<b>메리츠 자산 대조 결과가 오지 않았습니다.</b> 폰에서 메리츠가 MY자산까지 갔는지 확인해 주세요.</div></div>');
 }
 
+/* ===================== DC 검증 (2026-10-06, 사용자 요청) =====================
+   사용자: "DC운용중인 미래에셋은 예수금을 거의 유지하지 않고 불입금과 배당금을 기존 종목 매수함 … 수동 검증할수
+   있도록 기능구현. 미래에셋 실행>국내주식 잔고 내역확인하여 기존 자산과 달라진 부분을 수익또는 불입금반영할수
+   있도록 할것."
+
+   수집기(4.40)가 미래에셋증권 › 국내주식 잔고(퇴직연금 DC 계좌)를 읽어 meta.dcAsset 에 올린다 — 줄마다
+   종목명·보유수량·매입금액·평가금액·현재가·평균단가, 그리고 위 합계(매입금액·평가금액).
+   웹은 원장 마지막 날의 DC 좌수와 견주고, 다르면 그 차이를 **[불입·원금] / [배당·수익] / [정정]** 으로 고르게 한다.
+   고르면 원장 좌수를 미래에셋 값으로 맞추고 그날의 DC 기록(dcFlows — 'DC 좌수 변경 확인' 카드와 같은 기록)을 남긴다.
+
+   ── 못 본 것을 맞다고 치지 않는다 ──
+   줄마다 **보유수량 × 현재가 = 평가금액**(원 단위로 딱 맞는다 — 사용자 화면 네 줄 전부 확인) 또는
+   **보유수량 × 평균단가 ≈ 매입금액**(평균단가가 원 단위로 반올림돼 있어 1주당 1원 안)이 서야 그 줄의 수량을 믿는다.
+   줄 매입금액 합 = 위 합계 매입금액이어야 **다 읽은 것**이다 — 그래야 목록에 없는 종목을 0주로 친다.
+   어느 하나라도 안 서면 보여 주기만 하고 반영 버튼을 내지 않는다.
+
+   ── 금액 ──
+   지난 검증에서 맞춰 둔 매입금액(state.dcChk)과의 차이가 **산 금액 그대로**다(불입·배당 모두 기존 종목을 산다).
+   지난 읽기가 없거나 그 뒤 원장 좌수를 손으로 고쳤으면 늘어난 좌수 × 미래에셋 현재가로 어림하고 그렇다고 적는다.
+   좌수가 그대로면 아무것도 안 바꾸고 이번 읽기를 다음 기준으로만 적는다. */
+const dcKeyOf = name => {
+  const s = String(name || '').replace(/\s+/g, '');
+  return /TDF/i.test(s) ? 'TDF' : /KoAct/i.test(s) ? 'KoAct' : /TIME/i.test(s) ? 'TIME' : /RISE/i.test(s) ? 'RISE' : null;
+};
+const DC_FRESH = 3 * 3600e3;               // 이보다 오래된 읽기로는 반영하지 않는다 — 그 사이 원장이 바뀌었을 수 있다
+/* DC 계좌인가 — 수집기 DcLogic.isDc 와 같다. `[…]` 표시가 있으면 그 안에서만 본다(같은 줄의 'DC·IRP' 단추에 속지 않게) */
+const dcAcctOk = a => {
+  const s = String(a || ''), marks = [...s.matchAll(/\[([^\]]*)\]/g)].map(m => m[1]);
+  return marks.length ? marks.some(m => /DC/i.test(m)) : /DC/i.test(s);
+};
+let dcLast = null;                         // 화면에 그린 읽기 — 반영 버튼이 이것을 쓴다
+
+/* 읽기 하나를 원장과 견준다. 반영할 수 있는지(ok)와 그 까닭을 함께 낸다 */
+function dcAssetDiff(v) {
+  const x = latest() || {}, led = x.dc || {}, base = (state.dcChk && state.dcChk.rows) || {};
+  const out = { rows: [], unknown: [], bad: [], dup: [], why: [] };
+  const got = {};
+  (v.rows || []).forEach(r => {
+    const k = dcKeyOf(r.name);
+    if (!k) { out.unknown.push(r); return; }
+    if (got[k]) { out.dup.push(k); return; }
+    got[k] = r;
+    const q = num(r.qty), px = num(r.px), ev = num(r.eval), buy = num(r.buy), avg = num(r.avg);
+    const byEval = q > 0 && px > 0 && Math.abs(q * px - ev) < 0.5;
+    const byBuy = q > 0 && avg > 0 && Math.abs(q * avg - buy) <= q;
+    if (!(byEval || byBuy)) out.bad.push(k);
+  });
+  const sumBuy = (v.rows || []).reduce((a, r) => a + num(r.buy), 0);
+  out.complete = num(v.sumBuy) > 0 && Math.abs(sumBuy - num(v.sumBuy)) < 1;
+  DC_KEYS.forEach(k => {
+    const r = got[k], l = num(led[k]);
+    if (!r && !out.complete) { out.rows.push({ k, led: l, mir: null }); return; }       // 못 봤다 — 0 으로 치지 않는다
+    const mir = r ? num(r.qty) : 0, b = base[k];
+    /* 매입금액 차이는 지난 기준의 좌수가 지금 원장 좌수와 같을 때만 믿는다 — 사이에 손으로 고쳤으면 기준이 어긋난다 */
+    const dBuy = r && b && num(b.qty) === l ? num(r.buy) - num(b.buy) : null;
+    /* 값: 미래에셋 현재가. **다 팔려 목록에 없는 종목**은 원장 시세, 그것도 없으면 지난 기준의 평균단가(2차 검토 —
+       0 으로 두면 판 금액이 빠져 산 금액 전부가 '불입' 으로 채워졌다) */
+    const px = r ? num(r.px) : (num((x.px || {})[k]) || (b && num(b.qty) > 0 ? num(b.buy) / num(b.qty) : 0));
+    out.rows.push({ k, led: l, mir, dq: +(mir - l).toFixed(4), dBuy, px, buy: r ? num(r.buy) : 0 });
+  });
+  const ch = out.rows.filter(r => r.dq);
+  out.changed = ch.length > 0;
+  /* **판 종목이 있으면 '정확' 이 아니다**(검토). 판 줄의 매입금액 차이는 −평균단가×판 좌수라, 합하면 들어온 돈에
+     실현손익이 섞인다(갈아타기 + 불입 합성 예: 들어온 100만 → 149.6만으로 나왔다). 산 줄은 늘어난 매입금액(없으면
+     늘어난 좌수 × 현재가), 판 줄은 판 좌수 × 현재가로 어림하고 그렇다고 적는다 */
+  out.sold = ch.some(r => r.dq < 0);
+  out.exact = out.changed && !out.sold && ch.every(r => r.dBuy != null);
+  const useBuy = r => r.dq > 0 && r.dBuy != null;
+  out.amtUnknown = ch.some(r => !useBuy(r) && !(r.px > 0));          // 값을 모르는 줄이 있으면 어림하지 않는다 — 사람이 넣는다
+  out.amt = out.amtUnknown ? 0 : Math.round(ch.reduce((a, r) => a + (useBuy(r) ? r.dBuy : r.dq * r.px), 0));
+  /* 계좌 — **DC 라고 적힌 계좌**여야 하고, 한 번 맞춘 계좌번호와 같아야 한다(검토: IRP 잔고가 DC 원장에 들어갈 수 있었다) */
+  out.acct = (String(v.acct || '').match(/\d{3}-\d{4}-\d{4}-\d/) || [])[0] || '';
+  if (!dcAcctOk(v.acct)) out.why.push(`DC 계좌로 읽히지 않았습니다(${esc(v.acct || '계좌 글자 없음')})`);
+  else if (state.dcChk && state.dcChk.acct && out.acct !== state.dcChk.acct) {
+    out.acctMoved = !!out.acct;                                       // 바꿀 길을 낸다(2차 검토 — 묶은 번호를 풀 길이 없었다)
+    out.why.push(`계좌가 지난번(${esc(state.dcChk.acct)})과 다릅니다(${esc(out.acct || '못 읽음')})`);
+  }
+  if (!out.complete) out.why.push(num(v.sumBuy) > 0
+    ? `종목 줄 매입금액 합 ${fmt(sumBuy, 0)}원이 위 합계 ${fmt(num(v.sumBuy), 0)}원과 다릅니다 — 다 못 읽었습니다`
+    : '위 합계(매입금액)를 못 읽었습니다');
+  if (out.bad.length) out.why.push(`${out.bad.join('·')} 줄의 수량이 금액과 안 맞습니다(잘못 읽음)`);
+  if (out.dup.length) out.why.push(`${out.dup.join('·')} 가 두 줄입니다`);
+  if (out.unknown.length) out.why.push(`모르는 종목 ${out.unknown.map(r => esc(r.name)).join(', ')}`);
+  if (Date.now() - num(v.t) > DC_FRESH) out.why.push('오래된 읽기입니다 — 다시 검증해 주세요');
+  if (state.dcChk && num(state.dcChk.t) >= num(v.t)) out.done = true;              // 이미 반영(또는 기준으로 적은) 읽기
+  out.ok = !out.why.length;
+  return out;
+}
+
+function dcVerifyReport(v) {
+  const at = new Date(num(v.t)).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  if (!v.ok || !(v.rows || []).length) {
+    return `<div id="dcvWrap" class="warn" style="margin-top:9px"><span>◔</span><div><b>미래에셋 잔고를 읽지 못했습니다</b> <span class="u">${at}</span>
+      <br>${esc(v.err || '줄을 하나도 못 읽었습니다')}
+      ${v.trail ? `<details style="margin-top:6px"><summary style="font-size:11.5px">발자취</summary><pre style="white-space:pre-wrap;font-size:10.5px;margin:4px 0 0">${esc(v.trail)}</pre></details>` : ''}</div></div>`;
+  }
+  dcLast = v;
+  const d = dcAssetDiff(v);
+  const rows = d.rows.map(r => `<tr><td>${esc(r.k)}</td><td>${fmt(r.led, 0)}</td>
+      <td>${r.mir == null ? '<span style="color:var(--muted)">못 봄</span>' : fmt(r.mir, 0)}</td>
+      <td class="${r.dq > 0 ? 'up' : r.dq < 0 ? 'dn' : ''}">${r.mir == null ? '' : r.dq ? (r.dq > 0 ? '+' : '−') + fmt(Math.abs(r.dq), 0) : '✓'}</td></tr>`).join('');
+  const ledEvalMan = calc(latest()).dcv;                    // 원장 DC 평가액(만원) — 좌수 × 종가, 없으면 손으로 넣은 값
+  let act = '';
+  if (d.ok && d.changed && !d.done) {
+    act = `<div class="note" style="margin:8px 0 0">${esc(d.rows.filter(r => r.dq).map(r => `${r.k} ${r.dq > 0 ? '+' : '−'}${fmt(Math.abs(r.dq), 0)}좌`).join(' · '))} —
+        <b>${d.exact ? '지난 검증 뒤 늘어난 매입금액'
+          : d.sold ? '산 금액 − 판 좌수 × 현재가(어림)' : '늘어난 좌수 × 미래에셋 현재가(어림)'}</b>${d.exact ? ''
+          : d.sold ? ' · <b>판 종목이 있습니다</b> — 매입금액 차이에 실현손익이 섞여 어림했습니다. 입금안내 금액으로 고쳐 주세요(갈아타기만 했으면 [정정])'
+          : ' · 입금안내 금액이 있으면 그것으로 고쳐 주세요'}${d.amtUnknown ? ' · <b>값을 모르는 종목이 있어 금액을 비워 뒀습니다</b>' : ''}</div>
+      <div class="erow" style="padding:6px 0 0"><label>금액 <span class="u">원</span></label>
+        <input class="num" type="number" step="1" inputmode="numeric" id="dcvAmt" value="${Math.max(0, d.amt)}"></div>
+      <div style="display:flex;gap:6px;margin-top:6px">
+        <button class="act" data-dcv="in" style="flex:1;padding:8px;font-size:12.5px">불입 · 원금</button>
+        <button class="ghost" data-dcv="div" style="flex:1;padding:8px;font-size:12.5px">배당 · 수익</button>
+        <button class="ghost" data-dcv="fix" style="flex:none;padding:8px 9px;font-size:12px">정정</button></div>
+      <p class="note" style="margin:6px 0 0">고르면 원장 마지막 날(${esc(latestKey() || '')})의 DC 좌수를 미래에셋 값으로 맞추고 DC 기록에 남깁니다.
+        불입은 원금에 더하고, 배당은 수익으로 잡고, 정정은 좌수만 맞춥니다.</p>`;
+  } else if (d.ok && d.changed && d.done) {
+    act = '<p class="note" style="margin:8px 0 0">이 읽기는 이미 반영했습니다. 원장이 그 뒤 바뀌었으면 다시 검증해 주세요.</p>';
+  } else if (!d.ok) {
+    act = `<div class="warn" style="margin-top:8px"><span>◔</span><div>반영하지 않습니다 — ${d.why.join(' · ')}
+      ${d.acctMoved && d.why.length === 1 ? `<div style="margin-top:6px"><button class="ghost" data-dcv="acct" style="padding:6px 9px;font-size:12px">
+        DC 계좌가 바뀌었으면 — 이 계좌(${esc(d.acct)})로 다시 맞춤</button></div>` : ''}</div></div>`;
+  }
+  return `<div id="dcvWrap" class="card" style="margin-top:9px;padding:10px 12px">
+      <div class="pc-h" style="gap:6px">DC 검증 <span class="u">미래에셋 ${at}</span>
+        <span style="margin-left:auto;font-size:12px;color:${d.ok && !d.changed ? 'var(--pos)' : 'var(--ink2)'}">${d.ok && !d.changed ? '좌수 일치 ✓' : d.changed ? '좌수가 다릅니다' : ''}</span></div>
+      <div class="u" style="margin-top:3px;font-size:11.5px">계좌 ${esc(v.acct || '—')}</div>
+      <table class="tbl" style="width:100%;margin-top:6px"><tr><th style="text-align:left">종목</th><th>원장</th><th>미래에셋</th><th>차이</th></tr>${rows}</table>
+      <p class="note" style="margin:6px 0 0">평가금액 미래에셋 ${HIDE ? MASK : fmt(num(v.sumEval) / 1e4, 0)}만 · 원장 ${HIDE ? MASK : fmt(ledEvalMan, 0)}만원
+        <span class="u">(현재가 시각이 달라 조금 다를 수 있습니다)</span></p>${act}</div>`;
+}
+
+/* 좌수가 그대로인 읽기는 다음 금액 계산의 기준으로만 적는다 — 원장은 안 건드린다 */
+function dcTakeBaseline(v, d) {
+  if (!d.ok || d.changed || d.done) return;
+  const rows = {};
+  d.rows.forEach(r => { if (r.mir != null) rows[r.k] = { qty: r.mir, buy: r.buy }; });
+  state.dcChk = { t: num(v.t), rows, acct: d.acct };
+  saveLocal(); schedulePush();
+}
+
+function dcVerifyApply(kind) {
+  const v = dcLast; if (!v) return;
+  const d = dcAssetDiff(v);
+  const redraw = () => { const w = $('#dcvWrap'), box = $('#vfyOut'); if (w) w.outerHTML = dcVerifyReport(v); else if (box) box.innerHTML = dcVerifyReport(v); };
+  /* DC 계좌 번호가 정말 바뀐 경우(이직·제도 이전) — 사람이 확인하고 새 번호로 다시 묶는다. 지난 기준(매입금액)은 다른 계좌 것이라 버린다 */
+  if (kind === 'acct') {
+    if (!d.acctMoved || !d.acct) return;
+    if (!confirm(`DC 계좌를 ${d.acct} 로 바꿉니다.\n지난 계좌의 기준(좌수·매입금액)은 버리고 이번 읽기부터 다시 맞춥니다.`)) return;
+    state.dcChk = { t: 0, rows: {}, acct: d.acct };
+    saveLocal(); schedulePush(); redraw();
+    return;
+  }
+  if (!d.ok || !d.changed || d.done) { toast('반영할 수 없는 읽기입니다 — 다시 검증해 주세요'); return; }
+  const amt = Math.round(num(($('#dcvAmt') || {}).value));
+  if (kind !== 'fix' && !(amt > 0)) { toast('금액을 넣어 주세요'); return; }
+  const dk = latestKey(), day = state.days[dk];
+  /* 같은 날 이미 고른 기록이 있거나, **오늘 이미 좌수가 바뀌어 있으면**(손으로 고쳤는데 아직 안 고른 것) 기록을 넣지 않는다 —
+     그날 기록 하나가 두 변경을 다 덮는데 금액은 이번 차이뿐이라서다. 좌수만 맞추고 'DC 좌수 변경 확인' 카드가 합쳐서 묻게 한다 */
+  const had = dcFlows().find(f => f.d === dk) || dcEvents().find(x => x.d === dk);
+  day.dc = Object.assign({}, day.dc);
+  d.rows.forEach(r => { if (r.mir != null) day.dc[r.k] = r.mir; });
+  markDirty(dk);
+  const e = dcEvents().find(x => x.d === dk);
+  if (e && !had) {
+    state.dcFlows = dcFlows().concat([{ d: dk, kind, amt: kind === 'fix' ? 0 : amt, q: e.q, ts: Date.now(), src: 'dcv' }])
+      .sort((a, b) => a.d < b.d ? -1 : 1);
+  }
+  const rows = {};
+  d.rows.forEach(r => { if (r.mir != null) rows[r.k] = { qty: r.mir, buy: r.buy }; });
+  state.dcChk = { t: num(v.t), rows, acct: d.acct };
+  saveLocal(); schedulePush(); renderAll();
+  redraw();                                         // DC 카드만 다시 그린다 — 같은 칸의 무매/VR 결과·메리츠 대조는 그대로 둔다
+  toast(had ? '좌수를 맞췄습니다 — 오늘 이미 바뀐 좌수(또는 고른 기록)가 있어 입력 탭 \'DC 좌수 변경 확인\' 에서 합쳐 골라 주세요'
+    : kind === 'in' ? `불입 ${fmt(amt, 0)}원 · DC 원금 ${fmt(dcCostWon() / 1e4, 0)}만원`
+      : kind === 'div' ? `배당 ${fmt(amt, 0)}원 · 수익으로 잡힙니다` : '좌수만 맞췄습니다 · 원금 그대로');
+}
+
+/* DC 검증 결과를 기다린다 — 미래에셋 로그인(사람)이 끼므로 넉넉히 */
+async function pollDc(t0, resumed) {
+  const gen = ++vfyGen;
+  const box = $('#vfyOut'); if (!box) return;
+  vfyBusy = true;
+  const say = m => { box.innerHTML = `<p class="note" style="margin:9px 3px 0">${m}</p>`; };
+  say(resumed ? 'DC 검증 결과를 기다리는 중…'
+    : '미래에셋을 여는 중… 폰에서 <b>국내주식 잔고</b>까지 갑니다. 로그인을 물으면 직접 해 주세요.');
+  for (let i = 0; i < 120; i++) {                      // 최대 4분
+    await new Promise(r => setTimeout(r, 2000));
+    if (gen !== vfyGen) return;
+    /* 로그인 안 된 브라우저로 열렸으면 4분을 세지 말고 바로 말한다 — pollVerify 와 같다(검토) */
+    if (i >= 2 && (!SB || !sbTok)) {
+      vfyBusy = false;
+      box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div>
+        <b>이 브라우저는 서버에 연결되어 있지 않습니다.</b> 결과는 서버에 올라가 있으니
+        <b>검증을 실행한 브라우저</b>에서 무매/VR 탭을 열거나, 입력 탭에서 로그인해 주세요.</div></div>`;
+      return;
+    }
+    let rows = null;
+    try { rows = await sbReq('/rest/v1/meta?k=eq.dcAsset&select=v'); } catch (e) { }
+    const v = rows && rows[0] && rows[0].v;
+    if (v && num(v.t) > t0) {
+      vfyBusy = false; vfySet(null);
+      box.innerHTML = dcVerifyReport(v);
+      if (v.ok) dcTakeBaseline(v, dcAssetDiff(v));
+      return;
+    }
+    say(`미래에셋 잔고를 읽는 중… ${(i + 1) * 2}초 · 로그인을 물으면 폰에서 직접 해 주세요`);
+  }
+  vfyBusy = false; vfySet(null);
+  box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>DC 검증 결과가 오지 않았습니다.</b>
+    폰에서 확인해 주세요 — ① 수집기 앱이 4.40 이상인지 ② 미래에셋이 열렸는지 ③ 국내주식 잔고 화면까지 갔는지.</div></div>`;
+}
+
 document.getElementById('p-ib')?.addEventListener('click', e => {
   if (e.target.closest('[data-trailcopy]')) {
     const t = mtsAssetRaw || '';
@@ -5262,6 +5455,9 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
   }
   if (e.target.closest('#vfyIB')) { runVerify('ib'); return; }
   if (e.target.closest('#vfyVR')) { runVerify('vr'); return; }
+  if (e.target.closest('#vfyDC')) { runVerify('dc'); return; }
+  const dcb = e.target.closest('[data-dcv]');
+  if (dcb) { dcVerifyApply(dcb.dataset.dcv); return; }
   const pb = e.target.closest('#vfyPaste');
   if (pb) {
     try { guideText = decodeURIComponent(escape(atob(pb.dataset.t))); } catch (err) { guideText = ''; }
@@ -6987,7 +7183,7 @@ function showTab(t) {
   window.scrollTo({ top: 0, behavior: 'instant' });
   if (t === 'sum') renderSummary();
   if (t === 'plan') renderPlan();
-  if (t === 'ib') { renderIB(); ibPlanStatus(); latestVerify(true); }
+  if (t === 'ib') { renderIB(); latestVerify(true); }
   if (t === 'in') { renderReviewList(); renderRecentApplied(); renderDcAsk(); }
 }
 function goTab(t) { if (UI.tab !== t) showTab(t); }
@@ -7278,6 +7474,8 @@ async function sbPushMeta(planNow) {
     { k: 'usdChk', v: state.usdChk || {} },
     /* DC 불입·배당 기록 (2026-10-06) — DC 원금이 여기서 나온다. 기기마다 따로 놀면 기기마다 DC 손익이 다르다 */
     { k: 'dcFlows', v: state.dcFlows || [] },
+    /* DC 검증 기준(지난 읽기의 좌수·매입금액, 2026-10-06) — 기기마다 따로 놀면 늘어난 매입금액을 엉뚱한 기준으로 잰다 */
+    { k: 'dcChk', v: state.dcChk || {} },
     /* 주문표를 만들다 터져도 나머지 동기화까지 막으면 안 된다.
        예전에는 이게 sbPushMeta 안에서 그대로 던져서, 실패하면 그날 원장이
        통째로 안 올라갔다. */
@@ -7916,6 +8114,7 @@ async function initSupabase() {
       if (meta.fixed) state.fixed = meta.fixed;
       if (meta.usdChk) state.usdChk = meta.usdChk;
       if (meta.dcFlows) state.dcFlows = meta.dcFlows;
+      if (meta.dcChk) state.dcChk = meta.dcChk;
       state.ts = meta.ts; ensureMeta(); ensurePlan(); saveLocal(); renderAll();
       toast('서버에서 최신 기록을 불러왔습니다');
     } else if (!isEmptyLedger()) {
