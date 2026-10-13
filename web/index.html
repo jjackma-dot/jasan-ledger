@@ -769,7 +769,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-13 17:37';
+const BUILD = '2026-10-13 18:29';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -7667,6 +7667,8 @@ $('#holdEdit').addEventListener('change', e => {
   /* 외화예수금을 손으로 고친 시각 (2026-09-30) — 그 전에 읽은 메리츠 값으로 이 값을 되돌리지 않게, 그 전에 지급된 배당을
      다시 넣지 않게(mtsAssetCommit · divCands). 사람이 메리츠 값을 보고 맞춘 것으로 본다 */
   if (p === 'usd') { state.usdChk = state.usdChk || { d: '', t: 0, log: [] }; state.usdChk.fixT = Date.now(); schedulePush(); }
+  /* 원화예수금을 손으로 고쳤으면 — 그 전에 받은 메리츠 장부로 되돌리지 않고, 이자 기준일을 오늘로 */
+  if (p === 'krw') { state.krwChk = state.krwChk || { d: '', log: [] }; state.krwChk.fixT = Date.now(); state.krwChk.d = iso(new Date()); schedulePush(); }
   markDirty(latestKey()); saveLocal(); renderSummary(); renderAnalysis(); renderPlan();
   /* DC 좌수를 고쳤으면 그 자리에서 불입인지 배당인지 묻는다 (2026-10-06) */
   if (p.startsWith('dc.')) renderDcAsk();
@@ -7904,6 +7906,8 @@ async function sbPushMeta(planNow) {
     /* 예수금 이자 기준일·마지막으로 본 읽기(수집기 4.12). 이것이 기기마다 따로 놀면
        **같은 이자를 두 번 넣거나** 한도를 잘못 재게 된다 */
     { k: 'usdChk', v: state.usdChk || {} },
+    /* 원화예수금 이자 기준일·자동 반영 기록 (2026-10-13) — 기기마다 따로 놀면 같은 이자를 두 번 재거나 한도를 잘못 잰다 */
+    { k: 'krwChk', v: state.krwChk || {} },
     /* DC 불입·배당 기록 (2026-10-06) — DC 원금이 여기서 나온다. 기기마다 따로 놀면 기기마다 DC 손익이 다르다 */
     { k: 'dcFlows', v: state.dcFlows || [] },
     /* DC 검증 기준(지난 읽기의 좌수·매입금액, 2026-10-06) — 기기마다 따로 놀면 늘어난 매입금액을 엉뚱한 기준으로 잰다 */
@@ -8565,6 +8569,7 @@ async function initSupabase() {
       if (meta.undone) state.undone = meta.undone;
       if (meta.fixed) state.fixed = meta.fixed;
       if (meta.usdChk) state.usdChk = meta.usdChk;
+      if (meta.krwChk) state.krwChk = meta.krwChk;
       if (meta.dcFlows) state.dcFlows = meta.dcFlows;
       if (meta.dcChk) state.dcChk = meta.dcChk;
       state.ts = meta.ts; ensureMeta(); ensurePlan(); saveLocal(); renderAll();
@@ -8802,6 +8807,23 @@ function apiHasGroup(p, refMs) {
   const fd = usTradeDay(p.date, refMs);
   return !!fd && dayKeys().some(k => (state.days[k].tr || []).some(t => t.by === 'api' && t.g === p.grp && t.s === p.slot && t.side === p.side && t.fd === fd));
 }
+/* 이자로 볼 수 있는 차이인가 — 연 5% 일할, 최소 닷새치(외화와 같은 규칙, 사용자 2026-09-22·10-13). 메리츠가 **더 많을 때만** */
+const KRW_EPS = 0.00005;                  // 만원 단위 — 0.5원
+function apiFit(was, them, anchor, eps) {
+  const days = Math.max(USD_MIN_DAYS, daysBetween(anchor, iso(new Date())));
+  const cap = +(Math.abs(was) * USD_APR * days / 365).toFixed(4);
+  const diff = them - was;
+  return { days, cap, auto: diff > eps && diff <= cap + eps };
+}
+/* 원화예수금의 이자 기준일 — 마지막으로 맞춘 날, 없으면 원장 원화예수금이 마지막으로 바뀐 날(외화 usdAnchor 와 같다) */
+function krwAnchor() {
+  const c = state.krwChk;
+  if (c && c.d) return c.d;
+  const ks = dayKeys();
+  for (let i = ks.length - 1; i > 0; i--)
+    if (Math.abs(num(state.days[ks[i]].krw) - num(state.days[ks[i - 1]].krw)) > KRW_EPS) return ks[i];
+  return ks[0] || iso(new Date());
+}
 const apiBtxIds = () => { const s = new Set(); dayKeys().forEach(k => (state.days[k].btx || []).forEach(b => s.add(b.id))); return s; };
 
 /* 한 판의 대조 — 넣을 수 있는 것은 넣고, 결과를 API.rec 에 둔다(화면·경고가 읽는다) */
@@ -8918,10 +8940,40 @@ function apiReconcile() {
        단 메리츠 장부에서 넣은 체결(by 'api')은 체결 시각(ft)이 장부보다 앞이면 그 값에 이미 들어 있다 */
     const tMin = Math.min(...fresh.map(b => num(b.t)));
     const late = dayKeys().some(k => (state.days[k].tr || []).some(x => num(x.t) > tMin && !(x.by === 'api' && num(x.ft) > 0 && num(x.ft) < tMin)))
-      || flowAfter(tMin);
+      || flowAfter(tMin) || usdFixAfter(tMin);
     rec.cash = { them, was, diff: +(them - was).toFixed(2), late, t: tMin, per: API_ACCTS.map((a, i) => ({ acct: a, cash: books[i] ? num(books[i].usd.eco) : null, open: books[i] ? num(books[i].usd.open) : 0 })) };
+    /* 이자 한도 안에서 메리츠가 더 많으면 맞춘다(사용자 2026-10-13: "외화예수금처럼 이자 범위 안에서는 자동반영") — 배당·이자는 입출금
+       내역으로 정확히 넣지만, 날짜를 못 붙인 행·연결 앞의 어림 차이·센트 반올림이 남을 수 있다. 연 5% 일할(최소 닷새치) 안이면 이자다 */
+    const fit = apiFit(was, them, usdAnchor(), USD_EPS);
+    if (!late && fit.auto) {
+      latest().usd = them;
+      const chk = state.usdChk || (state.usdChk = { d: '', t: 0, log: [] });
+      chk.log = [{ d: iso(new Date()), amt: rec.cash.diff, days: fit.days, from: was, to: them, api: true }].concat(chk.log || []).slice(0, 20);
+      chk.d = iso(new Date());
+      markDirty(latestKey()); changed = true;
+      rec.cash.auto = rec.cash.diff; rec.cash.cap = fit.cap; rec.cash.diff = 0; rec.cash.was = them;
+    } else rec.cash.cap = fit.cap;
     if (!late && Math.abs(rec.cash.diff) > USD_EPS) rec.issues.push({ acct: '', kind: 'cash', cash: rec.cash });
   }
+  /* 원화예수금 — 메리츠 예수금(3020 + 3081, 원)과 원장(만원). 원화도 밤마다 RP 로 넘어가 그동안은 예수금이 0 이라 견줄 수 없다(book.krw.ok) —
+     RP 가 돌아온 낮의 장부(12:15)로 견준다. 이자 한도 안이면 자동으로 맞추고, 넘으면 알린다(입금이면 입력 탭 입출금으로 — 기준원금이 움직인다) */
+  const kb = books.filter(b => b && b.krw && b.krw.ok && !(b.stale || []).includes('krw') && Date.now() - num(b.t) < API_BOOK_STALE);
+  if (kb.length === API_ACCTS.length) {
+    const them = +(kb.reduce((s, b) => s + num(b.krw.tfam), 0) / 1e4).toFixed(4), was = +num(latest().krw).toFixed(4);
+    const tMin = Math.min(...kb.map(b => num(b.t)));
+    const late = flowAfter(tMin) || num((state.krwChk || {}).fixT) > tMin;
+    rec.krw = { them, was, diff: +(them - was).toFixed(4), late, t: tMin };
+    const fit = apiFit(was, them, krwAnchor(), KRW_EPS);
+    if (!late && fit.auto) {
+      latest().krw = them;
+      const chk = state.krwChk || (state.krwChk = { d: '', log: [] });
+      chk.log = [{ d: iso(new Date()), amt: rec.krw.diff, days: fit.days, from: was, to: them }].concat(chk.log || []).slice(0, 20);
+      chk.d = iso(new Date());
+      markDirty(latestKey()); changed = true;
+      rec.krw.auto = rec.krw.diff; rec.krw.cap = fit.cap; rec.krw.diff = 0; rec.krw.was = them;
+    } else rec.krw.cap = fit.cap;
+    if (!late && Math.abs(rec.krw.diff) > KRW_EPS) rec.issues.push({ acct: '', kind: 'krw', krw: rec.krw });
+  } else rec.krw = { skip: books.some(b => b && b.krw && b.krw.rp_held) ? 'rp' : 'none' };
   if (changed) {
     saveLocal();
     renderAll();
@@ -8932,16 +8984,18 @@ function apiReconcile() {
   return rec;
 }
 
-/* 메리츠 외화예수금으로 원장을 맞춘다 — 사람이 누를 때만. 손으로 고친 것과 같게 적는다(usdChk.fixT — 배당 인식이 그 뒤 옛 읽기를 다시 보지 않게) */
-function apiFixCash() {
-  const c = API.rec && API.rec.cash; if (!c || c.late) return;
-  if (!confirm(`원장 외화예수금 $${fmt(c.was, 2)} 을 메리츠 합계 $${fmt(c.them, 2)} 로 맞춥니다(차이 ${c.diff >= 0 ? '+' : '−'}$${fmt(Math.abs(c.diff), 2)}).\n\n`
-    + '환전·입금처럼 원금이 움직인 것이면 입력 탭의 입출금으로 넣어야 기준원금이 맞습니다. 계속할까요?')) return;
-  latest().usd = c.them;
-  const chk = state.usdChk || (state.usdChk = { d: '', t: 0, log: [] });
-  chk.fixT = Date.now();
+/* 메리츠 값으로 원장 예수금을 맞춘다 — 이자 한도를 넘는 차이는 사람이 누를 때만. 손으로 고친 것과 같게 적는다
+   (외화 usdChk.fixT — 배당 인식이 그 뒤 옛 읽기를 다시 보지 않게 · 원화 krwChk.fixT) */
+function apiFixCash(kind) {
+  const krwK = kind === 'krw', c = API.rec && (krwK ? API.rec.krw : API.rec.cash);
+  if (!c || c.late || c.skip) return;
+  const say = krwK ? v => fmt(v * 1e4, 0) + '원' : v => '$' + fmt(v, 2);
+  if (!confirm(`원장 ${krwK ? '원화' : '외화'}예수금 ${say(c.was)} 을 메리츠 ${say(c.them)} 로 맞춥니다(차이 ${c.diff >= 0 ? '+' : '−'}${say(Math.abs(c.diff))}).\n\n`
+    + '입금·출금·환전처럼 원금이 움직인 것이면 입력 탭의 입출금으로 넣어야 기준원금이 맞습니다. 계속할까요?')) return;
+  if (krwK) { latest().krw = c.them; const k = state.krwChk || (state.krwChk = { d: '', log: [] }); k.fixT = Date.now(); k.d = iso(new Date()); }
+  else { latest().usd = c.them; const chk = state.usdChk || (state.usdChk = { d: '', t: 0, log: [] }); chk.fixT = Date.now(); }
   markDirty(latestKey()); saveLocal(); renderAll(); apiReconcile(); renderApiAlert();
-  toast('외화예수금을 메리츠에 맞췄습니다');
+  toast((krwK ? '원화' : '외화') + '예수금을 메리츠에 맞췄습니다');
 }
 
 /* ── 경고 ─────────────────────────────────────────────────────────────── */
@@ -9008,7 +9062,9 @@ function apiAlerts() {
     if (f.length) out.push({ key: 'rec', t: num(Math.max(...API_ACCTS.map(a => num((apiBook(a) || {}).t)))), lv: 'warn',
       title: `메리츠와 원장이 ${f.length}곳 다릅니다`, body: f.slice(0, 2).map(apiIssueText).join(' · ') });
     const c = rec.issues.find(i => i.kind === 'cash');
-    if (c) out.push({ key: 'cash', t: num(c.cash.t), lv: 'warn', title: `외화예수금이 메리츠와 ${c.cash.diff >= 0 ? '+' : '−'}$${fmt(Math.abs(c.cash.diff), 2)} 다릅니다`, body: '무매/VR › 자동 › 장부 대조' });
+    if (c) out.push({ key: 'cash', t: num(c.cash.t), lv: 'warn', title: `외화예수금이 메리츠와 ${c.cash.diff >= 0 ? '+' : '−'}$${fmt(Math.abs(c.cash.diff), 2)} 다릅니다`, body: '이자 한도 밖 — 무매/VR › 자동 › 장부 대조' });
+    const kr = rec.issues.find(i => i.kind === 'krw');
+    if (kr) out.push({ key: 'krw', t: num(kr.krw.t), lv: 'warn', title: `원화예수금이 메리츠와 ${kr.krw.diff >= 0 ? '+' : '−'}${fmt(Math.abs(kr.krw.diff) * 1e4, 0)}원 다릅니다`, body: '입금·출금이면 입력 탭 입출금으로 — 무매/VR › 자동 › 장부 대조' });
   }
   if (API.err && API.errAt && now - API.errAt > 3 * 60e3)
     out.push({ key: 'net', t: API.errAt, lv: 'warn', title: '자동매매 기록을 읽지 못했습니다', body: API.err.slice(0, 120) });
@@ -9198,12 +9254,21 @@ function apiBookCard() {
       <div class="d num" style="color:var(--muted)">평단 $${fmt(h.avgM, 4)}${!h.avgOk ? ' ≠' : ''}</div></div></div>`).join('');
   const c = rec.cash;
   const cashRow = c ? `<div class="row"><div style="min-width:0"><div class="nm">외화예수금 <span class="u">3020 + 3081 · RP 포함</span>
-      <span class="sub">원장 $${fmt(c.was, 2)} · ${c.per.map(p => p.acct + ' $' + fmt(num(p.cash), 2) + (p.open ? ' (열린 매수 $' + fmt(p.open, 0) + ' 포함)' : '')).join(' · ')}</span></div></div>
+      <span class="sub">원장 $${fmt(c.was, 2)} · ${c.per.map(p => p.acct + ' $' + fmt(num(p.cash), 2) + (p.open ? ' (열린 매수 $' + fmt(p.open, 0) + ' 포함)' : '')).join(' · ')}${c.auto ? ` · 이자 +$${fmt(c.auto, 2)} 자동 반영` : ''}</span></div></div>
     <div class="vals"><div class="v num" style="color:${Math.abs(c.diff) <= USD_EPS ? 'var(--c2)' : c.late ? 'var(--muted)' : 'var(--up)'}">$${fmt(c.them, 2)}</div>
       <div class="d num" style="color:var(--muted)">${Math.abs(c.diff) <= USD_EPS ? '같음' : c.late ? '장부 뒤 반영분 있음' : (c.diff >= 0 ? '+' : '−') + '$' + fmt(Math.abs(c.diff), 2)}</div></div></div>`
     + (!c.late && Math.abs(c.diff) > USD_EPS ? `<div class="row" style="background:var(--surf2)"><div class="nm" style="font-size:11.5px;line-height:1.5;color:var(--ink2);flex:1;white-space:normal">
       원장에 없는 배당·이자·환전·입출금이거나 빠진 체결일 수 있습니다. 아래 <b>입출금</b>과 <b>체결 대조</b>를 먼저 보고,
-      그래도 다르면 <button class="ghost" data-apifixcash style="padding:4px 9px;font-size:11.5px">메리츠 값으로 맞추기</button></div></div>` : '') : '';
+      그래도 다르면 <button class="ghost" data-apifixcash="usd" style="padding:4px 9px;font-size:11.5px">메리츠 값으로 맞추기</button></div></div>` : '') : '';
+  const k = rec.krw || {};
+  const krwRow = k.skip ? `<div class="row"><div class="nm">원화예수금 <span class="sub">${k.skip === 'rp' ? '밤 동안 원화 RP 에 들어가 있어 견주지 않습니다 — 낮 장부(12:15)에서 봅니다' : '메리츠 원화 예수금을 아직 못 받았습니다'}</span></div></div>`
+    : k.them != null ? `<div class="row"><div style="min-width:0"><div class="nm">원화예수금 <span class="u">3020 + 3081</span>
+        <span class="sub">원장 ${fmt(num(k.was) * 1e4, 0)}원${k.auto ? ` · 이자 +${fmt(k.auto * 1e4, 0)}원 자동 반영` : ''}</span></div></div>
+      <div class="vals"><div class="v num" style="color:${Math.abs(k.diff) <= KRW_EPS ? 'var(--c2)' : k.late ? 'var(--muted)' : 'var(--up)'}">${fmt(num(k.them) * 1e4, 0)}원</div>
+        <div class="d num" style="color:var(--muted)">${Math.abs(k.diff) <= KRW_EPS ? '같음' : k.late ? '장부 뒤 반영분 있음' : (k.diff >= 0 ? '+' : '−') + fmt(Math.abs(k.diff) * 1e4, 0) + '원 · 이자 한도 ' + fmt(num(k.cap) * 1e4, 0) + '원'}</div></div></div>`
+      + (!k.late && Math.abs(k.diff) > KRW_EPS ? `<div class="row" style="background:var(--surf2)"><div class="nm" style="font-size:11.5px;line-height:1.5;color:var(--ink2);flex:1;white-space:normal">
+        이자 한도를 넘거나 메리츠가 더 적습니다. 입금·출금이면 <b>입력 탭 입출금</b>으로 넣고(기준원금이 움직인다), 그래도 다르면
+        <button class="ghost" data-apifixcash="krw" style="padding:4px 9px;font-size:11.5px">메리츠 값으로 맞추기</button></div></div>` : '') : '';
   /* 체결 대조 — 묶음(자리·뉴욕 체결일·방향)마다 */
   const gs = API_ACCTS.flatMap(a => ((rec.accts[a] || {}).groups || []).map(g => ({ a, g }))).sort((p, q) => p.g.fd < q.g.fd ? 1 : -1);
   const okN = gs.filter(({ g }) => !g.extra.length && !g.missing.length && !(g.hold || []).length).length;
@@ -9220,7 +9285,7 @@ function apiBookCard() {
       <td style="color:${r.booked ? 'var(--c2)' : API_TX_PUT.includes(r.x.kind) && r.x.d >= API_TX_FROM ? 'var(--up)' : 'var(--muted)'}">${r.booked ? (r.now ? '넣음' : '원장 ✓') : r.x.d < API_TX_FROM ? '연결 앞' : API_TX_PUT.includes(r.x.kind) ? '못 넣음' : '손으로'}</td></tr>`).join('');
   return `<h2 class="sec">메리츠 장부 대조</h2><div class="card rows">
     <div class="grp-h" style="padding-left:15px">보유 · 외화예수금 <span class="u" style="letter-spacing:0;text-transform:none">${head}</span></div>
-    ${holdRows}${cashRow}</div>`
+    ${holdRows}${cashRow}${krwRow}</div>`
     + secD('apiFills', '체결 대조', `<div class="card pad"><p class="note" style="margin-top:0">메리츠 주문체결(주문 단위)과 원장 체결을 <b>자리 · 뉴욕 체결일 · 방향</b>으로 맞춥니다.
         <b>${API_FROM}</b> 부터 원장에 없는 메리츠 체결은 그 체결 시각의 원장 날짜에 넣습니다(넣은 줄은 입력 탭 반영내역에 <b>API</b>).
         원장에만 있는 줄은 잘못 반영된 것일 수 있어 알리기만 합니다.</p>
@@ -9335,7 +9400,7 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
   const s = e.target.closest('[data-apistop]'); if (s) { apiStopSet(s.dataset.apistop === '1'); return; }
   if (e.target.closest('[data-pushon]')) { pushOn(); return; }
   if (e.target.closest('[data-pushoff]')) { pushOff(); return; }
-  if (e.target.closest('[data-apifixcash]')) { apiFixCash(); return; }
+  const fx = e.target.closest('[data-apifixcash]'); if (fx) { apiFixCash(fx.dataset.apifixcash || 'usd'); return; }
 });
 
 /* ===================== 시작 ===================== */
