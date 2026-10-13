@@ -356,13 +356,14 @@ nav button[aria-pressed="true"]{color:var(--brass);border-top-color:var(--brass)
 .apir0{display:flex;align-items:center;gap:7px;padding:10px 15px;border-top:1px solid var(--line)}
 .apir0 .nm{font-size:13px;font-weight:600;color:var(--ink);flex:none}
 details.apir{border-top:1px solid var(--line)}
-details.apir>summary{display:flex;align-items:center;gap:7px;padding:10px 15px;cursor:pointer;list-style:none;min-width:0}
+/* 첫 줄 이름 · 모드 · 시각, 둘째 줄 상태('양호 — 오늘 18:35 주문 예정') — 폰 폭에서 상태가 잘리지 않게 (2026-10-14) */
+details.apir>summary{display:flex;flex-wrap:wrap;align-items:center;gap:3px 7px;padding:10px 15px;cursor:pointer;list-style:none;min-width:0}
 details.apir>summary::-webkit-details-marker{display:none}
 details.apir>summary::before{content:"\25B8";color:var(--brass);font-size:10px;width:9px;flex:none}
 details.apir[open]>summary::before{content:"\25BE"}
 details.apir .nm{font-size:13px;font-weight:600;color:var(--ink);flex:none}
-details.apir .st{font-size:12px;font-weight:600;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-details.apir .tm{flex:none;font-size:11px;color:var(--muted);font-family:"IBM Plex Mono",monospace}
+details.apir .st{font-size:12.5px;font-weight:600;flex:1 0 100%;padding-left:16px;line-height:1.45;overflow-wrap:anywhere}
+details.apir .tm{flex:none;margin-left:auto;font-size:11px;color:var(--muted);font-family:"IBM Plex Mono",monospace}
 details.apir>.apib{padding:0 15px 12px 31px}
 .mpill{flex:none;font-size:10px;font-weight:700;letter-spacing:.04em;padding:1px 6px;border-radius:5px}
 .apit th+th,.apit td+td{padding-left:8px}
@@ -796,7 +797,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-14 00:07';
+const BUILD = '2026-10-14 08:33';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -3578,13 +3579,14 @@ function ibCommonPanel(mid = '') {
       const c = mtsCashAcct.cash.filter(x => x.acct.slice(0, 4) === ac);
       if (!c.length) return `${ac} 예수금 못 읽음`;
       const have = c.reduce((s, x) => s + x.usd, 0), l = have - byAcct[ac];
-      return `${ac} ${ibU(have, 0)} − ${ibU(byAcct[ac], 0)} = <b style="color:var(--${l >= 0 ? 'pos' : 'up'})">${l >= 0 ? '잔여' : '부족'} ${ibU(Math.abs(l), 0)}</b>`;
+      return `${ac} ${ibU(have, 0)} − ${ibU(byAcct[ac], 0)} = <b style="color:var(--${l >= 0 ? 'pos' : 'up'})">${l >= 0 ? '잔여' : '부족 Pool'} ${ibU(Math.abs(l), 0)}</b>`;
     });
     perAcct = `<p class="note" style="margin-top:8px">계좌별 <span class="u">메리츠 ${when} 읽음</span> — ${parts.join(' · ')}</p>`;
   }
 
   const cy = ibCycles();
-  return `<h2 class="sec">자리별 총액</h2><div class="card pad">
+  /* 제목 '자리별 총액' 은 뺐다(2026-10-14 사용자) */
+  return `<div class="card pad" style="margin-top:12px">
     <div class="ibx-lg"><span><i class="s1"></i>평가액</span><span><i class="s2"></i>Pool</span>
       <span><b class="mk"></b>시드</span></div>
     ${on.length ? bars : `<p class="note">켠 자리가 없습니다. 위 종목을 골라 무매나 VR 을 켜 주세요.</p>`}
@@ -3596,7 +3598,7 @@ function ibCommonPanel(mid = '') {
       ${on.map(r => `<tr><td>${esc(r.sl.n)} <span class="u">${r.sl.vr ? 'Pool 잔액' : '잔금'}</span></td><td>${ibU(r.pool, 0)}</td></tr>`).join('')}
       <tr><td style="color:var(--ink);font-weight:600">필요 Pool 합</td><td style="font-weight:600">${ibU(need, 0)}</td></tr>
       <tr><td>달러예수금 <span class="u">원장 · 3020 + 3081</span></td><td>${ibU(usd, 0)}</td></tr>
-      <tr><td style="color:var(--ink);font-weight:600">${left >= 0 ? '잔여' : '부족'}</td>
+      <tr><td style="color:var(--ink);font-weight:600">${left >= 0 ? '잔여' : '부족 Pool'}</td>
         <td style="font-weight:600;color:var(--${lc})">${left >= 0 ? '+' : '−'}${ibU(Math.abs(left), 0)}</td></tr>
     </table></div>${perAcct}</div>`
     + mid                                             // 메리츠 장부 대조 (2026-10-13 — 자동 탭을 합쳤다)
@@ -5714,9 +5716,12 @@ function dcAssetDiff(v) {
   if (out.bad.length) out.why.push(`${out.bad.join('·')} 줄의 수량이 금액과 안 맞습니다(잘못 읽음)`);
   if (out.dup.length) out.why.push(`${out.dup.join('·')} 가 두 줄입니다`);
   if (out.unknown.length) out.why.push(`모르는 종목 ${out.unknown.map(r => esc(r.name)).join(', ')}`);
-  out.stale = Date.now() - num(v.t) > DC_FRESH;            // 반영만 막는다 — 판정(버튼 아래 줄)에는 세지 않는다
-  if (out.stale) out.why.push('오래된 읽기입니다 — 다시 검증해 주세요');
   if (state.dcChk && num(state.dcChk.t) >= num(v.t)) out.done = true;              // 이미 반영(또는 기준으로 적은) 읽기
+  /* 오래된 읽기는 **반영할 것(좌수 다름)이 있을 때만** 막는다 — 좌수가 같으면 반영할 것이 없으니 다시 검증을 묻지 않는다
+     (2026-10-14 사용자: 새벽에 검증했는데 몇 시간 뒤 '반영하지 않습니다 — 오래된 읽기' 가 떴다. "이상이 있어서 검증이 필요한 상황이
+     아니면 검증요청하지 말 것") */
+  out.stale = Date.now() - num(v.t) > DC_FRESH;
+  if (out.stale && out.changed && !out.done) out.why.push('오래된 읽기입니다 — 좌수가 달라 반영하려면 다시 검증해 주세요');
   out.ok = !out.why.length;
   return out;
 }
@@ -5800,7 +5805,7 @@ function dcVerifyReport(v) {
       <p class="note" style="margin:6px 0 0">고르면 원장 마지막 날(${esc(latestKey() || '')})의 DC 좌수를 미래에셋 값으로 맞추고 DC 기록에 남깁니다.
         불입은 원금에 더하고, 배당은 수익으로 잡고, 정정은 좌수만 맞춥니다.</p>`;
   } else if (d.ok && d.changed && d.done) {
-    act = '<p class="note" style="margin:8px 0 0">이 읽기는 이미 반영했습니다. 원장이 그 뒤 바뀌었으면 다시 검증해 주세요.</p>';
+    act = '<p class="note" style="margin:8px 0 0">이 읽기는 이미 반영했습니다.</p>';
   } else if (!d.ok) {
     act = `<div class="warn" style="margin-top:8px"><span>◔</span><div>반영하지 않습니다 — ${d.why.join(' · ')}
       ${d.acctMoved && d.why.length === 1 ? `<div style="margin-top:6px"><button class="ghost" data-dcv="acct" style="padding:6px 9px;font-size:12px">
@@ -9316,6 +9321,75 @@ function apiNextMode() {
 /* 펼침 기본값이 있는 접는 줄 — 기본(이상 있으면 펴짐)과 **다르게** 사용자가 바꾼 것만 UI.ibOpen 에 남는다(아래 toggle) */
 const apiDet = (key, def) => `data-sec="${key}"${def ? ' data-def="1"' : ''}${secOpen(key, def) ? ' open' : ''}`;
 
+/* 자동매매 한 줄 상태 (2026-10-14 사용자: "'멈춤-주문 시간이 아님' → '양호 - XX시 주문예정', '오류 - XXX 확인필요' 식으로") —
+   판 기록(apiLast)·이력(apiLog)과 지금 시각(서울)으로 양호 · 오류 · 확인 중 · 정지 · 꺼짐 중 하나를 낸다.
+   '뜻 있는 마지막 판' 은 줄이 있었거나 빗장에 걸린 판이다 — 주문 시간 밖에 늦게 깬 GitHub 예비 예약이 apiLast 를 '주문 시간이 아님' 으로
+   덮어도(10/14 02:04 실측) 그날 낸 주문을 못 본 것으로 치지 않는다. 시각은 supabase/dispatch.sql 의 정시 깨우기와 같다 */
+const API_IB_AT = [18 * 60 + 35, 19 * 60 + 35, 20 * 60 + 35];
+const API_WD = '일월화수목금토';
+const apiKst = (ms = Date.now()) => { const k = new Date(ms + 9 * 3600e3); return { d: k.toISOString().slice(0, 10), wd: k.getUTCDay(), hm: k.getUTCHours() * 60 + k.getUTCMinutes() }; };
+const apiAddDay = (d, n) => new Date(Date.parse(d + 'T00:00:00Z') + n * 864e5).toISOString().slice(0, 10);
+const apiWdOf = d => new Date(d + 'T00:00:00Z').getUTCDay();
+const apiDayTxt = (d, today) => d === today ? '오늘' : d === apiAddDay(today, 1) ? '내일' : `${+d.slice(5, 7)}/${+d.slice(8)}(${API_WD[apiWdOf(d)]})`;
+/* 다음 평일(서울). 미국 휴장은 모른다 — 그날 판이 '오늘은 미국 휴장' 으로 적고 지나간다 */
+const apiNextWeekday = d => { let x = d; do { x = apiAddDay(x, 1); } while ([0, 6].includes(apiWdOf(x))); return x; };
+const apiBenign = s => !!s && API_BENIGN.some(b => String(s).includes(b));
+/* 무엇이 걸렸나 — 오류 글의 가운데 */
+function apiRunWhy(r) {
+  if (r.error || (r.stopped && !apiBenign(r.stopped))) return String(r.stopped || '실행 오류').replace(/^\[\d+\]\s*/, '').slice(0, 60);
+  const quiet = r.mode === 'live' ? ['주문 시간'] : ['주문 시간', '수집기와 겹치지 않음'];
+  const g = (r.gates || []).filter(x => !x.ok && !quiet.includes(x.name)).map(x => x.name);
+  const L = r.lines || [], c = st => L.filter(l => l.state === st && (st !== 'skipped' || (r.mode === 'live' && l.why))).length;
+  return [g.slice(0, 2).join(' · '), c('rejected') ? `거부 ${c('rejected')}줄` : '', c('unknown') ? `모름 ${c('unknown')}줄` : '',
+    c('skipped') ? `건너뜀 ${c('skipped')}줄` : ''].filter(Boolean).join(' · ') || '빗장';
+}
+/* 판 기록과 이력을 한 모양으로 — 새것부터. cnt = 주문이 있는 줄(접수·있음·dry) */
+function apiRunHist(acct) {
+  const out = [], r = apiV('apiLast' + acct);
+  const live = ['sent', 'have', 'dry'];
+  if (r) out.push({ t: apiRunT(r), bad: apiRunBad(r), why: apiRunBad(r) ? apiRunWhy(r) : '', stopped: r.stopped || '',
+    cnt: (r.lines || []).filter(l => live.includes(l.state)).length });
+  (apiV('apiLog' + acct) || []).forEach(e => {
+    if (!e) return;
+    const bad = !apiBenign(e.stopped) && !!(e.error || (e.mode === 'live' ? e.alarm : (e.push != null ? e.push : e.alarm)));
+    out.push({ t: apiRunT(e), bad, why: [e.stopped, ...(e.bad || [])].filter(Boolean).slice(0, 2).join(' · ').slice(0, 60) || '빗장',
+      stopped: e.stopped || '', cnt: live.reduce((a, k) => a + num((e.n || {})[k]), 0) });
+  });
+  return out.filter(h => h.t).sort((a, b) => b.t - a.t);
+}
+function apiRunStatus(acct, r) {
+  const stop = apiV('apiStop') || {}, now = apiKst(), s = String((r && r.stopped) || '');
+  const hist = apiRunHist(acct), m = hist.find(h => h.bad || h.cnt > 0);           // 뜻 있는 마지막 판
+  if (m && m.bad && Date.now() - m.t < 30 * 3600e3) return { lv: 'bad', t: `오류 — ${m.why} 확인 필요`, at: m.t, m };
+  if (stop.on) return { lv: 'stop', t: '정지 — 긴급 정지 켜짐' };
+  if (/TRADE_MODE=off/.test(s)) return { lv: 'off', t: '꺼짐 — TRADE_MODE=off' };
+  if (/꺼져 있음|켜진 무매 자리가 없음/.test(s)) return { lv: 'off', t: '꺼짐 — 켜진 자리가 없음' };
+  const doneToday = m && apiKst(m.t).d === now.d && m.t >= Date.parse(now.d + 'T17:00:00+09:00');
+  if (acct === '3020') {
+    const wk = now.wd >= 1 && now.wd <= 5, next = `${apiDayTxt(apiNextWeekday(now.d), now.d)} 18:35`;
+    if (doneToday) return { lv: 'ok', t: `양호 — 오늘 주문 끝 · ${m.cnt}줄 · 다음 ${next}` };
+    if (r && apiKst(apiRunT(r)).d === now.d && /휴장/.test(s)) return { lv: 'ok', t: `양호 — 미국 휴장 · ${next} 주문 예정` };
+    if (wk && now.hm < API_IB_AT[0]) return { lv: 'ok', t: '양호 — 오늘 18:35 주문 예정' };
+    if (wk && now.hm < 21 * 60 + 30) {
+      const nx = API_IB_AT.find(t => t > now.hm);
+      return { lv: 'wait', t: `확인 중 — 오늘 판 기다림${nx ? ` · 다음 ${pad2(nx / 60 | 0)}:${pad2(nx % 60)}` : ''}` };
+    }
+    if (wk) return { lv: 'bad', t: '오류 — 오늘 무매 주문 없음 확인 필요' };
+    return { lv: 'ok', t: `양호 — ${next} 주문 예정` };
+  }
+  /* VR — 예약은 사이클마다 한 번, 다음 사이클 앞 영업일 다음 날(vrTurn, 보통 토요일)부터 건다. 주말 판은 10:20 부터, 평일은 18:35 */
+  let run = null; try { run = vrRun('vr.T'); } catch (e) { }
+  if (!run || !run.nextCycle) return m && m.cnt ? { lv: 'ok', t: `양호 — 예약 ${m.cnt}줄 있음` } : { lv: 'ok', t: '양호' };
+  const turn = vrTurn(run.nextCycle), we = [0, 6].includes(apiWdOf(turn));
+  const at = Date.parse(turn + (we ? 'T10:20:00+09:00' : 'T18:35:00+09:00')), when = `${apiDayTxt(turn, now.d)} ${we ? '10:20' : '18:35'}`;
+  if (Date.now() < at) return { lv: 'ok', t: `양호 — ${m && m.cnt ? `예약 ${m.cnt}줄 있음 · ` : ''}다음 예약 ${when}` };
+  if (m && m.t >= at) return { lv: 'ok', t: `양호 — 새 사이클 예약 끝 · ${m.cnt}줄` };
+  if (Date.now() < Date.parse(apiAddDay(turn, 2) + 'T11:00:00+09:00')) return { lv: 'wait', t: `확인 중 — 새 사이클 예약 기다림(${when}부터)` };
+  return { lv: 'bad', t: '오류 — 새 사이클 예약 없음 확인 필요' };
+}
+const apiMeanT = acct => (apiRunHist(acct).find(h => h.bad || h.cnt > 0) || {}).t || 0;
+const API_LV = { ok: 'var(--c2)', bad: 'var(--up)', wait: 'var(--brass)', stop: 'var(--up)', off: 'var(--muted)' };
+
 function apiRunRow(acct) {
   const r = apiV('apiLast' + acct);
   const name = acct === '3020' ? '무매 3020' : 'VR 3081';
@@ -9342,10 +9416,12 @@ function apiRunRow(acct) {
   const cnt = {}; L.forEach(l => { cnt[l.state] = (cnt[l.state] || 0) + 1; });
   const cntTxt = Object.keys(cnt).map(k => (API_STATE[k] || [k])[0] + ' ' + cnt[k]).join(' · ');
   const notes = (r.notes || []).map(n => `<div>· ${esc(String(n).slice(0, 300))}</div>`).join('');
-  const st = (r.stopped ? '멈춤 — ' + r.stopped : bad ? '확인할 것이 있습니다' : '이상 없음') + (cntTxt && !r.stopped ? ' · ' + cntTxt : '');
-  return `<details class="apir" ${apiDet('run' + acct, bad)}>
-    <summary><span class="nm">${name}</span>${apiPill(nx)}<span class="st" style="color:${bad ? 'var(--up)' : benign ? 'var(--muted)' : 'var(--c2)'}">${esc(st)}</span><span class="tm">${apiHM(r.t)}</span></summary>
+  /* 시각은 뜻 있는 마지막 판(주문·오류) — 주문 시간 밖에 늦게 깬 예비 예약의 '주문 시간이 아님' 이 아니라 */
+  const S = apiRunStatus(acct, r), sb = S.lv === 'bad', mt = (S.m && S.m.t) || apiMeanT(acct) || apiRunT(r);
+  return `<details class="apir" ${apiDet('run' + acct, sb)}>
+    <summary><span class="nm">${name}</span>${apiPill(nx)}<span class="tm">${apiHM(mt)}</span><span class="st" style="color:${API_LV[S.lv] || 'var(--ink2)'}">${esc(S.t)}</span></summary>
     <div class="apib">
+      <p class="note" style="margin:0 0 6px">마지막 판 ${apiHM(r.t)} — ${esc(r.stopped ? '멈춤: ' + r.stopped : bad ? '확인할 것이 있습니다' : '이상 없음')}${cntTxt && !r.stopped ? ' · ' + esc(cntTxt) : ''}${S.at && S.at !== apiRunT(r) ? ` · <b style="color:var(--up)">오류 판 ${apiHM(S.at)}</b>(설정 › 판 이력)` : ''}</p>
       ${nx !== r.mode ? `<p class="note" style="margin:0 0 6px">이 기록은 <b>${esc(r.mode)}</b> 로 돈 판입니다(${apiHM(r.t)}) — 다음 예약 판부터 <b>${esc(nx)}</b>.</p>` : ''}
       ${gates ? `<div class="agl" style="margin-top:0">${gates}</div>` : ''}
       ${lines ? `<div class="scroll" style="margin-top:8px"><table class="tbl apit"><tr><th>상태</th><th style="text-align:left">줄</th><th>가격</th><th>주</th></tr>${lines}</table></div>` : ''}
@@ -9533,7 +9609,7 @@ function apiTopPanel() {
         <span class="sub" style="white-space:normal">${esc(a.body || '')}</span></div><div class="vals"><div class="d num" style="color:var(--muted)">${a.t ? apiHM(a.t) : ''}</div></div></div>`).join('') + '</div>' : '';
   /* 아침 체결 요약 — 원장에 오래 안 들어간 체결(old)이 있으면 펴 둔다 */
   const smRow = sm && num(sm.t) ? `<details class="apir" ${apiDet('apiSum', num(sm.old) > 0)}>
-      <summary><span class="nm">아침 요약</span><span class="st" style="color:${num(sm.old) ? 'var(--up)' : 'var(--ink2)'}">${esc(sm.title || '')}</span><span class="tm">${apiHM(sm.t)}</span></summary>
+      <summary><span class="nm">아침 요약</span><span class="tm">${apiHM(sm.t)}</span><span class="st" style="color:${num(sm.old) ? 'var(--up)' : 'var(--ink2)'}">${esc(sm.title || '')}</span></summary>
       <div class="apib"><p class="note" style="margin:0">${esc(sm.body || '')}</p></div></details>` : '';
   return `${err}${alerts}<div class="card apic" style="margin-top:12px">
     <div class="apih"><span class="nm">자동매매</span><span class="u">메리츠 API${API.at ? ' · 받음 ' + apiHM(API.at) : ''}</span>
