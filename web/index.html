@@ -769,7 +769,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-13 20:20';
+const BUILD = '2026-10-13 20:49';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -8738,6 +8738,9 @@ async function apiFetch(force) {
     const rows = await sbReq('/rest/v1/meta?k=in.(' + API_KEYS.join(',') + ')&select=k,v,updated_at');
     const m = {}; (rows || []).forEach(r => { m[r.k] = { v: r.v, u: Date.parse(r.updated_at) || 0 }; });
     API.m = m; API.err = ''; API.errAt = 0;
+    /* 정시 깨우기 기록 (2026-10-13, supabase/dispatch.sql) — 함수가 아직 없으면(404) null: 설정 전이라 알리지 않는다 */
+    try { API.disp = await sbReq('/rest/v1/rpc/trader_dispatch_recent', { method: 'POST', body: '{}' }) || []; }
+    catch (e) { API.disp = /404|PGRST202|does not exist/.test(String(e.message)) ? null : API.disp; }
   } catch (e) { API.err = String(e.message || e); API.errAt = API.errAt || Date.now(); API.busy = false; renderApiAlert(); return false; }
   API.busy = false;
   try { apiReconcile(); } catch (e) { API.rec = { err: String(e.message || e) }; }
@@ -9025,6 +9028,24 @@ function apiMissedIB() {
   if (k.getUTCDay() === 0 || k.getUTCDay() === 6) return false;
   return apiRunT(r) < Date.parse(k.toISOString().slice(0, 10) + 'T18:00:00+09:00');
 }
+/* 정시 깨우기(Supabase pg_cron → GitHub)가 제대로 도는가 — 마지막 깨우기 실패(토큰 만료·권한 401/403/404) · 토큰 없음 ·
+   토큰 만료 14일 전 · 26시간 넘게 깨운 적 없음(pg_cron 멈춤). 설정 전(함수 없음)이면 조용하다 */
+function apiDispatchWarn() {
+  const d = API.disp;
+  if (!Array.isArray(d) || !d.length) return null;
+  const last = d[0], t = Date.parse(last.at) || 0;
+  if (last.err === 'no token') return { key: 'disp', t, lv: 'bad', title: '정시 깨우기 토큰이 없습니다', body: 'Supabase Vault 에 gh_dispatch_token 을 넣어 주세요(supabase/dispatch.sql 1)' };
+  if (last.status != null && last.status !== 204)
+    return { key: 'disp', t, lv: 'bad', title: `정시 깨우기 실패 — HTTP ${last.status}`,
+      body: (last.status === 401 ? 'GitHub 토큰이 만료됐거나 잘못됐습니다 — 새 토큰을 Vault 에 넣어 주세요 · ' : '') + String(last.err || '').slice(0, 120) };
+  if (Date.now() - t > 26 * 3600e3) return { key: 'dispold', t: t + Math.floor((Date.now() - t) / 864e5) * 864e5, lv: 'warn',
+    title: `정시 깨우기가 ${Math.round((Date.now() - t) / 3600e3)}시간째 없습니다`, body: 'Supabase pg_cron 을 확인해 주세요(select * from cron.job_run_details order by start_time desc limit 5)' };
+  const ex = d.map(x => Date.parse(String(x.expires || '').replace(' UTC', 'Z').replace(' ', 'T'))).find(v => v > 0);
+  if (ex && ex - Date.now() < 14 * 864e5)
+    return { key: 'dispexp', t: ex - 14 * 864e5, lv: 'warn', title: `정시 깨우기 토큰이 ${new Date(ex).toLocaleDateString('ko-KR')} 에 만료됩니다`,
+      body: 'GitHub 에서 새 fine-grained 토큰을 만들어 Vault 를 바꿔 주세요(supabase/dispatch.sql 1)' };
+  return null;
+}
 /* 오늘 와야 했던 장부가 없는가 — 서울 화~토 09:00 뒤인데 06:00 뒤 장부가 없거나, 월 13:00 뒤인데 12:00 뒤 장부가 없다 */
 function apiBookMissing() {
   if (API.err) return null;
@@ -9081,6 +9102,8 @@ function apiAlerts() {
   });
   /* 아침 장부가 안 왔다 (2026-10-13) — 알림톡 수집을 끈 뒤로 **원장 체결은 메리츠 장부로만 들어온다**. 30시간을 기다리면 그날
      원장이 통째로 비어 저녁 주문표가 체결 전 수량으로 만들어진다. 서울 화~토 09시까지 06시 뒤 장부(06:15·07:15), 월 13시까지 12:15 장부 */
+  const dw = apiDispatchWarn();
+  if (dw) out.push(dw);
   const bm = apiBookMissing();
   if (bm) out.push({ key: 'bookmiss', t: bm.t, lv: 'warn', title: '오늘 메리츠 장부 동기화가 없습니다', body: bm.body });
   const vrm = apiVrMissing();
@@ -9396,6 +9419,18 @@ function apiPushCard() {
     <p class="note" style="margin:6px 0 0">실행기 오류·빗장에 걸린 판·장부 동기화 실패를 폰 알림으로 밉니다(웹앱이 닫혀 있어도). 같은 알림은 12시간에 한 번.</p>
     <div style="display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap"><span style="font-size:12px;color:var(--ink2)">${esc(say)}</span>${btn}</div></div>`;
 }
+function apiDispatchCard() {
+  const d = API.disp;
+  if (d === undefined) return '';
+  if (d === null) return `<div class="card pad" style="margin-top:10px"><div class="ibx-h"><span class="nm">정시 깨우기</span><span class="u">설정 전</span></div>
+    <p class="note" style="margin:6px 0 0">Supabase 가 정시에 실행기를 깨우게 하려면 supabase/dispatch.sql 을 SQL 편집기에서 실행해 주세요. 그전에는 GitHub 예약 실행만 씁니다(늦거나 빠질 수 있음).</p></div>`;
+  const ex = d.map(x => String(x.expires || '')).find(Boolean);
+  const rows = d.slice(0, 6).map(x => `<tr><td class="num">${esc(apiHM(Date.parse(x.at)))}</td><td>${esc(x.cmd)}</td>
+    <td style="color:${x.status === 204 ? 'var(--c2)' : x.status == null && !x.err ? 'var(--muted)' : 'var(--up)'}">${x.status === 204 ? '띄움' : x.status != null ? 'HTTP ' + esc(x.status) : x.err ? esc(String(x.err).slice(0, 40)) : '응답 지남'}</td></tr>`).join('');
+  return `<div class="card pad" style="margin-top:10px"><div class="ibx-h"><span class="nm">정시 깨우기 <span class="u">Supabase → GitHub</span></span><span class="u">${ex ? '토큰 만료 ' + esc(ex.slice(0, 10)) : ''}</span></div>
+    ${rows ? `<div class="scroll" style="margin-top:6px"><table class="tbl"><tr><th>시각</th><th>할 일</th><th>결과</th></tr>${rows}</table></div>` : '<p class="note">아직 깨운 적이 없습니다</p>'}
+    <p class="note" style="margin:6px 0 0">무매 18:35·19:35·20:35 · 장부 06:15·07:15·12:15 · 누락 점검 21:50 · VR 주말. GitHub 예약 실행은 예비로 함께 돕니다(같은 판이 두 번 와도 중복 주문은 없습니다).</p></div>`;
+}
 function apiPanel() {
   if (!SB || !sbTok) return `<div class="warn" style="margin-top:12px"><span>◔</span><div>서버에 연결되어 있어야 자동매매 기록을 볼 수 있습니다. 입력 탭에서 로그인해 주세요.</div></div>`;
   const stop = apiV('apiStop') || {}, al = apiAlerts();
@@ -9418,6 +9453,7 @@ function apiPanel() {
     ${apiBookCard()}
     ${apiProfitCard()}
     ${apiPushCard()}
+    ${apiDispatchCard()}
     ${secD('apiLog', '판 이력', `<div class="card pad"><div class="grp-h" style="padding-top:0">무매 3020</div>${apiLogRows('3020')}<div class="grp-h">VR 3081</div>${apiLogRows('3081')}</div>`, '')}
     ${probe ? secD('apiProbe', '시험 주문 결과', `<div class="card pad"><pre style="white-space:pre-wrap;font-size:11px;margin:0">${esc(String(probe.text || '').slice(0, 4000))}</pre></div>`, apiHM(probe.t)) : ''}
     <p class="note" style="margin-top:10px">기록은 실행기(GitHub Actions)가 판마다 올리고 이 화면은 ${Math.round(API_POLL / 1000)}초마다 받습니다. 마지막으로 받은 때 ${API.at ? apiHM(API.at) : '—'}.</p>`;
