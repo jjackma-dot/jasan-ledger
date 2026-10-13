@@ -769,7 +769,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-13 18:29';
+const BUILD = '2026-10-13 20:20';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -4542,9 +4542,10 @@ async function pollVerify(what, t0, resumed) {
         return;
       }
       box.innerHTML = verifyReport(what, txt, num(v.t));
-      /* 수집기 4.12 — 무매 검증 뒤에는 **메리츠 자산 대조**가 이어진다(사용자 요청).
-         무매 결과를 먼저 그려 두고 그것만 따로 기다린다. 폰은 지문을 기다리느라 1~2분이 걸릴 수 있다. */
-      if (what !== 'vr') await pollAsset(t0, box, gen);
+      /* 무매 검증 뒤 메리츠 MY자산 대조(수집기 4.12)는 **4.43 에서 뺐다** (사용자 2026-10-13: "MY자산 단계 빼기") —
+         보유·평단·외화·원화예수금은 메리츠 API 장부가 매일 대조한다. 그 화면으로 가는 길만 남긴다 */
+      if (what !== 'vr') box.insertAdjacentHTML('beforeend', '<p class="note" style="margin:9px 3px 0">보유수량·평단·외화·원화예수금 대조는 '
+        + '<a href="#api" style="color:var(--brass)">무매/VR › 자동 › 메리츠 장부 대조</a>가 맡습니다(메리츠 API, 매일).</p>');
       return;
     }
     say(`${lbl} 앱 화면을 읽는 중… ${(i + 1) * 2}초`);
@@ -8710,7 +8711,7 @@ const API_TX_FROM = '2026-10-14';
 /* 원장 체결(tr)에 뉴욕 체결일(fd)이 붙기 시작한 날(2026-09-15, usTradeDay). 그 앞의 줄은 체결일을 몰라 묶음으로 못 맞춘다 — 대조는 이날부터 */
 const API_VERIFY_FROM = '2026-09-15';     // 거래일 — 이날부터 배당·이자·수수료를 메리츠 입출금 그대로 넣는다(그 앞은 5% 어림·배당 인식으로 이미 넣었다)
 const API_KEYS = ['apiLast3020', 'apiLast3081', 'apiBook3020', 'apiBook3081', 'apiLog3020', 'apiLog3081',
-  'apiProbe', 'apiStop', 'apiMatch', 'apiPushKey', 'apiPushed', 'pushSub'];
+  'apiProbe', 'apiStop', 'apiMatch', 'apiPushKey', 'apiPushed', 'pushSub', 'apiSummary', 'apiState3081'];
 const API_POLL = 45e3;                // 30초 배출마다 부르되 이 간격 안이면 건너뛴다
 const API_BOOK_STALE = 30 * 3600e3;   // 장부가 이보다 오래면 동기화가 멈춘 것
 const API_ACK = 'jasan_api_ack';
@@ -9024,6 +9025,31 @@ function apiMissedIB() {
   if (k.getUTCDay() === 0 || k.getUTCDay() === 6) return false;
   return apiRunT(r) < Date.parse(k.toISOString().slice(0, 10) + 'T18:00:00+09:00');
 }
+/* 오늘 와야 했던 장부가 없는가 — 서울 화~토 09:00 뒤인데 06:00 뒤 장부가 없거나, 월 13:00 뒤인데 12:00 뒤 장부가 없다 */
+function apiBookMissing() {
+  if (API.err) return null;
+  const k = new Date(Date.now() + 9 * 3600e3), wd = k.getUTCDay(), hm = k.getUTCHours() * 60 + k.getUTCMinutes();
+  const d = k.toISOString().slice(0, 10);
+  const since = wd >= 2 && wd <= 6 && hm >= 9 * 60 ? Date.parse(d + 'T06:00:00+09:00')
+    : wd === 1 && hm >= 13 * 60 ? Date.parse(d + 'T12:00:00+09:00') : 0;
+  if (!since) return null;
+  const books = API_ACCTS.map(apiBook);
+  if (books.every(b => b && num(b.t) >= since)) return null;
+  return { t: since, body: '예약 실행(06:15·07:15·12:15)이 빠졌습니다 — 체결이 원장에 안 들어옵니다. GitHub Actions 를 확인하거나 수동으로 sync 를 돌려 주세요' };
+}
+/* VR 이번 사이클 예약이 없다 — 실행기 기록(apiState3081, live 일 때만 적힌다)의 사이클 끝이 오늘보다 앞이다. 평일 11시 뒤에만
+   (주말·월요일 아침은 실행기가 아직 거는 중일 수 있다) */
+function apiVrMissing() {
+  const v = ((apiV('apiState3081') || {}).vr) || {};
+  const fin = String(v.fin || '');
+  if (!/^\d{8}$/.test(fin)) return null;
+  const k = new Date(Date.now() + 9 * 3600e3), wd = k.getUTCDay();
+  if (wd === 0 || wd === 6 || k.getUTCHours() < 11) return null;
+  const today = k.toISOString().slice(0, 10).replace(/-/g, '');
+  if (fin >= today) return null;
+  return { t: Date.parse(k.toISOString().slice(0, 10) + 'T11:00:00+09:00'),
+    body: `마지막으로 건 사이클이 ${fin.slice(4, 6)}/${fin.slice(6)} 에 끝났습니다 — 수집기 앱 [VR 지금 진행] 또는 Actions 수동 실행` };
+}
 /* 판이 안 돈 날 경고의 '그날' 시각(확인 열쇠) — 서울 날짜의 21:30 */
 const apiMissT = () => Date.parse(new Date(Date.now() + 9 * 3600e3).toISOString().slice(0, 10) + 'T21:30:00+09:00');
 function apiAlerts() {
@@ -9053,6 +9079,12 @@ function apiAlerts() {
     if (b && (b.fatal || (b.errs || []).length)) out.push({ key: 'book' + acct, t: num(b.t), lv: 'warn', title: `[${acct}] 장부 동기화 — 못 받은 조회`, body: (b.errs || []).join(' · ').slice(0, 200) });
     else if (b && now - num(b.t) > API_BOOK_STALE) out.push({ key: 'stale' + acct, t: num(b.t) + Math.floor((now - num(b.t)) / 864e5) * 864e5, lv: 'warn', title: `[${acct}] 장부 동기화가 ${Math.round((now - num(b.t)) / 3600e3)}시간째 없습니다`, body: 'GitHub Actions 예약 실행을 확인해 주세요' });
   });
+  /* 아침 장부가 안 왔다 (2026-10-13) — 알림톡 수집을 끈 뒤로 **원장 체결은 메리츠 장부로만 들어온다**. 30시간을 기다리면 그날
+     원장이 통째로 비어 저녁 주문표가 체결 전 수량으로 만들어진다. 서울 화~토 09시까지 06시 뒤 장부(06:15·07:15), 월 13시까지 12:15 장부 */
+  const bm = apiBookMissing();
+  if (bm) out.push({ key: 'bookmiss', t: bm.t, lv: 'warn', title: '오늘 메리츠 장부 동기화가 없습니다', body: bm.body });
+  const vrm = apiVrMissing();
+  if (vrm) out.push({ key: 'vrmiss', t: vrm.t, lv: 'bad', title: 'VR 이번 사이클 예약이 없습니다', body: vrm.body });
   if (apiMissedIB()) {
     out.push({ key: 'miss', t: apiMissT(), lv: 'warn', title: '오늘 무매 자동매매 판이 돌지 않았습니다', body: '서울 18:35~20:35 예약 실행이 없었습니다 — GitHub Actions 를 확인해 주세요' });
   }
@@ -9379,6 +9411,9 @@ function apiPanel() {
     ${al.length ? `<div class="card rows" style="margin-top:10px"><div class="grp-h" style="padding-left:15px">경고 ${al.length}</div>`
       + al.map(a => `<div class="row"><div style="min-width:0;white-space:normal"><div class="nm" style="color:${a.lv === 'bad' ? 'var(--up)' : a.lv === 'info' ? 'var(--c3)' : 'var(--brass)'}">${esc(a.title)}</div>
         <span class="sub" style="white-space:normal">${esc(a.body || '')}</span></div><div class="vals"><div class="d num" style="color:var(--muted)">${a.t ? apiHM(a.t) : ''}</div></div></div>`).join('') + '</div>' : ''}
+    ${(sm => sm && num(sm.t) ? `<div class="card pad" style="margin-top:10px"><div class="ibx-h"><span class="nm">아침 체결 요약</span><span class="u">${esc(apiHM(sm.t))}</span></div>
+      <div style="margin-top:6px;font-size:12.5px;font-weight:600;color:${num(sm.old) ? 'var(--up)' : 'var(--ink)'}">${esc(sm.title || '')}</div>
+      <p class="note" style="margin:4px 0 0">${esc(sm.body || '')}</p></div>` : '')(apiV('apiSummary'))}
     <h2 class="sec">오늘 판</h2>${apiRunCard('3020')}${apiRunCard('3081')}
     ${apiBookCard()}
     ${apiProfitCard()}
