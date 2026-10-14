@@ -797,7 +797,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-14 08:33';
+const BUILD = '2026-10-14 12:19';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -5537,8 +5537,8 @@ function assetReport(res, at) {
     + (log.length ? '<details class="inl bare" style="margin-top:6px">'
       + '<summary style="padding:8px 3px 6px;font-size:11.5px;color:var(--muted)">예수금 이자·배당 반영 내역</summary>'
       + '<p class="note" style="margin:0 3px 6px">'
-      + log.map(l => esc(l.d) + ' <b>+$' + fmt(l.amt, 2) + '</b> '
-        + (l.div ? '(배당 ' + l.div.map(d => esc(d.n) + ' $' + fmt(d.net, 2)).join(' · ') + ' · 이자 $' + fmt(l.int, 2) + ')'
+      + log.map(l => esc(l.d) + ' <b>' + (num(l.amt) >= 0 ? '+' : '−') + '$' + fmt(Math.abs(num(l.amt)), 2) + '</b> '
+        + (l.fee ? '(매매 수수료 어림)' : l.div ? '(배당 ' + l.div.map(d => esc(d.n) + ' $' + fmt(d.net, 2)).join(' · ') + ' · 이자 $' + fmt(l.int, 2) + ')'
           : '(' + fmt(l.days, 0) + '일치)') + ' → $' + fmt(l.to, 2)).join('<br>')
       + '</p></details>' : '');
 }
@@ -8879,6 +8879,36 @@ function krwAnchor() {
     if (Math.abs(num(state.days[ks[i]].krw) - num(state.days[ks[i - 1]].krw)) > KRW_EPS) return ks[i];
   return ks[0] || iso(new Date());
 }
+/* 해외주식 매매 수수료율 (사용자 2026-10-14) — 3020 은 올해 말까지 무료, 3081 은 0.07%. 모르면 null(결제 행 값만 쓰고, 남는 차이는
+   외화예수금 대조의 0.1% 어림이 맡는다). 메리츠는 센트 아래를 버린다(실측: 3081 매수 133.16 → 0.09, 155.18 → 0.10) */
+const API_FEE_RATE = { '3020': d => d <= '2026-12-31' ? 0 : null, '3081': () => 0.0007 };
+const apiFeeRate = (acct, d) => (API_FEE_RATE[acct] || (() => null))(d);
+const API_FEE_CAP = 0.001;                 // 외화예수금이 이만큼(최근 7일 체결 금액의 0.1%) 안에서 메리츠가 적으면 수수료로 본다
+function apiBtxFind(id) {
+  for (const k of dayKeys()) { const e = (state.days[k].btx || []).find(x => x.id === id); if (e) return { k, e }; }
+  return null;
+}
+/* 체결 하나의 수수료를 그 체결의 원장 날짜(apiPutFill 과 같은 날)부터 마지막 날까지 외화예수금에서 뺀다 */
+function apiPutFee(acct, f, fee, est, srno) {
+  const ks = dayKeys(), dk = apiDay(f.t);
+  if (!dk || dk < ks[0]) return null;
+  let i = ks.indexOf(dk);
+  if (i < 0) i = ks.findIndex(k => k > dk);
+  if (i < 0) i = ks.length - 1;
+  for (let n = i; n < ks.length; n++) { const d = state.days[ks[n]]; d.usd = +(num(d.usd) - fee).toFixed(2); markDirty(ks[n]); }
+  const d0 = state.days[ks[i]];
+  (d0.btx = d0.btx || []).push({ id: acct + ':fee:' + f.id, kind: 'fee', usd: -fee, name: (f.side === 'B' ? '매수' : '매도') + ' 수수료' + (est ? ' (어림)' : ''),
+    sym: f.sym || '', est: !!est, srno: srno || '', d: f.fd, t: Date.now() });
+  return ks[i];
+}
+/* 어림으로 넣은 수수료를 결제 행 값으로 — 차이만 그날부터 고친다 */
+function apiFeeFix(h, fee, srno) {
+  const ks = dayKeys(), i = Math.max(0, ks.indexOf(h.k)), dd = +(fee + num(h.e.usd)).toFixed(2);
+  if (Math.abs(dd) >= 0.005) for (let n = i; n < ks.length; n++) { const d = state.days[ks[n]]; d.usd = +(num(d.usd) - dd).toFixed(2); markDirty(ks[n]); }
+  Object.assign(h.e, { usd: -fee, est: false, srno: srno || '', name: String(h.e.name || '').replace(' (어림)', '') });
+  markDirty(h.k);
+  return dd;
+}
 const apiBtxIds = () => { const s = new Set(); dayKeys().forEach(k => (state.days[k].btx || []).forEach(b => s.add(b.id))); return s; };
 
 /* 한 판의 대조 — 넣을 수 있는 것은 넣고, 결과를 API.rec 에 둔다(화면·경고가 읽는다) */
@@ -8985,6 +9015,39 @@ function apiReconcile() {
       if (API_TX_ASK.includes(x.kind) && x.d >= API_TX_FROM) rec.issues.push({ acct, kind: 'tx', row, info: true });
     });
   });
+  /* 매매 수수료 (2026-10-14 사용자: "API 체계에서 수수료까지 정확히 반영 가능하면 반영하고 불가 시 0.1% 미만 마이너스는 대략 수수료로
+     가늠하고 비용처리") — 원장 체결은 금액만 외화예수금에서 빼고 수수료는 안 뺐다. 메리츠는 매수·매도 **결제 행**(입출금내역)에 수수료를
+     센트로 적는다(ovsc_deal_fee — 실측: 3081 매수 133.16 → 0.09, 잔액이 매수액 + 수수료만큼 줄었다). 결제 행은 체결 하루쯤 뒤에 생기고,
+     그 전에는 메리츠도 주문가능 외화에서 어림(센트 아래 버림)으로 빼 둔다 — 155.18 × 0.07% = 0.1086 → 0.10(10/14 대조 −$0.10).
+     → API_FROM 부터의 체결마다 수수료 한 줄을 그 체결의 원장 날짜에 넣는다: 결제 행이 있으면 그 값, 없으면 요율 어림. 어림 뒤 결제 행이 오면
+     차이만 고친다. 결제 행은 자리·방향·수량·단가로 짝짓는다(같은 값 체결이 둘이면 이미 짝지은 행은 건너뛴다) */
+  rec.fee = [];
+  API_ACCTS.forEach((acct, i) => {
+    const b = books[i];
+    if (!b || !Array.isArray(b.fills)) return;
+    const pays = (b.txs || []).filter(x => (x.kind === 'buy' || x.kind === 'sell') && !x.cncl && x.d >= API_FROM);
+    const fills = b.fills.filter(f => f.fd >= API_FROM && API_SLOT[acct + '|' + f.sym]);
+    const used = new Set(fills.map(f => apiBtxFind(acct + ':fee:' + f.id)).filter(h => h && !h.e.est && h.e.srno).map(h => h.e.srno));
+    fills.forEach(f => {
+      const id = acct + ':fee:' + f.id, have = apiBtxFind(id);
+      if (have && !have.e.est) { txRows.push({ acct, x: { ...have.e, d: f.fd, kind: 'fee' }, id, booked: true }); return; }
+      const p = pays.find(x => !used.has(x.id) && x.sym === f.sym && (x.kind === 'buy') === (f.side === 'B')
+        && Math.abs(num(x.qty) - num(f.qty)) < 1e-6 && Math.abs(num(x.px) - num(f.px)) < 0.005 && x.d >= f.fd);
+      if (p) used.add(p.id);
+      const rate = apiFeeRate(acct, f.fd);
+      const fee = p ? +num(p.fee).toFixed(2) : rate != null ? Math.floor(num(f.amt) * rate * 100 + 1e-6) / 100 : null;
+      if (have) {
+        if (p) { apiFeeFix(have, fee, p.id); rec.fee.push({ acct, f, fee, est: false, fixed: true }); changed = true; }
+        txRows.push({ acct, x: { ...have.e, d: f.fd, kind: 'fee' }, id, booked: true, now: !!p });
+        return;
+      }
+      if (!fee) return;                                   // 무료(3020 올해) · 요율 모름(남는 차이는 아래 0.1% 어림)
+      const dk = apiPutFee(acct, f, fee, !p, p && p.id);
+      if (!dk) return;
+      rec.fee.push({ acct, f, fee, est: !p }); changed = true;
+      txRows.push({ acct, x: { ...apiBtxFind(id).e, kind: 'fee' }, id, booked: true, now: true });
+    });
+  });
   rec.txs = txRows.sort((p, q) => p.x.d < q.x.d ? 1 : -1);
   /* 메리츠 쪽 값은 **주문가능(RP 포함·결제 전 매수 뺀 값) + 열린 매수 주문의 증거금**(실행기 book.cash 의 eco) — 체결 때 움직이는
      원장 외화예수금과 같은 뜻이다(실측 2026-10-13). 시장가 매수가 열려 있어 증거금을 모르는 판(eco_ok 아님)은 견주지 않는다 */
@@ -9000,13 +9063,20 @@ function apiReconcile() {
     /* 이자 한도 안에서 메리츠가 더 많으면 맞춘다(사용자 2026-10-13: "외화예수금처럼 이자 범위 안에서는 자동반영") — 배당·이자는 입출금
        내역으로 정확히 넣지만, 날짜를 못 붙인 행·연결 앞의 어림 차이·센트 반올림이 남을 수 있다. 연 5% 일할(최소 닷새치) 안이면 이자다 */
     const fit = apiFit(was, them, usdAnchor(), USD_EPS);
-    if (!late && fit.auto) {
+    /* 메리츠가 조금 **적으면** — 최근 7일 체결 금액의 0.1% 안이면 매매 수수료로 보고 비용으로 맞춘다(사용자 2026-10-14). 위에서 체결마다
+       넣은 수수료가 맞으면 여기까지 안 온다 — 요율을 모르는 계좌(3020 내년)·센트 반올림·매도 쪽 거래소 수수료가 남는 자리다 */
+    /* 0.1% 의 바탕은 **수수료를 내는 계좌**의 체결만(3020 은 올해 무료 — 넣으면 한도가 몇 달러로 커져 다른 차이까지 수수료로 덮는다) */
+    const feeBase = books.reduce((s, b, i) => s + ((b && b.fills) || []).filter(f => Date.now() - (Date.parse(f.t) || 0) < 7 * 864e5
+      && apiFeeRate(API_ACCTS[i], f.fd) !== 0).reduce((t, f) => t + num(f.amt), 0), 0);
+    rec.cash.feeCap = +(feeBase * API_FEE_CAP).toFixed(2);
+    const feeAuto = !fit.auto && rec.cash.diff < -USD_EPS && -rec.cash.diff <= rec.cash.feeCap + USD_EPS;
+    if (!late && (fit.auto || feeAuto)) {
       latest().usd = them;
       const chk = state.usdChk || (state.usdChk = { d: '', t: 0, log: [] });
-      chk.log = [{ d: iso(new Date()), amt: rec.cash.diff, days: fit.days, from: was, to: them, api: true }].concat(chk.log || []).slice(0, 20);
-      chk.d = iso(new Date());
+      chk.log = [{ d: iso(new Date()), amt: rec.cash.diff, days: fit.days, from: was, to: them, api: true, fee: feeAuto }].concat(chk.log || []).slice(0, 20);
+      if (!feeAuto) chk.d = iso(new Date());           // 이자 기준일은 이자를 맞췄을 때만 옮긴다
       markDirty(latestKey()); changed = true;
-      rec.cash.auto = rec.cash.diff; rec.cash.cap = fit.cap; rec.cash.diff = 0; rec.cash.was = them;
+      rec.cash.auto = rec.cash.diff; rec.cash.autoFee = feeAuto; rec.cash.cap = fit.cap; rec.cash.diff = 0; rec.cash.was = them;
     } else rec.cash.cap = fit.cap;
     if (!late && Math.abs(rec.cash.diff) > USD_EPS) rec.issues.push({ acct: '', kind: 'cash', cash: rec.cash });
   }
@@ -9032,7 +9102,8 @@ function apiReconcile() {
   if (changed) {
     saveLocal();
     renderAll();
-    const msg = [rec.put.length ? `메리츠 체결 ${rec.put.length}건` : '', rec.putTx.length ? `배당·이자 ${rec.putTx.length}건` : ''].filter(Boolean).join(' · ');
+    const msg = [rec.put.length ? `메리츠 체결 ${rec.put.length}건` : '', rec.putTx.length ? `배당·이자 ${rec.putTx.length}건` : '',
+      rec.fee.length ? `수수료 ${rec.fee.length}건` : ''].filter(Boolean).join(' · ');
     if (msg) toast(msg + ' 원장에 반영');
   }
   API.rec = rec;
@@ -9262,7 +9333,7 @@ async function pushSave(sub, drop) {
   if (drop) list = list.filter(s => s.endpoint !== drop);
   if (sub) {
     const j = sub.toJSON();
-    list = list.filter(s => s.endpoint !== j.endpoint).concat({ endpoint: j.endpoint, keys: j.keys, t: Date.now(), ua: navigator.userAgent.slice(0, 80) });
+    list = list.filter(s => s.endpoint !== j.endpoint).concat({ endpoint: j.endpoint, keys: j.keys, t: Date.now(), ua: navigator.userAgent.slice(0, 200) });
   }
   await sbReq('/rest/v1/meta', { method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
     body: JSON.stringify([{ k: 'pushSub', v: list.slice(-6) }]) });
@@ -9451,7 +9522,7 @@ function apiBookCard() {
       <div class="d num" style="color:var(--muted)">평단 $${fmt(h.avgM, 4)}${!h.avgOk ? ' ≠' : ''}</div></div></div>`).join('');
   const c = rec.cash;
   const cashRow = c ? `<div class="row"><div style="min-width:0"><div class="nm">외화예수금 <span class="u">3020 + 3081 · RP 포함</span>
-      <span class="sub">원장 $${fmt(c.was, 2)} · ${c.per.map(p => p.acct + ' $' + fmt(num(p.cash), 2) + (p.open ? ' (열린 매수 $' + fmt(p.open, 0) + ' 포함)' : '')).join(' · ')}${c.auto ? ` · 이자 +$${fmt(c.auto, 2)} 자동 반영` : ''}</span></div></div>
+      <span class="sub">원장 $${fmt(c.was, 2)} · ${c.per.map(p => p.acct + ' $' + fmt(num(p.cash), 2) + (p.open ? ' (열린 매수 $' + fmt(p.open, 0) + ' 포함)' : '')).join(' · ')}${c.auto ? ` · ${c.autoFee ? '수수료 어림' : '이자'} ${c.auto >= 0 ? '+' : '−'}$${fmt(Math.abs(c.auto), 2)} 자동 반영` : ''}</span></div></div>
     <div class="vals"><div class="v num" style="color:${Math.abs(c.diff) <= USD_EPS ? 'var(--c2)' : c.late ? 'var(--muted)' : 'var(--up)'}">$${fmt(c.them, 2)}</div>
       <div class="d num" style="color:var(--muted)">${Math.abs(c.diff) <= USD_EPS ? '같음' : c.late ? '장부 뒤 반영분 있음' : (c.diff >= 0 ? '+' : '−') + '$' + fmt(Math.abs(c.diff), 2)}</div></div></div>`
     + (!c.late && Math.abs(c.diff) > USD_EPS ? `<div class="row" style="background:var(--surf2)"><div class="nm" style="font-size:11.5px;line-height:1.5;color:var(--ink2);flex:1;white-space:normal">
@@ -9577,7 +9648,7 @@ function apiPushCard() {
   const fail = (apiV('apiPushed') || {}).fail;
   const html = `<div class="card pad">
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="font-size:12.5px;color:var(--ink2);flex:1;min-width:0">${esc(say)}</span>${btn}</div>
-    ${fail && num(fail.t) ? `<p class="note" style="margin:6px 0 0;color:var(--up)">마지막 알림 실패 ${esc(apiHM(fail.t))} — ${esc(String(fail.why || ''))} · ${esc(String(fail.ok))}/${esc(String(fail.n))}기기</p>` : ''}
+    ${fail && num(fail.t) ? `<p class="note" style="margin:6px 0 0;color:var(--up)">마지막 알림 실패 ${esc(apiHM(fail.t))} — ${esc(String(fail.why || ''))} · ${esc(String(fail.ok))}/${esc(String(fail.n))}기기${fail.body ? `<br><span class="u">${esc(String(fail.body).slice(0, 200))}</span>` : ''}</p>` : ''}
     <p class="note" style="margin:6px 0 0">받는 기기 ${subs}. 실행기 오류·빗장에 걸린 판·장부 동기화 실패, 주문 완료와 아침 체결 요약을 폰 알림으로 밉니다(웹앱이 닫혀 있어도). 같은 알림은 12시간에 한 번.</p></div>`;
   const sum = s === 'nosupport' ? '이 브라우저 안 됨' : s === 'nokey' ? '키 없음' : s === 'denied' ? '막힘'
     : pushBad ? '<b style="color:var(--up)">다시 켜기</b>' : mine ? `이 기기 받음 ✓ · ${subs}기기` : `이 기기 안 받음 · ${subs}기기`;
