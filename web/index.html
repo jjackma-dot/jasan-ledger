@@ -797,7 +797,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-14 12:58';
+const BUILD = '2026-10-14 18:49';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -8762,7 +8762,7 @@ const API_TX_FROM = '2026-10-14';
 /* 원장 체결(tr)에 뉴욕 체결일(fd)이 붙기 시작한 날(2026-09-15, usTradeDay). 그 앞의 줄은 체결일을 몰라 묶음으로 못 맞춘다 — 대조는 이날부터 */
 const API_VERIFY_FROM = '2026-09-15';     // 거래일 — 이날부터 배당·이자·수수료를 메리츠 입출금 그대로 넣는다(그 앞은 5% 어림·배당 인식으로 이미 넣었다)
 const API_KEYS = ['apiLast3020', 'apiLast3081', 'apiBook3020', 'apiBook3081', 'apiLog3020', 'apiLog3081',
-  'apiProbe', 'apiStop', 'apiMatch', 'apiPushKey', 'apiPushed', 'pushSub', 'apiSummary', 'apiState3081', 'apiMode'];
+  'apiProbe', 'apiStop', 'apiMatch', 'apiPushKey', 'apiPushed', 'pushSub', 'apiSummary', 'apiState3081', 'apiMode', 'apiNotice'];
 const API_POLL = 45e3;                // 30초 배출마다 부르되 이 간격 안이면 건너뛴다
 const API_BOOK_STALE = 30 * 3600e3;   // 장부가 이보다 오래면 동기화가 멈춘 것
 const API_ACK = 'jasan_api_ack';
@@ -9821,7 +9821,8 @@ function apiPushCard() {
   const html = `<div class="card pad">
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="font-size:12.5px;color:var(--ink2);flex:1;min-width:0">${esc(say)}</span>${btn}</div>
     ${fail && num(fail.t) ? `<p class="note" style="margin:6px 0 0;color:var(--up)">마지막 알림 실패 ${esc(apiHM(fail.t))} — ${esc(String(fail.why || ''))} · ${esc(String(fail.ok))}/${esc(String(fail.n))}기기${fail.body ? `<br><span class="u">${esc(String(fail.body).slice(0, 200))}</span>` : ''}</p>` : ''}
-    <p class="note" style="margin:6px 0 0">받는 기기 ${subs}. 실행기 오류·빗장에 걸린 판·장부 동기화 실패, 주문 완료와 아침 체결 요약을 폰 알림으로 밉니다(웹앱이 닫혀 있어도). 같은 알림은 12시간에 한 번.</p></div>`;
+    <p class="note" style="margin:6px 0 0">폰 알림의 <b>주 경로는 수집기(4.44~)</b>입니다 — 실행기가 서버 알림함에 적으면 수집기가 15분마다 읽어 띄웁니다${(nb => nb && num(nb.t) ? ` · 알림함 마지막 기록 ${esc(apiHM(nb.t))}` : '')(apiV('apiNotice'))}.
+      이 기기 웹 푸시는 보조입니다(받는 기기 ${subs} — 이 폰에서는 켠 지 몇 시간 만에 끊긴 적이 있습니다). 같은 알림은 12시간에 한 번.</p></div>`;
   const sum = s === 'nosupport' ? '이 브라우저 안 됨' : s === 'nokey' ? '키 없음' : s === 'denied' ? '막힘'
     : pushBad ? '<b style="color:var(--up)">다시 켜기</b>' : mine ? `이 기기 받음 ✓ · ${subs}기기` : `이 기기 안 받음 · ${subs}기기`;
   return { html, sum: fail && num(fail.t) > Date.now() - 864e5 ? '<b style="color:var(--up)">알림 실패</b> · ' + sum : sum };
@@ -9865,7 +9866,7 @@ function apiSettings() {
   const probe = apiV('apiProbe'), push = apiPushCard(), disp = apiDispatchCard();
   const nLog = (apiV('apiLog3020') || []).length + (apiV('apiLog3081') || []).length;
   return `<div class="apiset"><h2 class="sec" style="margin-top:24px">설정</h2>`
-    + secD('apiPush', '폰 알림', push.html, push.sum)
+    + secD('apiPush', '폰 알림 · 웹 푸시', push.html, push.sum)
     + secD('apiDisp', '정시 깨우기', disp.html, disp.sum)
     + secD('apiLog', '판 이력', `<div class="card pad"><div class="grp-h" style="padding-top:0">무매 3020</div>${apiLogRows('3020')}<div class="grp-h">VR 3081</div>${apiLogRows('3081')}</div>`, nLog ? `${nLog}판` : '')
     + (probe ? secD('apiProbe', '시험 주문 결과', `<div class="card pad"><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;margin:0">${esc(String(probe.text || '').slice(0, 4000))}</pre></div>`, apiHM(probe.t)) : '')
