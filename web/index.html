@@ -797,7 +797,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-14 18:49';
+const BUILD = '2026-10-16 13:28';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -8762,7 +8762,7 @@ const API_TX_FROM = '2026-10-14';
 /* 원장 체결(tr)에 뉴욕 체결일(fd)이 붙기 시작한 날(2026-09-15, usTradeDay). 그 앞의 줄은 체결일을 몰라 묶음으로 못 맞춘다 — 대조는 이날부터 */
 const API_VERIFY_FROM = '2026-09-15';     // 거래일 — 이날부터 배당·이자·수수료를 메리츠 입출금 그대로 넣는다(그 앞은 5% 어림·배당 인식으로 이미 넣었다)
 const API_KEYS = ['apiLast3020', 'apiLast3081', 'apiBook3020', 'apiBook3081', 'apiLog3020', 'apiLog3081',
-  'apiProbe', 'apiStop', 'apiMatch', 'apiPushKey', 'apiPushed', 'pushSub', 'apiSummary', 'apiState3081', 'apiMode', 'apiNotice'];
+  'apiProbe', 'apiStop', 'apiMatch', 'apiPushKey', 'apiPushed', 'pushSub', 'apiSummary', 'apiState3081', 'apiMode', 'apiNotice', 'noticeAck'];
 const API_POLL = 45e3;                // 30초 배출마다 부르되 이 간격 안이면 건너뛴다
 const API_BOOK_STALE = 30 * 3600e3;   // 장부가 이보다 오래면 동기화가 멈춘 것
 const API_ACK = 'jasan_api_ack';
@@ -9396,6 +9396,14 @@ function apiAlerts() {
   if (bm) out.push({ key: 'bookmiss', t: bm.t, lv: 'warn', title: '오늘 메리츠 장부 동기화가 없습니다', body: bm.body });
   const vrm = apiVrMissing();
   if (vrm) out.push({ key: 'vrmiss', t: vrm.t, lv: 'bad', title: 'VR 이번 사이클 예약이 없습니다', body: vrm.body });
+  /* 폰 알림의 주 경로(수집기)가 끊겼다 (2026-10-16) — 그동안 실행기는 웹 푸시로만 민다. 기록이 아예 없는 옛 수집기(4.44 이하)는 조르지 않는다 */
+  /* 못 읽는 중이면 옛 기록으로 '죽었다' 하지 않는다 · t 는 하루 단위 — 알림만 꺼진 수집기는 15분마다 noticeAck.t 를 새로 써 '확인' 이 안 먹었다(검토 2026-10-16) */
+  const na = apiV('noticeAck'), col = apiCollector();
+  if (na && num(na.t) && !col.ok && !API.err) {
+    const dead = new Set(((apiV('apiPushed') || {}).dead) || []), web = (apiV('pushSub') || []).some(x => x && x.endpoint && !dead.has(x.endpoint));
+    out.push({ key: 'col' + col.kind, t: now - now % 864e5, lv: 'warn', title: '폰 알림 — ' + col.say.split(' — ')[0],
+      body: (web ? '자동매매 알림이 웹 푸시로만 갑니다' : '자동매매 알림이 폰에 뜨지 않습니다') + ' — ' + (col.say.split(' — ')[1] || '무매/VR › 공통 › 설정 › 폰 알림') });
+  }
   if (apiMissedIB()) {
     out.push({ key: 'miss', t: apiMissT(), lv: 'warn', title: '오늘 무매 자동매매 판이 돌지 않았습니다', body: '서울 18:35~20:35 예약 실행이 없었습니다 — GitHub Actions 를 확인해 주세요' });
   }
@@ -9804,8 +9812,20 @@ function renderApiProfit() {
   const el = $('#apiProfit'); if (!el) return;
   el.innerHTML = SB && sbTok ? apiProfitCard() : '';
 }
+/* 수집기 상태(meta.noticeAck — 수집기 4.45~ 가 15분 작업마다 적는다). 실행기(notify.collector)도 같은 기준으로 웹 푸시를 바로 보낼지 정한다:
+   살아 있으면 알림함에만 적고, 웹 푸시는 수집기가 2시간 넘게 못 읽은 글만 늦게 (2026-10-16 — 아침 요약이 수집기와 크롬 웹앱으로 두 번 떴다) */
+const API_ALIVE = 12 * 3600e3;
+function apiCollector() {
+  const a = apiV('noticeAck');
+  if (!a || !num(a.t)) return { ok: false, kind: 'none', say: '수집기 기록 없음 — 4.45 이상이면 15분 안에 생깁니다' };
+  const age = Date.now() - a.t;
+  if (age > API_ALIVE) return { ok: false, kind: 'stale', say: `수집기 ${Math.floor(age / 3600e3)}시간째 소식 없음 — 수집기 앱을 한 번 열어 주세요` };
+  if (a.enabled === false) return { ok: false, kind: 'off', say: '수집기 알림이 꺼져 있습니다 — 안드로이드 설정 › 앱 › 수집기 › 알림' };
+  if (a.chan === 0) return { ok: false, kind: 'chan', say: "수집기의 '자동매매 알림' 채널이 꺼져 있습니다" };
+  return { ok: true, kind: 'ok', say: `수집기 ${a.v ? esc(String(a.v)) + ' ' : ''}마지막 확인 ${apiHM(a.t)} ✓` };
+}
 function apiPushCard() {
-  const s = pushState(), mine = pushMine && !pushBad;
+  const s = pushState(), mine = pushMine && !pushBad, col = apiCollector();
   const dead = new Set(((apiV('apiPushed') || {}).dead) || []);
   const subs = (apiV('pushSub') || []).filter(x => x && !dead.has(x.endpoint)).length;
   const say = s === 'nosupport' ? '이 브라우저는 알림을 받을 수 없습니다 — 폰에서 홈 화면에 설치한 웹앱으로 열어 주세요'
@@ -9813,7 +9833,7 @@ function apiPushCard() {
       : s === 'denied' ? '이 기기에서 알림을 막아 두었습니다 — 브라우저(앱) 설정에서 알림을 허용해 주세요'
         : pushBad === 'key' ? '알림 키가 바뀌었습니다 — 이 기기를 다시 켜 주세요'
           : pushBad === 'dead' ? '푸시 서비스가 이 기기 구독을 거절했습니다 — 다시 켜 주세요'
-            : mine ? '이 기기에서 받습니다 ✓' : '이 기기는 아직 받지 않습니다';
+            : mine ? '이 기기는 웹 푸시(대비책)를 받습니다 ✓' : '이 기기는 웹 푸시를 받지 않습니다';
   const btn = s === 'nosupport' || s === 'nokey' || s === 'denied' ? ''
     : mine ? '<button class="ghost" data-pushoff style="padding:7px 12px;font-size:12px">이 기기 끄기</button>'
       : `<button data-pushon style="padding:7px 12px;font-size:12px">${pushBad ? '다시 켜기' : '이 기기 알림 켜기'}</button>`;
@@ -9821,11 +9841,14 @@ function apiPushCard() {
   const html = `<div class="card pad">
     <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap"><span style="font-size:12.5px;color:var(--ink2);flex:1;min-width:0">${esc(say)}</span>${btn}</div>
     ${fail && num(fail.t) ? `<p class="note" style="margin:6px 0 0;color:var(--up)">마지막 알림 실패 ${esc(apiHM(fail.t))} — ${esc(String(fail.why || ''))} · ${esc(String(fail.ok))}/${esc(String(fail.n))}기기${fail.body ? `<br><span class="u">${esc(String(fail.body).slice(0, 200))}</span>` : ''}</p>` : ''}
-    <p class="note" style="margin:6px 0 0">폰 알림의 <b>주 경로는 수집기(4.44~)</b>입니다 — 실행기가 서버 알림함에 적으면 수집기가 15분마다 읽어 띄웁니다${(nb => nb && num(nb.t) ? ` · 알림함 마지막 기록 ${esc(apiHM(nb.t))}` : '')(apiV('apiNotice'))}.
-      이 기기 웹 푸시는 보조입니다(받는 기기 ${subs} — 이 폰에서는 켠 지 몇 시간 만에 끊긴 적이 있습니다). 같은 알림은 12시간에 한 번.</p></div>`;
-  const sum = s === 'nosupport' ? '이 브라우저 안 됨' : s === 'nokey' ? '키 없음' : s === 'denied' ? '막힘'
-    : pushBad ? '<b style="color:var(--up)">다시 켜기</b>' : mine ? `이 기기 받음 ✓ · ${subs}기기` : `이 기기 안 받음 · ${subs}기기`;
-  return { html, sum: fail && num(fail.t) > Date.now() - 864e5 ? '<b style="color:var(--up)">알림 실패</b> · ' + sum : sum };
+    <p class="note" style="margin:6px 0 0">폰 알림은 <b>수집기</b>가 띄웁니다 — 실행기가 서버 알림함에 적으면 수집기가 15분마다 읽습니다.
+      <span style="${col.ok ? '' : 'color:var(--up);font-weight:600'}">${col.say}</span>${(nb => nb && num(nb.t) ? ` · 알림함 마지막 기록 ${esc(apiHM(nb.t))}` : '')(apiV('apiNotice'))}.</p>
+    <p class="note" style="margin:6px 0 0">웹 푸시는 <b>대비책</b>입니다 — 같은 알림이 두 번 뜨지 않게, 수집기가 12시간(오류·누락 알림은 90분) 넘게 소식이 없거나
+      알림이 꺼졌으면 바로, 살아 있는데 2시간 넘게 못 읽은 알림은 실행기가 다음에 돌 때 보내고 수집기 쪽에서는 뺍니다. 받는 기기 ${subs} · 같은 알림은 12시간에 한 번.</p></div>`;
+  const web = s === 'nosupport' ? '웹 푸시 안 됨' : s === 'nokey' ? '웹 푸시 키 없음' : s === 'denied' ? '웹 푸시 막힘'
+    : pushBad ? '웹 푸시 다시 켜기' : mine ? `웹 푸시 ${subs}기기` : `웹 푸시 이 기기 안 받음`;
+  const sum = (col.ok ? '수집기 ✓' : '<b style="color:var(--up)">수집기 확인</b>') + ' · ' + web;
+  return { html, sum: fail && num(fail.t) > Date.now() - 864e5 && !col.ok ? '<b style="color:var(--up)">알림 실패</b> · ' + sum : sum };
 }
 function apiDispatchCard() {
   const d = API.disp;
@@ -9866,7 +9889,7 @@ function apiSettings() {
   const probe = apiV('apiProbe'), push = apiPushCard(), disp = apiDispatchCard();
   const nLog = (apiV('apiLog3020') || []).length + (apiV('apiLog3081') || []).length;
   return `<div class="apiset"><h2 class="sec" style="margin-top:24px">설정</h2>`
-    + secD('apiPush', '폰 알림 · 웹 푸시', push.html, push.sum)
+    + secD('apiPush', '폰 알림', push.html, push.sum)
     + secD('apiDisp', '정시 깨우기', disp.html, disp.sum)
     + secD('apiLog', '판 이력', `<div class="card pad"><div class="grp-h" style="padding-top:0">무매 3020</div>${apiLogRows('3020')}<div class="grp-h">VR 3081</div>${apiLogRows('3081')}</div>`, nLog ? `${nLog}판` : '')
     + (probe ? secD('apiProbe', '시험 주문 결과', `<div class="card pad"><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;margin:0">${esc(String(probe.text || '').slice(0, 4000))}</pre></div>`, apiHM(probe.t)) : '')
