@@ -797,7 +797,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-16 13:28';
+const BUILD = '2026-10-19 14:07';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -9306,6 +9306,16 @@ function apiRunBad(r) {
     || (r.lines || []).some(l => l.state === 'rejected' || l.state === 'unknown' || (r.mode === 'live' && l.state === 'skipped' && l.why));
 }
 const apiRunT = r => Date.parse((r && r.t) || '') || 0;
+/* 메리츠 조회가 잠깐 끊긴 판 — 뒤에 같은 계좌를 다시 읽은 판이 있으면 풀린 것이다 (2026-10-19, 사용자: "VR 관련 오류 … 확인바람").
+   10/18(일) 22:20 VR 판이 토큰 만료·SSL 끊김으로 멈췄는데 1분 뒤 판은 정상이었다 — 그래도 30시간 동안 경고 띠와 '오류' 가 남았다.
+   뒤 판이 읽었다는 증거: 판 기록(apiLast)의 '메리츠 조회 ✓' · 이력의 read(실행기 10-19~) · 조회 뒤에야 나오는 VR 정상 멈춤 */
+function apiReadAfter(acct, after) {
+  const r = apiV('apiLast' + acct);
+  if (r && apiRunT(r) > after && (r.gates || []).some(g => g && g.name === '메리츠 조회' && g.ok)) return true;
+  return (apiV('apiLog' + acct) || []).some(e => e && apiRunT(e) > after
+    && (e.read === true || /사이클 중간|사이클이 지남|이미 끝냈음/.test(String(e.stopped || ''))));
+}
+const apiHealed = (acct, x) => !!x && /메리츠 조회 실패/.test(String(x.stopped || '')) && apiReadAfter(acct, apiRunT(x));
 /* 오늘 무매 판이 돌았어야 하는가 — 평일 서울 21:30 이 지났는데 18시 뒤 판 기록이 없다(예약 실행이 밀리거나 빠졌다).
    미국 휴장일에도 실행기는 깨어 '오늘은 미국 휴장' 으로 기록을 남기므로 휴장 달력이 필요 없다 */
 function apiMissedIB() {
@@ -9371,11 +9381,12 @@ function apiAlerts() {
        이력이 있어야 금요일 밤 오류를 토요일 '휴장' 판이 apiLast 에서 덮어도 놓치지 않는다(검토 2026-10-13) */
     const r = apiV('apiLast' + acct);
     const cand = [];
-    if (r && apiRunBad(r)) cand.push({ t: apiRunT(r), mode: r.mode, error: !!r.error, stopped: r.stopped,
+    if (r && apiRunBad(r) && !apiHealed(acct, r)) cand.push({ t: apiRunT(r), mode: r.mode, error: !!r.error, stopped: r.stopped,
       bad: (r.gates || []).filter(g => !g.ok && g.name !== '주문 시간').map(g => g.name) });
     (apiV('apiLog' + acct) || []).forEach(e => {
       if (!e || !(e.mode === 'live' ? e.alarm : (e.push != null ? e.push : e.alarm))) return;
       if (e.stopped && API_BENIGN.some(b => String(e.stopped).includes(b))) return;
+      if (apiHealed(acct, e)) return;
       cand.push({ t: apiRunT(e), mode: e.mode, error: !!e.error, stopped: e.stopped, bad: e.bad || [] });
     });
     const top = cand.filter(c => c.t && now - c.t < 30 * 3600e3).sort((a, b) => b.t - a.t)[0];
@@ -9597,11 +9608,11 @@ function apiRunWhy(r) {
 function apiRunHist(acct) {
   const out = [], r = apiV('apiLast' + acct);
   const live = ['sent', 'have', 'dry'];
-  if (r) out.push({ t: apiRunT(r), bad: apiRunBad(r), why: apiRunBad(r) ? apiRunWhy(r) : '', stopped: r.stopped || '',
+  if (r) out.push({ t: apiRunT(r), bad: apiRunBad(r) && !apiHealed(acct, r), why: apiRunBad(r) ? apiRunWhy(r) : '', stopped: r.stopped || '',
     cnt: (r.lines || []).filter(l => live.includes(l.state)).length });
   (apiV('apiLog' + acct) || []).forEach(e => {
     if (!e) return;
-    const bad = !apiBenign(e.stopped) && !!(e.error || (e.mode === 'live' ? e.alarm : (e.push != null ? e.push : e.alarm)));
+    const bad = !apiBenign(e.stopped) && !!(e.error || (e.mode === 'live' ? e.alarm : (e.push != null ? e.push : e.alarm))) && !apiHealed(acct, e);
     out.push({ t: apiRunT(e), bad, why: [e.stopped, ...(e.bad || [])].filter(Boolean).slice(0, 2).join(' · ').slice(0, 60) || '빗장',
       stopped: e.stopped || '', cnt: live.reduce((a, k) => a + num((e.n || {})[k]), 0) });
   });
@@ -9682,9 +9693,9 @@ function apiLogRows(acct) {
   const lg = apiV('apiLog' + acct) || [];
   if (!lg.length) return '<p class="note">아직 없습니다</p>';
   return '<div class="scroll"><table class="tbl"><tr><th>시각</th><th>모드</th><th>결과</th></tr>' + lg.slice(0, 30).map(e => {
-    const n = e.n || {}, cnt = Object.keys(n).map(k => (API_STATE[k] || [k])[0] + ' ' + n[k]).join(' · ');
-    return `<tr><td class="num">${apiHM(e.t)}</td><td>${esc(e.mode || '')}</td><td style="text-align:left;white-space:normal;color:${e.alarm ? 'var(--up)' : 'var(--ink2)'}">`
-      + esc([e.stopped, cnt, (e.bad || []).join(' · ')].filter(Boolean).join(' — ').slice(0, 260)) + `</td></tr>`;
+    const n = e.n || {}, cnt = Object.keys(n).map(k => (API_STATE[k] || [k])[0] + ' ' + n[k]).join(' · '), healed = apiHealed(acct, e);
+    return `<tr><td class="num">${apiHM(e.t)}</td><td>${esc(e.mode || '')}</td><td style="text-align:left;white-space:normal;color:${e.alarm && !healed ? 'var(--up)' : 'var(--ink2)'}">`
+      + esc([e.stopped, cnt, (e.bad || []).join(' · '), healed ? '다음 판에서 정상으로 읽음(잠깐 끊김)' : ''].filter(Boolean).join(' — ').slice(0, 260)) + `</td></tr>`;
   }).join('') + '</table></div>';
 }
 /* 메리츠 장부 대조 — 다 같으면 접어 두고 한 줄('모두 같음')만, 다른 것이 있으면 펴 둔다 */
