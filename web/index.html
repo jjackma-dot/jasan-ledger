@@ -797,7 +797,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-19 14:07';
+const BUILD = '2026-10-19 18:59';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -3044,7 +3044,8 @@ function mtsCapRows(rows, close) {
   if (!over.length) return { rows, cap, over };
   const merged = {
     side: 'B', typ: 'LOC', px: cap, qty: over.reduce((a, r) => a + Math.round(num(r.qty)), 0),
-    tag: '15% 상한 ← ' + over.map(r => `${r.tag || r.typ} $${fmt(num(r.px), 2)}`
+    /* 종가로 미리 그린 모습이다(실행기 '웹 주문표와 같음' 대조가 같은 종가로 맞춰 본다). 실제로 낼 때는 그 순간 현재가 × 1.15 로 다시 잰다(2026-10-19) */
+    tag: '15% 상한(종가 기준 · 낼 때 현재가로) ← ' + over.map(r => `${r.tag || r.typ} $${fmt(num(r.px), 2)}`
       + (over.length > 1 ? ` ${fmt(num(r.qty), 0)}주` : '')).join(' + ')
   };
   const out = [];
@@ -8849,9 +8850,47 @@ function apiPutTx(x, acct) {
     d.usd = +(num(d.usd) + amt).toFixed(2);
     markDirty(ks[n]);
   }
+  /* 이자 어림으로 이미 넣은 몫은 뺀다 (2026-10-19) — 아래 apiEstOpen. 들어온 배당·이자가 먼저 잡아 둔 어림을 오래된 것부터 갚는다.
+     어림을 넣은 날(그보다 앞이면 이 거래일)부터 빼야 날마다의 값이 맞다 */
+  let used = 0;
+  if ((x.kind === 'int' || x.kind === 'div') && amt > 0) apiEstOpen().forEach(h => {
+    const use = +Math.min(num(h.e.left), amt - used).toFixed(2);
+    if (!(use > 0)) return;
+    h.e.left = +(num(h.e.left) - use).toFixed(2); used = +(used + use).toFixed(2); markDirty(h.k);
+    for (let n = Math.max(i, ks.indexOf(h.k)); n < ks.length; n++) { const d = state.days[ks[n]]; d.usd = +(num(d.usd) - use).toFixed(2); markDirty(ks[n]); }
+  });
   const d0 = state.days[ks[i]];
-  (d0.btx = d0.btx || []).push({ id: acct + ':' + x.id, kind: x.kind, usd: amt, name: x.name, sym: x.sym || '', tax: num(x.tax), d: x.d, t: Date.now() });
+  (d0.btx = d0.btx || []).push(Object.assign({ id: acct + ':' + x.id, kind: x.kind, usd: amt, name: x.name, sym: x.sym || '', tax: num(x.tax), d: x.d, t: Date.now() },
+    used ? { est: used } : {}));
   return ks[i];
+}
+/* ── 이자 어림 (2026-10-19, 사용자: "외화 예수금이 원장과 메리츠가 다른데 왜 달라진 건지" → "앞으로 예외상황이 아니면 알림없이 자동으로
+   예수금 싱크가 맞도록") ──
+   3020 달러는 밤마다 USD RP 로 넘어갔다 아침에 이자와 함께 돌아온다. **주말·휴일에는 RP 가 며칠 그대로 있고**, 그동안 메리츠의 주문가능
+   외화(eco)에는 **아직 지급 안 된 이자가 날마다 붙어** 보인다 — 입출금 행은 RP 를 판 날에 며칠치를 한 번에 적는다. 그 사이 웹이
+   '이자 한도 안에서 메리츠가 많다' 로 원장을 맞추고(apiFit), 월요일 RP 매도 행의 이자를 **통째로 또** 넣어 그 며칠치가 두 번 들어갔다
+   (10/17~19 첫 주말에 실제로 났다).
+   이제 맞춤으로 올린 몫을 그날 btx 에 '이자 어림'(kind 'iest', 남은 몫 left)으로 적고, 뒤에 들어오는 배당·이자 행이 그만큼 빼고 넣는다
+   (수수료 어림 → 결제 행과 같은 방식). 남은 어림보다 메리츠가 적어도(이자가 어림보다 적게 들어옴) 그 안이면 맞춘다(아래 estAuto).
+   API_EST_DAYS 넘게 갚히지 않은 어림은 끝난 것으로 본다 — 그동안 이자 행이 안 왔으면 다른 무엇이었고, 그 차이는 이미 원장에 맞춰져 있다 */
+const API_EST_DAYS = 10;
+function apiEstOpen() {
+  const out = [], cut = iso(new Date(Date.now() - API_EST_DAYS * 864e5));
+  dayKeys().forEach(k => (state.days[k].btx || []).forEach(e => {
+    if (e && e.kind === 'iest' && num(e.left) > USD_EPS && String(e.d || k) >= cut) out.push({ k, e });
+  }));
+  return out.sort((p, q) => num(p.e.t) - num(q.e.t));
+}
+/* 이 방식 전에 맞춘 것 — usdChk.log 의 이자 맞춤(api · 수수료 아님 · 올림) 중 **그 뒤 날짜의 배당·이자 행**이 들어온 것. 그 행은 통째로
+   들어갔으므로 맞춘 몫이 두 번 들어갔을 수 있다. 한 번만 쓴다(usdChk.iestMig) — 사람이 이미 '메리츠 값으로 맞추기' 를 눌렀으면 차이가 없어
+   그냥 지나간다 */
+function apiEstLegacy() {
+  const c = state.usdChk || {};
+  if (c.iestMig) return 0;
+  const ints = [];
+  dayKeys().forEach(k => (state.days[k].btx || []).forEach(e => { if (e && (e.kind === 'int' || e.kind === 'div') && num(e.usd) > 0) ints.push(String(e.d || k)); }));
+  return +(c.log || []).filter(l => l && l.api && !l.fee && !l.est && num(l.amt) > 0 && String(l.d) >= API_TX_FROM && ints.some(d => d > String(l.d)))
+    .reduce((s, l) => s + num(l.amt), 0).toFixed(2);
 }
 /* 배당·이자를 메리츠 API 장부가 맡는가 — 두 계좌 장부에 날짜 붙은 입출금이 있고 연결 날이 지났으면. 그때부터 수집기 자산 대조의
    5% 어림 반영(mtsAssetCommit)은 멈춘다. 장부가 멈추면(30시간) 경고 띠가 알린다 */
@@ -9231,17 +9270,35 @@ function apiReconcile() {
       && apiFeeRate(API_ACCTS[i], f.fd) !== 0).reduce((t, f) => t + num(f.amt), 0), 0);
     rec.cash.feeCap = +(feeBase * API_FEE_CAP).toFixed(2);
     const feeAuto = !fit.auto && rec.cash.diff < -USD_EPS && -rec.cash.diff <= rec.cash.feeCap + USD_EPS;
+    /* 이자 어림이 남았는데 메리츠가 그만큼 안에서 적으면 — 이자가 어림보다 적게 들어왔거나, 이 방식 전에 두 번 들어간 몫(apiEstLegacy)이다.
+       맞추고 남은 어림을 그만큼 갚는다(2026-10-19) */
+    const estOpen = apiEstOpen(), legacy = apiEstLegacy();
+    const owe = +(estOpen.reduce((s, h) => s + num(h.e.left), 0) + legacy).toFixed(2);
+    const estAuto = !fit.auto && !feeAuto && rec.cash.diff < -USD_EPS && -rec.cash.diff <= owe + USD_EPS;
     const askUsd = apiAsks().some(a => a.eff.usd)           // 묻는 환전·외화 입출금이 남았으면 쉰다(반영 때 두 번 들어간다)
       || books.some(b => b && (b.stale || []).some(k => k === 'txs' || k === 'fx'));   // 입출금·환전을 못 받았으면 못 본 입금일 수 있다
     rec.cash.ask = askUsd;
-    if (!late && !askUsd && (fit.auto || feeAuto)) {
+    if (!late && !askUsd && (fit.auto || feeAuto || estAuto)) {
       latest().usd = them;
       const chk = state.usdChk || (state.usdChk = { d: '', t: 0, log: [] });
-      chk.log = [{ d: iso(new Date()), amt: rec.cash.diff, days: fit.days, from: was, to: them, api: true, fee: feeAuto }].concat(chk.log || []).slice(0, 20);
-      if (!feeAuto) chk.d = iso(new Date());           // 이자 기준일은 이자를 맞췄을 때만 옮긴다
+      chk.log = [Object.assign({ d: iso(new Date()), amt: rec.cash.diff, days: fit.days, from: was, to: them, api: true, fee: feeAuto },
+        fit.auto ? { est: 1 } : {}, estAuto ? { iest: 1 } : {})].concat(chk.log || []).slice(0, 20);
+      if (fit.auto) {
+        chk.d = iso(new Date());                       // 이자 기준일은 이자를 맞췄을 때만 옮긴다
+        /* 올린 몫을 '이자 어림' 으로 적는다 — 뒤에 이자 행이 오면 그만큼 빼고 넣는다(apiPutTx) */
+        const lk = latestKey(), e = { id: 'usd:iest:' + Date.now(), kind: 'iest', usd: rec.cash.diff, left: rec.cash.diff,
+          name: '이자 어림 (메리츠에 맞춤)', d: iso(new Date()), t: Date.now() };
+        (state.days[lk].btx = state.days[lk].btx || []).push(e);
+      }
+      if (estAuto) {                                    // 남은 어림을 오래된 것부터 갚는다 — 옛 몫(legacy)은 한 번 쓰고 끝
+        let pay = -rec.cash.diff;
+        estOpen.forEach(h => { const u = Math.min(num(h.e.left), pay); if (u > 0) { h.e.left = +(num(h.e.left) - u).toFixed(2); pay -= u; markDirty(h.k); } });
+      }
       markDirty(latestKey()); changed = true;
-      rec.cash.auto = rec.cash.diff; rec.cash.autoFee = feeAuto; rec.cash.cap = fit.cap; rec.cash.diff = 0; rec.cash.was = them;
+      rec.cash.auto = rec.cash.diff; rec.cash.autoFee = feeAuto; rec.cash.autoEst = estAuto; rec.cash.cap = fit.cap; rec.cash.diff = 0; rec.cash.was = them;
     } else rec.cash.cap = fit.cap;
+    /* 옛 몫은 첫 대조 한 번에만 쓴다 — 견줄 수 있었던 판이면(늦음·묻는 것 없음) 맞췄든 아니든 끝낸다. 남겨 두면 뒤의 진짜 차이를 덮는다 */
+    if (!late && !askUsd && legacy >= 0 && !(state.usdChk || {}).iestMig) { (state.usdChk = state.usdChk || { d: '', t: 0, log: [] }).iestMig = 1; changed = true; }
     if (!late && Math.abs(rec.cash.diff) > USD_EPS) rec.issues.push({ acct: '', kind: 'cash', cash: rec.cash });
   }
   /* 원화예수금 — 메리츠 예수금(3020 + 3081, 원)과 원장(만원). 원화도 밤마다 RP 로 넘어가 그동안은 예수금이 0 이라 견줄 수 없다(book.krw.ok) —
@@ -9712,7 +9769,7 @@ function apiBookCard() {
       <div class="d num" style="color:var(--muted)">평단 $${fmt(h.avgM, 4)}${!h.avgOk ? ' ≠' : ''}</div></div></div>`).join('');
   const c = rec.cash;
   const cashRow = c ? `<div class="row"><div style="min-width:0"><div class="nm">외화예수금 <span class="u">3020 + 3081 · RP 포함</span>
-      <span class="sub">원장 $${fmt(c.was, 2)} · ${c.per.map(p => p.acct + ' $' + fmt(num(p.cash), 2) + (p.open ? ' (열린 매수 $' + fmt(p.open, 0) + ' 포함)' : '')).join(' · ')}${c.auto ? ` · ${c.autoFee ? '수수료 어림' : '이자'} ${c.auto >= 0 ? '+' : '−'}$${fmt(Math.abs(c.auto), 2)} 자동 반영` : ''}</span></div></div>
+      <span class="sub">원장 $${fmt(c.was, 2)} · ${c.per.map(p => p.acct + ' $' + fmt(num(p.cash), 2) + (p.open ? ' (열린 매수 $' + fmt(p.open, 0) + ' 포함)' : '')).join(' · ')}${c.auto ? ` · ${c.autoEst ? '이자 어림 정리' : c.autoFee ? '수수료 어림' : '이자'} ${c.auto >= 0 ? '+' : '−'}$${fmt(Math.abs(c.auto), 2)} 자동 반영` : ''}</span></div></div>
     <div class="vals"><div class="v num" style="color:${Math.abs(c.diff) <= USD_EPS ? 'var(--c2)' : c.late ? 'var(--muted)' : 'var(--up)'}">$${fmt(c.them, 2)}</div>
       <div class="d num" style="color:var(--muted)">${Math.abs(c.diff) <= USD_EPS ? '같음' : c.late ? '장부 뒤 반영분 있음' : (c.diff >= 0 ? '+' : '−') + '$' + fmt(Math.abs(c.diff), 2)}</div></div></div>`
     + (!c.late && Math.abs(c.diff) > USD_EPS ? `<div class="row" style="background:var(--surf2)"><div class="nm" style="font-size:11.5px;line-height:1.5;color:var(--ink2);flex:1;white-space:normal">
