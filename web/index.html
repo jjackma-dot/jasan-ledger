@@ -797,7 +797,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-25 09:51';
+const BUILD = '2026-10-25 16:39';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -8763,7 +8763,7 @@ const API_TX_FROM = '2026-10-14';
 /* 원장 체결(tr)에 뉴욕 체결일(fd)이 붙기 시작한 날(2026-09-15, usTradeDay). 그 앞의 줄은 체결일을 몰라 묶음으로 못 맞춘다 — 대조는 이날부터 */
 const API_VERIFY_FROM = '2026-09-15';     // 거래일 — 이날부터 배당·이자·수수료를 메리츠 입출금 그대로 넣는다(그 앞은 5% 어림·배당 인식으로 이미 넣었다)
 const API_KEYS = ['apiLast3020', 'apiLast3081', 'apiBook3020', 'apiBook3081', 'apiLog3020', 'apiLog3081',
-  'apiProbe', 'apiStop', 'apiMatch', 'apiPushKey', 'apiPushed', 'pushSub', 'apiSummary', 'apiState3081', 'apiMode', 'apiNotice', 'noticeAck'];
+  'apiProbe', 'apiStop', 'apiMatch', 'apiPushKey', 'apiPushed', 'pushSub', 'apiSummary', 'apiState3081', 'apiMode', 'apiNotice', 'noticeAck', 'apiIncident'];
 const API_POLL = 45e3;                // 30초 배출마다 부르되 이 간격 안이면 건너뛴다
 const API_BOOK_STALE = 30 * 3600e3;   // 장부가 이보다 오래면 동기화가 멈춘 것
 const API_ACK = 'jasan_api_ack';
@@ -9394,8 +9394,11 @@ const apiBookGot = b => !b || b.fills == null ? 0 : (b.stale || []).includes('fi
 const apiBookAged = b => !b || b.fills == null ? 0 : (b.stale || []).length ? Math.min(...b.stale.map(k => num((b.st || {})[k]))) : num(b.t);
 const apiBookBlip = b => !!b && (b.errs || []).length > 0 && b.errs.every(e => API_TRANSIENT.test(String(e)))
   && (num(b.fails || 1) < 2 || Date.now() - apiBookAged(b) < API_BOOK_FRESH);
-const apiHealed = (acct, x) => !!x && (/메리츠 조회 실패/.test(String(x.stopped || '')) ? apiReadAfter(acct, apiRunT(x))
-  : /VR 종가 없음/.test(String(x.stopped || '')) ? apiCloseAfter(acct, apiRunT(x)) : false);
+/* 실행기가 '복구' 로 닫은 일(meta.apiIncident.closed — 2026-10-25 발생·복구) — 그 계좌의 판 경고는 복구 시각 앞의 것이면 풀린 것이다 */
+const apiRecovered = (acct, t) => ((apiV('apiIncident') || {}).closed || []).some(x => x && x.k === 'run' + acct && num(x.rt) > t && num(x.t) <= t + 15 * 60e3);   // 열린 때는 판 시작 뒤 몇 분(다시 읽기·보내기)일 수 있다
+const apiHealed = (acct, x) => !!x && (apiRecovered(acct, apiRunT(x))
+  || (/메리츠 조회 실패/.test(String(x.stopped || '')) ? apiReadAfter(acct, apiRunT(x))
+    : /VR 종가 없음/.test(String(x.stopped || '')) ? apiCloseAfter(acct, apiRunT(x)) : false));
 /* 오늘 무매 판이 돌았어야 하는가 — 평일 서울 21:30 이 지났는데 18시 뒤 판 기록이 없다(예약 실행이 밀리거나 빠졌다).
    미국 휴장일에도 실행기는 깨어 '오늘은 미국 휴장' 으로 기록을 남기므로 휴장 달력이 필요 없다 */
 function apiMissedIB() {
@@ -9993,11 +9996,30 @@ function apiTopPanel() {
     ${apiRunRow('3020')}${apiRunRow('3081')}${smRow}</div>`;
 }
 /* 맨 아래 — 설정(접힘): 폰 알림 · 정시 깨우기 · 판 이력 · 시험 주문 결과 */
+/* 알림 기록 — 수집기가 띄운 알림함(meta.apiNotice)을 발생(빨강)·복구(초록)로. 아직 복구 안 된 일은 위에 (2026-10-25,
+   사용자: "결과적으로 정상 처리된 경우 짝이 되는 추가 알림 생성. 발생/복구 개념으로 알아보기 쉽게") */
+function apiNoticeLog() {
+  const list = (((apiV('apiNotice') || {}).list) || []).filter(x => x && num(x.t)).slice(0, 20);
+  /* 사흘 넘게 다시 알리지 않은 일은 닫힌 것으로(실행기 notify._live 와 같은 규칙 — 알 길 없는 일이 영영 빨갛게 남지 않게) */
+  const inc = apiV('apiIncident') || {}, open = Object.entries(inc.open || {})
+    .filter(([, v]) => v && num(v.t) && Date.now() - num(v.last || v.t) < 3 * 864e5);
+  const head = open.length
+    ? `<p class="note" style="margin:0 0 8px;color:var(--up)"><b>아직 복구 안 된 일 ${open.length}</b> — ${esc(open.map(([, v]) => `${apiHM(v.t)} ${String(v.title || '').replace(/^(\[\d{4}\] )?발생 · /, '$1')}`).join(' · ').slice(0, 240))}</p>`
+    : '<p class="note" style="margin:0 0 8px">열린 일 없음 — 발생한 일은 모두 복구됐거나 사흘이 지나 닫혔습니다</p>';
+  const rows = list.map(x => {
+    const t = String(x.title || ''), k = / 복구 · |^복구 · /.test(t) ? 'var(--c2)' : / 발생 · |^발생 · /.test(t) ? 'var(--up)' : 'var(--ink2)';
+    return `<tr><td class="num" style="vertical-align:top">${apiHM(x.t)}</td><td style="text-align:left;white-space:normal;font-family:'IBM Plex Sans KR',sans-serif;padding-left:8px"><span style="color:${k};font-weight:600">${esc(t)}</span>`
+      + `${x.body ? `<br><span class="u">${esc(String(x.body).slice(0, 160))}</span>` : ''}</td></tr>`;
+  }).join('');
+  const html = `<div class="card pad">${head}${rows ? `<div class="scroll"><table class="tbl"><tr><th>시각</th><th style="text-align:left">알림</th></tr>${rows}</table></div>` : '<p class="note" style="margin:0">아직 없습니다</p>'}</div>`;
+  return { html, sum: open.length ? `<b style="color:var(--up)">복구 안 된 일 ${open.length}</b>` : (list.length ? `열린 일 없음 · ${apiHM(list[0].t)}` : '') };
+}
 function apiSettings() {
   const probe = apiV('apiProbe'), push = apiPushCard(), disp = apiDispatchCard();
   const nLog = (apiV('apiLog3020') || []).length + (apiV('apiLog3081') || []).length;
   return `<div class="apiset"><h2 class="sec" style="margin-top:24px">설정</h2>`
     + secD('apiPush', '폰 알림', push.html, push.sum)
+    + (nlog => secD('apiNoticeLog', '알림 기록 · 발생/복구', nlog.html, nlog.sum))(apiNoticeLog())
     + secD('apiDisp', '정시 깨우기', disp.html, disp.sum)
     + secD('apiLog', '판 이력', `<div class="card pad"><div class="grp-h" style="padding-top:0">무매 3020</div>${apiLogRows('3020')}<div class="grp-h">VR 3081</div>${apiLogRows('3081')}</div>`, nLog ? `${nLog}판` : '')
     + (probe ? secD('apiProbe', '시험 주문 결과', `<div class="card pad"><pre style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:11px;margin:0">${esc(String(probe.text || '').slice(0, 4000))}</pre></div>`, apiHM(probe.t)) : '')
