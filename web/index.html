@@ -797,7 +797,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-11-07 14:25';
+const BUILD = '2026-11-07 18:44';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2882,7 +2882,7 @@ function ibOffer(px) {
   };
 }
 
-/* 시작일부터 오늘까지 하루씩 다시 계산한다 */
+/* 시작일부터 오늘까지 다시 계산한다 — 한 걸음은 뉴욕 세션 하나다(아래 '한 걸음 = 뉴욕 세션 하나') */
 function ibRun(key) {
   const sl = IB_SLOTS.find(s => s.k === key); if (!sl) return null;
   if (sl.vr) return null;                        // VR 은 방법론이 다르다
@@ -2920,22 +2920,75 @@ function ibRun(key) {
     P: mode0 === 'NORMAL' ? num(cfg.ty) - (num(cfg.ty) / (num(cfg.n) / 2)) * T0 : 0,
     balance: cycleP - inv0
   };
+  /* ── 한 걸음 = 뉴욕 세션 하나 — 체결은 적힌 줄이 아니라 **체결일(fd)** 로 묶는다 (2026-11-07) ──────────────
+     원장 줄은 서울 날짜다. 세션 d 의 LOC 는 서울 d+1 06:00 에 체결돼 **d+1 줄**에, 지정가 매도는 개장 직후 자정 전에
+     체결돼 **d 줄**에 적힌다(메리츠 장부 apiPutFill 은 체결 시각의 서울 날짜 줄, 알림은 받은 날 줄). 줄 하나를 한 걸음으로 걸으면
+       ① 섞인다 — 화 줄에 월 세션 LOC 매수와 화 세션 지정가 3/4 매도가 함께 있으면 매도를 먼저 곱해 T = 10 × 0.25 + 0.5 = 3.0.
+          실행기는 세션마다 걸어 (10 + 0.5) × 0.25 = 2.625 다(2026-11-07 검토 재현)
+       ② 나뉜다 — 세션 d 의 지정가가 d 줄, LOC 가 d+1 줄이면 d+1 줄의 buyT 가 **매도 뒤 상태**로 그날 계획을 다시 만들어 다리
+          판정이 달라진다. 그날 실제로 건 주문은 매도 전 상태로 만든 표다
+     웹 T 가 실행기·fire gate 와 갈리면 그 뒤로 '웹 주문표와 같음' 빗장이 그 자리 주문을 막는다(안전 쪽이지만 사람이 고쳐야 한다).
+     실제 원장에도 있었다 — 2026-10-06 무매 TQQQ 줄에 fd 10-05 · 10-06 매도가 함께 적혔다(그때는 시작일 앞이라 영향 없음).
+
+     그래서 시작일 이후 체결일이 붙은 체결은 **그 세션을 맡는 줄**로 옮겨 걷는다. 줄이 맡는 세션은 앞 영업일이고(ibOffer 와 같다),
+     체결일 F 는 앞 영업일이 F 이상인 첫 줄이 맡는다 — 평일 F 는 F+1 줄, 금요일은 토요일 줄. 실행기 ib.replay 와 같은 걸음이다.
+     원장 수량·매입금액도 옮긴 체결만큼 그 사이 줄에서 빼고 더한 **가상 원장**으로 본다. 그러면 나머지는 예전 그대로 돈다 —
+     목록과 수량이 맞으면 체결대로, 손으로 고친 줄은 일별 증감으로(원장 수량을 따라간다), 새 세션도 체결도 없는 줄은 쉰다.
+     체결일이 없는 옛 줄(2026-09-15 앞)과 시작일 앞 체결일은 옮기지 않는다 — 적힌 줄에서 예전처럼 센다(실행기는 시작일 앞을 버린다).
+     한 세션 안에서는 체결 시각 순으로 굴린다(메리츠 장부 줄은 ft, 알림 줄은 적은 시각 t) — 매도·매수 순서가 평단을 바꾼다.
+
+     **아직 안 끝난 세션**(마지막 줄이 맡는 세션보다 뒤 — 오늘 밤 장의 지정가 매도·장전 체결)은 마지막에 한 걸음 더 걷는다.
+     보유·평단·T 는 그 체결까지 보이고 **오늘 주문표는 그 전 상태로** 만든다 — 오늘 낸 표가 장이 끝날 때까지 오늘 표이고,
+     실행기도 그날 체결을 빼고 계산한다(run.py `fd < day`). 장이 끝나면 그 세션을 맡는 줄에서 다시 센다. 끝 표시는 그때 단다.
+     시험: trader/tests/test_engine_diff.py 의 calendar_state — 체결 시각의 서울 날짜 줄에 적는다. */
+  const mine = r => (r.tr || []).filter(t => t.g === sl.g && t.s === sl.s);
+  const sgn = t => t.side === 'B' ? 1 : -1;
+  const inSess = t => /^\d{4}-\d{2}-\d{2}$/.test(t.fd || '') && t.fd >= cfg.d0;
+  const keyAt = ks.map((d, i) => i > i0 ? prevBiz(d) : '');            // 줄이 맡는 세션(앞 영업일) — 날짜순이라 오름차순
+  const hostOf = fd => {                                                // 체결일 fd 를 맡는 줄. 없으면 ks.length(아직 안 끝난 세션)
+    let lo = i0 + 1, hi = ks.length;
+    while (lo < hi) { const m = (lo + hi) >> 1; if (keyAt[m] >= fd) hi = m; else lo = m + 1; }
+    return lo;
+  };
+  /* 앵커 줄에 적힌 시작일 이후 체결 — 시작점을 잡은 **뒤**에 적혔으면(원장 수량 = q0 + 그 체결) 걷고, 이미 q0 에 들어 있으면
+     안 걷는다. 실행기는 fd ≥ 시작일이면 늘 걷는다 — 잡을 때 이미 든 체결이었으면 그쪽 잔고 빗장이 막는다 */
+  const row0 = state.days[ks[i0]], tr0 = mine(row0).filter(inSess);
+  const walk0 = tr0.length > 0
+    && Math.abs(num(row0[sl.g][sl.s].q) - num(cfg.q0) - tr0.reduce((a, t) => a + sgn(t) * num(t.qty), 0)) < 1e-6;
+  const byRow = {}, mvQ = Array(ks.length + 1).fill(0), mvC = Array(ks.length + 1).fill(0), wrote = new Set();
+  for (let i = i0; i < ks.length; i++) mine(state.days[ks[i]]).forEach((t, j) => {
+    const to = inSess(t) && (i > i0 || walk0) ? hostOf(t.fd) : i;
+    if (to === i0) return;                                              // 앵커 줄의 나머지는 q0 에 들어 있다
+    if (i > i0) wrote.add(i);
+    (byRow[to] = byRow[to] || []).push({ t, i, j });
+    /* 가상 원장 — 적힌 줄 i 와 맡는 줄 to 사이의 줄에서 그 체결을 빼거나(뒤에서 걷는다) 더한다(늦게 적혔다) */
+    const dQ = sgn(t) * num(t.qty), dC = sgn(t) * num(t.amt);
+    for (let k = Math.min(i, to); k < Math.max(i, to); k++) { mvQ[k] += to > i ? -dQ : dQ; mvC[k] += to > i ? -dC : dC; }
+  });
+  const tk = e => num(e.t.ft) || num(e.t.t);
+
   /* 매입금액은 원장값끼리의 '차이'만 쓴다. 차감법이라 절대값은 못 믿지만
      하루 사이의 증감은 그날 실제 체결금액 그대로다. */
-  let prevC = num(state.days[ks[i0]][sl.g][sl.s].c);
+  let prevC = num(row0[sl.g][sl.s].c) + mvC[i0];
   const hist = [{ d: ks[i0], ...st }];
 
   const mixed = [];                                   // 평단을 못 믿는 날
-  for (let i = i0 + 1; i < ks.length; i++) {
-    const d = ks[i], r = state.days[d];
-    const q = num(r[sl.g][sl.s].q), c = num(r[sl.g][sl.s].c);
+  let plan = null;                                    // 아직 안 끝난 세션 앞의 상태 — 오늘 주문표는 이것으로 만든다
+  for (let i = i0 + 1; i <= ks.length; i++) {
+    const prov = i === ks.length;                     // 마지막 줄 뒤 — 아직 안 끝난 세션의 체결이 있을 때만 걷는다
+    const here = byRow[i] || [];
+    const timed = here.every(e => tk(e) > 0);         // 시각이 없는 옛 체결이 섞이면 적힌 차례 그대로(예전 동작)
+    here.sort((a, b) => (timed ? tk(a) - tk(b) : 0) || a.i - b.i || a.j - b.j);
+    if (prov && !here.length) break;
+    const d = ks[prov ? i - 1 : i], r = state.days[d];
+    const q = num(r[sl.g][sl.s].q) + mvQ[i], c = num(r[sl.g][sl.s].c) + mvC[i];
     const dq = q - st.q, dc = c - prevC;
     let avg = st.avg, proceeds = 0, exact = false;
 
-    /* ① 그날 체결 목록이 있으면 순서대로 굴린다. 같은 날 매수와 매도가 섞여도
+    /* ① 그 세션의 체결 목록이 있으면 시각 순으로 굴린다. 같은 날 매수와 매도가 섞여도
        정확하다. 원장 수량과 맞아떨어질 때만 쓴다 — 손으로 수량을 고쳤거나
        목록이 반쪽이면 믿을 수 없다. */
-    const trs = (r.tr || []).filter(t => t.g === sl.g && t.s === sl.s);
+    const trs = here.map(e => e.t);
     let soldQty = null, boughtQty = null, boughtAmt = 0, buyPx = 0, buyFills = null;
     if (trs.length) {
       let tq = st.q, ta = st.avg, pr = 0, sq = 0, bq = 0, ba = 0, bp = 0;
@@ -2967,15 +3020,17 @@ function ibRun(key) {
         if (close > 0 && (unit < close * 0.5 || unit > close * 1.5)) mixed.push(d);
       } else if (dq < 0) { proceeds = -dc; if (q <= 0) avg = 0; }
     }
-    const oa = off ? off(d) : null, of = oa && oa.known ? oa : null;
-    const closeD = of ? of.close : num(r.px[sl.px]) || st.close, smaD = of ? of.sma5 : num(r.sma && r.sma[sl.px]);
+    const oa = !prov && off ? off(d) : null, of = oa && oa.known ? oa : null;
+    const closeD = prov ? st.close : of ? of.close : num(r.px[sl.px]) || st.close;
+    const smaD = prov ? st.sma5 : of ? of.sma5 : num(r.sma && r.sma[sl.px]);
     /* 새 세션도 체결도 없는 날(토·일·월 원장, 휴장)은 한 걸음이 아니다 (2026-11-06).
        걸음으로 치면 prevMode 가 mode 로 덮여 금요일 장으로 들어간 리버스의 **1일차(MOC)가 주말에 사라진다.**
        실행기는 뉴욕 거래일만 걷는다 — 원문도 "1일차" 는 거래일이다. */
-    const prevPx = num(state.days[ks[i - 1]].px[sl.px]);          // 공식 종가가 없을 때 — 앞 줄을 베낀 시세도 새 세션이 아니다(장중에 굳은 값이 이월된 휴장 줄)
-    const newSess = of ? of.sess > lastSess : Math.abs(closeD - st.close) > 0.0051 && Math.abs(closeD - prevPx) > 0.0051;
+    const prevPx = prov ? closeD : num(state.days[ks[i - 1]].px[sl.px]);   // 공식 종가가 없을 때 — 앞 줄을 베낀 시세도 새 세션이 아니다(장중에 굳은 값이 이월된 휴장 줄)
+    const newSess = !prov && (of ? of.sess > lastSess : Math.abs(closeD - st.close) > 0.0051 && Math.abs(closeD - prevPx) > 0.0051);
     if (of) lastSess = of.sess;
-    if (!trs.length && dq === 0 && Math.abs(dc) < 1e-9 && !newSess) {
+    /* 적힌 체결을 전부 다른 줄로 옮긴 줄은 매입금액 차이를 보지 않는다 — 알림 줄은 매입금액을 센트로 반올림해 몇 센트가 남는다 */
+    if (!trs.length && dq === 0 && (wrote.has(i) || Math.abs(dc) < 1e-9) && !newSess) {
       /* 5일평균 — 공식 종가가 있는 자리는 그대로 둔다(새 세션이 아니다). 원장 sma 는 시세가 끊긴 날 옛 값이 남는다 */
       st = { ...st, sma5: !off && smaD > 0 ? smaD : st.sma5, action: 'NONE', profit: 0, tAdd: 0, tWhy: '' };
       prevC = c;
@@ -2983,15 +3038,20 @@ function ibRun(key) {
       hist.push({ d, ...st, cycleEnd: false, buyPx: 0, boughtQty: 0, soldQ: 0, boughtAmt: 0, proceeds: 0 });
       continue;
     }
-    st = ibStep(cfg, st, { q, avg, proceeds, soldQty, boughtQty, boughtAmt, buyPx, buyFills, close: closeD, sma5: smaD });
+    if (prov) plan = st;
+    const fds = [...new Set(trs.filter(inSess).map(t => t.fd))];          // 이 걸음이 담은 체결일 — 반영내역의 T 를 체결일로 짚는다(fillTs)
+    const sx = ibStep(cfg, st, { q, avg, proceeds, soldQty, boughtQty, boughtAmt, buyPx, buyFills, close: closeD, sma5: smaD });
+    /* 안 끝난 세션의 걸음은 끝 표시를 달지 않는다 — 그 세션을 맡는 줄에서 다시 세며 단다(완료 사이클이 두 번 적히지 않게) */
+    st = !prov ? sx : { ...sx, cycleEnd: false,
+      tWhy: `${sx.tWhy} · 뉴욕 ${fds.map(f => f.slice(5).replace('-', '/')).join('·')} 장 진행 중 — 장이 끝나면 다시 셉니다` };
     prevC = c;
     /* 그날 **나간 돈과 들어온 돈**을 함께 싣는다 (2026-09-22). 사이클 하나의
        매입금액·매도금액을 내려면 이 둘을 날마다 더해야 한다 — 평단이나 실현손익으로는
        '얼마를 사고 얼마를 팔았는가' 를 되짚을 수 없다. */
     hist.push({ d, ...st, buyPx, boughtQty: boughtQty != null ? boughtQty : Math.max(0, dq), soldQ: soldQty != null ? soldQty : Math.max(0, -dq),
-      boughtAmt: num(boughtAmt), proceeds: num(proceeds) });
+      boughtAmt: num(boughtAmt), proceeds: num(proceeds), fds, ...(prov ? { prov: true } : {}) });
   }
-  return { cfg, sl, st, hist, mixed, orders: ibOrders(cfg, st) };
+  return { cfg, sl, st, hist, mixed, orders: ibOrders(cfg, plan || st), planSt: plan || st };
 }
 
 /* 들어온 체결이 오늘 계획한 주문인가.
@@ -3744,6 +3804,7 @@ function renderIB() {
         사용한 시드 <b>${ibU(used, 0)}</b> / ${ibU(num(cfg.seed), 0)}
         <span class="u">현재가 ${ibU(close)}</span></div>
       ${st.tWhy ? `<div class="note" style="margin-top:4px">T 변화 <b>${fmt(st.T - num(st.tAdd), 4)} → ${fmt(st.T, 4)}</b> — ${esc(st.tWhy)}</div>` : ''}
+      ${run.planSt !== st ? `<div class="note" style="margin-top:4px">오늘 주문표는 장 진행 전 상태(T <b>${fmt(run.planSt.T, 4)}</b>)로 만든 표 그대로입니다 — 장 중 체결은 장이 끝나면 다음 표에 들어갑니다.</div>` : ''}
     </div>`;
 
     if (o.done) {
@@ -8349,16 +8410,23 @@ function renderRecentApplied() {
 }
 
 /* 그 체결이 들어간 날 **반영 후의 T** (2026-09-24, 사용자 요청: "금일반영내역에 반영된 T 값도 같이 표시").
-   T 는 날마다 다시 쌓는 값(ibRun replay)이라 줄마다 적어 둔 것이 없다 — 원장 날짜로 replay 의 그날 값을 짚는다.
-   같은 날 체결이 여럿이면 모두 그날 끝의 T 를 보인다(T 는 하루 단위로 움직인다).
-   무매를 안 켠 자리·VR·사이클 시작일 이전 줄에는 붙이지 않는다. 키는 '자리|원장날짜'. */
+   T 는 날마다 다시 쌓는 값(ibRun replay)이라 줄마다 적어 둔 것이 없다 — replay 의 그 걸음 값을 짚는다.
+   같은 세션의 체결이 여럿이면 모두 그 세션 끝의 T 를 보인다(T 는 세션 단위로 움직인다).
+   체결일(fd)이 붙은 체결은 **그 세션의 걸음**으로 짚는다(키 '자리|@체결일') — 지정가 매도는 그날 줄에 적히지만 걸음은
+   다음 날 줄이라(ibRun '한 걸음 = 뉴욕 세션 하나'), 원장 날짜로 짚으면 앞 세션의 T 를 보인다. 체결일이 없는 옛 줄은 '자리|원장날짜'.
+   무매를 안 켠 자리·VR·사이클 시작일 이전 줄에는 붙이지 않는다. */
 let fillTMap = {};
 function fillTs() {
   const m = {};
   IB_SLOTS.filter(sl => !sl.vr).forEach(sl => {
     const r = ibRun(sl.k);
     if (!r) return;
-    r.hist.forEach(h => { if (h.tWhy) m[sl.g + '.' + sl.s + '|' + h.d] = { T: num(h.T), add: num(h.tAdd), why: h.tWhy }; });
+    r.hist.forEach(h => {
+      if (!h.tWhy) return;
+      const v = { T: num(h.T), add: num(h.tAdd), why: h.tWhy };
+      m[sl.g + '.' + sl.s + '|' + h.d] = v;
+      (h.fds || []).forEach(f => { m[sl.g + '.' + sl.s + '|@' + f] = v; });
+    });
   });
   return m;
 }
@@ -8382,7 +8450,7 @@ function fillRow(e) {
   const px = num(t.px) || (num(t.qty) ? num(t.amt) / num(t.qty) : 0);
   /* **두 줄을 넘기지 않는다** (사용자 요청). 왼쪽: 이름 줄 · (시각 · T) 줄. 오른쪽: 수량 · 단가.
      T 는 그날 반영 후의 값과 그날 변화량이다. 근거(tWhy)는 누르고 있으면 뜬다. */
-  const tv = fillTMap[t.g + '.' + t.s + '|' + e.k];
+  const tv = (t.fd && fillTMap[t.g + '.' + t.s + '|@' + t.fd]) || fillTMap[t.g + '.' + t.s + '|' + e.k];
   const tTxt = tv ? ` · T <b style="color:var(--ink);font-weight:600">${fmt(tv.T, 4)}</b>`
     + ` (${tv.add >= 0 ? '+' : '−'}${+Math.abs(tv.add).toFixed(2)})` : '';   // +1 · +0.5 · −4.27 — 좁은 폰에서 잘리지 않게
   return `<label class="row" style="cursor:pointer">
