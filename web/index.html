@@ -797,7 +797,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-10-25 16:39';
+const BUILD = '2026-11-07 14:25';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -2656,6 +2656,9 @@ function buyT(cfg, prev, cur) {
     const bq = num(cur.boughtQty);
     const tierOk = (((plan.buy && plan.buy.tiers) || []).filter(l => close <= num(l.px) + FILL_EPS)).length;
     const full = hit.reduce((a, l) => a + num(l.qty), 0);
+    /* 체결 한 건씩 맞출 때는 표에 없는 추가 줄(낼 때 더 건 대폭락, 1회 매수액 ÷ 누적 개수)까지 센다 — 본 다리가 거부되고 대폭락 줄만 걸린 날을 +0 으로 가른다.
+       합계로 맞출 때(②)는 표의 줄만 — 늘리면 손으로 합쳐 낸 줄을 대폭락으로 잘못 읽는다 */
+    const tierAll = close > FILL_EPS && num(plan.amt) > 0 ? Math.max(tierOk, Math.floor(num(plan.amt) / (close - FILL_EPS)) - mains.reduce((a, l) => a + num(l.qty), 0)) : tierOk;
     const subs = [];
     for (let m = 0; m < (1 << hit.length); m++) subs.push(hit.filter((_, i) => m & (1 << i)));
     const qsum = sub => sub.reduce((a, l) => a + num(l.qty), 0);
@@ -2665,7 +2668,7 @@ function buyT(cfg, prev, cur) {
     if (fills && fills.length) {
       subs.forEach(sub => {
         const k = fills.length - sub.length;
-        if (k < 0 || k > tierOk) return;
+        if (k < 0 || k > tierAll) return;
         const want = sub.map(l => num(l.qty)).concat(Array(k).fill(1)).sort((a, b) => a - b);
         if (want.some((v, i) => Math.abs(v - fills[i]) > 1e-9)) return;
         if (!best || sub.length > best.length) { best = sub; ties = 1; }
@@ -2777,8 +2780,11 @@ function ibStep(cfg, prev, cur) {
   else if (mode === 'REVERSE' && close > avg * (1 - ty / 100)) mode = 'NORMAL';
 
   const P = mode === 'NORMAL' ? ty - (ty / (n / 2)) * T : 0;
+  /* 첫 매도가 안 나갔으면 아직 1일차다 — 원문 "두번째 이후 매도: 첫매도가 실행된 이후부터" (2026-11-07). MOC 가 거부되거나 그날 판이 막혔는데
+     다음 날 표가 5일평균 LOC 로 넘어가면 무조건 매도가 끝내 안 나가고 T 도 안 준다 */
+  const firstLeft = mode === 'REVERSE' && prev.mode === 'REVERSE' && prev.prevMode === 'NORMAL' && soldQ <= 0 && Math.floor(oldQ / (n / 2)) > 0;
   return {
-    q, avg, close, sma5, T, mode, prevMode, realized, profit, P, cycleEnd, action,
+    q, avg, close, sma5, T, mode, prevMode: firstLeft ? 'NORMAL' : prevMode, realized, profit, P, cycleEnd, action,
     tAdd, tWhy,
     balance: seed + realized - q * avg
   };
@@ -2791,7 +2797,8 @@ function ibOrders(cfg, st) {
 
   const { q, avg, close, sma5, T, mode, prevMode, balance } = st;
   const large = close * (1 + lp / 100);
-  let amt = mode === 'REVERSE' ? balance / 4 : balance / Math.max(0.1, n - T);
+  /* 분모 하한 1 — 리버스가 끝난 날 T 가 아직 n−1 위면 n−T 가 1 밑이라 잔금보다 큰 금액이 나왔다. 그날은 잔금이 전부다(2026-11-06) */
+  let amt = mode === 'REVERSE' ? balance / 4 : balance / Math.max(1, n - T);
   const tp = Math.max(0.01, avg * (1 + st.P / 100));      // 매도용 (원본)
   const tpBuy = Math.max(0.01, tp - 0.01);                // 매수용 (−0.01)
   const smaBuy = Math.max(0.01, sma5 - 0.01);
@@ -2820,12 +2827,16 @@ function ibOrders(cfg, st) {
           { typ: 'LOC', px: p2, qty: q2, tag: '평단▼' }]
       };
   } else {                                                 // 후반전 — 한 다리
-    const fp = Math.min(tpBuy, large);
-    baseQty = Math.floor(amt / fp);
-    buy = { legs: [{ typ: 'LOC', px: fp, qty: baseQty, tag: fp === tpBuy ? '별%' : '큰수' }] };
+    /* 전액 별지점 LOC — 원문 V4.0 "후반전: 1회매수액 전체를 별지점 LOC". 큰수(종가 + lp%)로 막지 않는다 (2026-11-06).
+       옛 시트를 옮기며 min(별지점, 큰수)로 두었더니 종가가 평단보다 크게 낮은 날 표가 통째로 어긋났다 — fire gate 는 별지점 그대로다.
+       거부 대비는 큰수가 아니라 낼 때의 줄마다 상한이 맡는다(현재가 × 1.15 × 0.99 — 실행기 apply_cap, 값만 내린다) */
+    baseQty = Math.floor(amt / tpBuy);
+    buy = { legs: [{ typ: 'LOC', px: tpBuy, qty: baseQty, tag: '별%' }] };
   }
 
-  /* 대폭락 대비 1주짜리 아래 티어.
+  /* 대폭락 대비 1주짜리 아래 티어 6줄(fire gate 와 같다 — 2026-11-07 사용자가 5줄에서 늘림). 값은 1회 매수액 ÷ 누적 개수 그대로다 — 큰수로 거르지 않는다(2026-11-06).
+     원문 "크게 하락하는 경우를 대비하여, 1회 매수액을 사용하기 위해, 아래로 LOC 매수를 추가합니다". 이 값이면 어느 종가에 걸려도 합계가 1회 매수액을 안 넘는다.
+     실행기는 낼 때 현재가 아래까지 같은 식으로 더 건다(orders.extra_tiers) — 표(대조)는 이 6줄이다.
      원본은 '잔액 부족'이라 본 매수를 못 내는 날에도 이 티어만은 낸다 — 5일평균가로는
      한 주도 못 사지만 더 떨어지면 한 주는 살 수 있기 때문이다. 아예 안 내는 날은
      리버스 진입 1일차뿐이다. 처음엔 이걸 빠뜨려 그 날 주문이 통째로 비었다.
@@ -2833,13 +2844,8 @@ function ibOrders(cfg, st) {
      잔금이 음수일 때(시드를 넘겨 사 버린 상태) 원본은 음수÷음수로 엉뚱한 양수
      가격을 만들어 낸다. 그건 따라 하지 않는다 — amt 가 양수일 때만 돈다. */
   if (buy.why !== '리버스 진입 1일차') {
-    const tiers = []; let cq = baseQty + 1;
-    if (amt > 0) for (let i = 0; i < 15; i++) {
-      const px = amt / cq;
-      if (px > 0 && px < large) tiers.push({ typ: 'LOC', px, qty: 1, tag: '대폭락' });
-      if (tiers.length >= 5) break;
-      cq++;
-    }
+    const tiers = [];
+    if (amt > 0) for (let i = 1; i <= 6; i++) tiers.push({ typ: 'LOC', px: amt / (baseQty + i), qty: 1, tag: '대폭락' });
     buy.tiers = tiers;
   }
 
@@ -2853,6 +2859,27 @@ function ibOrders(cfg, st) {
     sell2 = { typ: '지정가', px: avg * (1 + ty / 100), qty: q - qQty, tag: '목표수익률 · 3/4' };
   }
   return { buy, sell1, sell2, amt, large };
+}
+
+/* 공식 종가 (2026-11-06) — 실행기가 장부 동기화 때 야후 일봉을 meta.apiCloses({T:{날짜:종가}, S:{…}})에 올린다.
+   원장 px 는 시세 워커가 마지막으로 써 둔 값이라 장중 값으로 굳은 날이 있고(리버스 종료 판정·5일평균이 그 값을 먹는다),
+   장이 끝난 날도 일봉과 센트 아래에서 다르다. 실행기는 일봉으로 계산하므로 두 표가 그 차이만큼 벌어졌다.
+   ibOffer(px) → 원장 날 d(오름차순으로 부른다)에 담긴 세션 값. known 이 아니면(그 세션이 아직 안 올라옴) 원장 값으로 돌아간다 */
+let IB_OFF = null;
+function ibOffer(px) {
+  const m = IB_OFF && IB_OFF[px];
+  if (!m) return null;
+  const ds = Object.keys(m).filter(k => num(m[k]) > 0).sort();
+  if (!ds.length) return null;
+  let j = 0;
+  return d => {
+    const key = prevBiz(d);                     // 원장 날 d 에 담긴 것은 앞 영업일의 뉴욕 세션이다
+    while (j < ds.length && ds[j] <= key) j++;
+    if (!j) return null;
+    const xs = ds.slice(Math.max(0, j - 5), j).map(k => num(m[k]));
+    return { sess: ds[j - 1], known: ds[j - 1] === key || j < ds.length,   // 뒤 세션이 있으면 key 는 장이 안 선 날이다
+      close: xs[xs.length - 1], sma5: xs.reduce((a, b) => a + b, 0) / xs.length };
+  };
 }
 
 /* 시작일부터 오늘까지 하루씩 다시 계산한다 */
@@ -2882,8 +2909,10 @@ function ibRun(key) {
      '시작점 맞추기' 가 시작일을 오늘로 잡으므로 replay 루프가 한 번도 돌지 않고
      이 초기 상태가 그대로 오늘의 주문서가 된다. 여기에 폴백이 빠져 있으면
      중간 진입이 리버스로 잡힌 날 5일평균 0 으로 $0.01 매수 주문이 나간다. */
-  const day0 = state.days[ks[i0]], close0 = num(day0.px[sl.px]);
-  const sma0 = num(day0.sma && day0.sma[sl.px]) > 0 ? num(day0.sma[sl.px]) : close0;
+  const off = ibOffer(sl.px), o0 = off ? off(ks[i0]) : null, of0 = o0 && o0.known ? o0 : null;
+  const day0 = state.days[ks[i0]], close0 = of0 ? of0.close : num(day0.px[sl.px]);
+  const sma0 = of0 ? of0.sma5 : num(day0.sma && day0.sma[sl.px]) > 0 ? num(day0.sma[sl.px]) : close0;
+  let lastSess = of0 ? of0.sess : '';
   let st = {
     q: num(cfg.q0), avg: num(cfg.a0), T: T0, mode: mode0, prevMode: mode0,
     realized: num(cfg.r0), profit: 0, close: close0,
@@ -2938,11 +2967,23 @@ function ibRun(key) {
         if (close > 0 && (unit < close * 0.5 || unit > close * 1.5)) mixed.push(d);
       } else if (dq < 0) { proceeds = -dc; if (q <= 0) avg = 0; }
     }
-    st = ibStep(cfg, st, {
-      q, avg, proceeds, soldQty, boughtQty, boughtAmt, buyPx, buyFills,
-      close: num(r.px[sl.px]) || st.close,
-      sma5: num(r.sma && r.sma[sl.px])
-    });
+    const oa = off ? off(d) : null, of = oa && oa.known ? oa : null;
+    const closeD = of ? of.close : num(r.px[sl.px]) || st.close, smaD = of ? of.sma5 : num(r.sma && r.sma[sl.px]);
+    /* 새 세션도 체결도 없는 날(토·일·월 원장, 휴장)은 한 걸음이 아니다 (2026-11-06).
+       걸음으로 치면 prevMode 가 mode 로 덮여 금요일 장으로 들어간 리버스의 **1일차(MOC)가 주말에 사라진다.**
+       실행기는 뉴욕 거래일만 걷는다 — 원문도 "1일차" 는 거래일이다. */
+    const prevPx = num(state.days[ks[i - 1]].px[sl.px]);          // 공식 종가가 없을 때 — 앞 줄을 베낀 시세도 새 세션이 아니다(장중에 굳은 값이 이월된 휴장 줄)
+    const newSess = of ? of.sess > lastSess : Math.abs(closeD - st.close) > 0.0051 && Math.abs(closeD - prevPx) > 0.0051;
+    if (of) lastSess = of.sess;
+    if (!trs.length && dq === 0 && Math.abs(dc) < 1e-9 && !newSess) {
+      /* 5일평균 — 공식 종가가 있는 자리는 그대로 둔다(새 세션이 아니다). 원장 sma 는 시세가 끊긴 날 옛 값이 남는다 */
+      st = { ...st, sma5: !off && smaD > 0 ? smaD : st.sma5, action: 'NONE', profit: 0, tAdd: 0, tWhy: '' };
+      prevC = c;
+      /* 끝 표시는 끝난 그 줄에만 — 쉬는 줄까지 달면 완료 사이클이 날마다 새로 적히고 '수익 포함' 이 수익 0 을 읽는다. 상태(st)는 끝난 채로 둔다(그날 표 없음, 실행기와 같다) */
+      hist.push({ d, ...st, cycleEnd: false, buyPx: 0, boughtQty: 0, soldQ: 0, boughtAmt: 0, proceeds: 0 });
+      continue;
+    }
+    st = ibStep(cfg, st, { q, avg, proceeds, soldQty, boughtQty, boughtAmt, buyPx, buyFills, close: closeD, sma5: smaD });
     prevC = c;
     /* 그날 **나간 돈과 들어온 돈**을 함께 싣는다 (2026-09-22). 사이클 하나의
        매입금액·매도금액을 내려면 이 둘을 날마다 더해야 한다 — 평단이나 실현손익으로는
@@ -3075,7 +3116,8 @@ function ibPlanPayload() {
     add('S', o.sell1); add('S', o.sell2);
     /* 메리츠에 낼 표는 매수가 상한을 건다 (mtsBuyCap). fire gate 대조는 이 표가 아니라 myOrders() 로 한다 */
     const capped = mtsCapRows(rows, r.st.close).rows;
-    if (capped.length) out.slots.push({ k: sl.k, n: sl.n, sn: sl.sn || sl.n, tick: SYM[sl.px] || sl.px, acct: sl.acct || '', rows: near(capped, sl) });
+    /* close — 이 표를 만든 종가. 실행기가 같은 값으로 상한·범위를 씌워 견준다(2026-11-06) */
+    if (capped.length) out.slots.push({ k: sl.k, n: sl.n, sn: sl.sn || sl.n, tick: SYM[sl.px] || sl.px, acct: sl.acct || '', close: r.st.close, rows: near(capped, sl, r.st.close) });
   });
   /* VR 은 가격대별 사다리라 줄이 많다. 같은 규칙으로 추려 올린다. */
   IB_SLOTS.filter(sl => sl.vr).forEach(sl => {
@@ -3088,9 +3130,11 @@ function ibPlanPayload() {
     /* cyc — 이번 사이클 첫날·마지막 영업일 (2026-09-14). 수집 앱이 메리츠 **예약주문(기간잔량)의
        종료일**을 이 날짜로 맞춘다. 마지막 날은 다음 사이클 시작 바로 앞 **영업일**이다 —
        하루 전(addDays −1)으로 두면 일요일이 되어 예약 종료일로 쓸 수 없다. */
-    out.slots.push({ k: sl.k, n: sl.n, sn: sl.sn || sl.n, tick: SYM[sl.px] || sl.px, acct: sl.acct || '',
+    const off = ibOffer(sl.px), oa = off ? off(latestKey()) : null;
+    const close = oa && oa.known ? oa.close : num(latest().px[sl.px]);
+    out.slots.push({ k: sl.k, n: sl.n, sn: sl.sn || sl.n, tick: SYM[sl.px] || sl.px, acct: sl.acct || '', close,
       cyc: { from: r.cycFrom, to: prevBiz(r.nextCycle), next: r.nextCycle },
-      rows: near(rows, sl) });
+      rows: near(rows, sl, close) });
   });
   return out;
 }
@@ -3131,8 +3175,7 @@ const PX_TOL = 0.02, AVG_TOL = 0.01, COST_TOL = 1;
    싸게 · 매도가 더 비싸게)으로는 폭을 두지 않는다 — 지정가가 보장하는 것이 그거다. */
 const PLAN_TOL = 0.01;
 
-function near(rows, sl) {
-  const close = num(latest().px[sl.px]);
+function near(rows, sl, close) {
   if (!(close > 0)) return rows;
   const w = NEAR_PCT[sl.k] != null ? NEAR_PCT[sl.k] : 0.20;
   const inRange = r => Math.abs(num(r.px) / close - 1) <= w + 0.0001;
@@ -3304,11 +3347,11 @@ function ibScanAll() {
   return n;
 }
 
-/** **오늘** 끝난 판인가. 끝난 그날에만 새 사이클을 묻는다 */
+/** 막 끝난 판인가 — 끝난 뒤 새 세션이 오기 전까지 새 사이클을 묻는다(금요일 장에서 끝나면 토·일·월). 돌려주는 것은 끝난 그 줄이다 */
 function ibJustEnded(run) {
-  if (!run || !run.hist.length) return null;
-  const last = run.hist[run.hist.length - 1];
-  return last.cycleEnd ? last : null;
+  if (!run || !run.hist.length || !run.st.cycleEnd) return null;
+  for (let i = run.hist.length - 1; i >= 0; i--) if (run.hist[i].cycleEnd) return run.hist[i];
+  return null;
 }
 
 /** 그 자리의 마지막 기록 */
@@ -3727,10 +3770,9 @@ function renderIB() {
         .map(l => ({ side: 'B', typ: l.typ, px: +num(l.px).toFixed(2), qty: Math.round(num(l.qty)), tag: l.tag || '' }));
       const cp = mtsCapRows(buyRows, st.close);   // 주문표를 만든 종가 — ibPlanPayload 와 같은 값
       const capNote = cp.merged
-        ? `<div class="note" style="margin-top:8px">메리츠에는 <b>LOC ${ibU(cp.cap)} × ${fmt(cp.merged.qty, 0)}주</b>
-           한 줄로 냅니다 — 종가 ${ibU(st.close)} 의 +15% 를 넘는 ${fmt(cp.over.length, 0)}줄
-           (${cp.over.map(r => `${esc(r.tag || r.typ)} ${ibU(r.px)} ${fmt(r.qty, 0)}주`).join(' · ')})을 합쳤습니다.
-           메리츠가 그보다 높은 매수를 거부해서입니다. fire gate 대조는 위 원래 표로 합니다.</div>` : '';
+        ? `<div class="note" style="margin-top:8px">메리츠는 현재가보다 많이 높은 매수를 거부합니다. 실행기는 <b>낼 때 그 순간 현재가 +15%(−1%)</b>를
+           넘는 줄을 줄마다 그 값으로 내립니다(수량 그대로). 종가 ${ibU(st.close)} 로 미리 재면 ${ibU(cp.cap)} —
+           ${fmt(cp.over.length, 0)}줄 ${fmt(cp.merged.qty, 0)}주입니다. fire gate 대조는 위 원래 표로 합니다.</div>` : '';
       out += `<h2 class="sec">주문</h2><div class="card pad"><div class="scroll"><table class="tbl">`
         + legRows
         + `</table></div>` + capNote + `<div class="scroll" style="margin-top:12px"><table class="tbl">`
@@ -3740,8 +3782,8 @@ function renderIB() {
           + `<tr><th>대폭락</th><th>수량</th></tr>`
           + tiers.map(l => `<tr><td>${l.typ} <b class="mn">${ibU(pxOut(l.px))}</b>
               <span class="u">${esc(l.tag)}</span></td><td>${fmt(l.qty, 0)}주</td></tr>`).join('')
-          + `</table></div><p class="note" style="margin-top:9px">급락한 날에만 체결되는 보험입니다.
-             오늘 걸 주문은 위 매수·매도 줄입니다.</p></div>`, `${fmt(tiers.length, 0)}줄`) : '')
+          + `</table></div><p class="note" style="margin-top:9px">급락한 날 1회 투자금을 마저 쓰는 줄입니다. 실행기는 낼 때 그 순간 현재가 아래(TQQQ −20% · SOXL −30%)까지
+             같은 식(1회 투자금 ÷ 누적 개수)으로 줄을 더 겁니다 — 어느 종가에 걸려도 합계가 1회 투자금을 넘지 않습니다. fire gate 대조는 이 표로 합니다.</p></div>`, `${fmt(tiers.length, 0)}줄`) : '')
         + `<p class="note" style="margin-top:9px">LOC 는 종가 기준 체결입니다. 장 마감 전에 걸어 두세요.
         매도 두 줄은 <b>동시에</b> 겁니다 — 1/4 은 별%로, 나머지 3/4 은 목표수익률 지정가로.</p></div>`;
     }
@@ -3884,7 +3926,12 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
     saveLocal(); schedulePush(); renderIB();
     return;
   }
-  if (e.target.closest('#ibAnchor')) { ibAnchor(); saveLocal(); schedulePush(); renderIB(); toast('오늘 보유수량으로 시작점을 맞췄습니다. 평단가를 증권사 값으로 고치세요'); }
+  if (e.target.closest('#ibAnchor')) {
+    /* 리버스 진행 상태는 설정에 없고 시작 T 로만 되살린다 — 리버스 중에 다시 잡으면 다음 표가 일반모드(T ≤ n−1)나 2일차로 바뀐다(2026-11-07 검토) */
+    const run = ibRun(UI.ib);
+    if (run && run.st.mode === 'REVERSE' && !confirm('지금 리버스 모드입니다. 시작점을 다시 잡으면 리버스 진행 상태를 잃어 다음 주문표가 일반모드로 바뀔 수 있습니다. 계속할까요?')) return;
+    ibAnchor(); saveLocal(); schedulePush(); renderIB(); toast('오늘 보유수량으로 시작점을 맞췄습니다. 평단가를 증권사 값으로 고치세요');
+  }
 });
 /* ± — 폰 숫자 키패드에 빼기 부호가 없는 기기가 있다. 부호만 뒤집는다. */
 document.getElementById('p-ib')?.addEventListener('click', e => {
@@ -6194,6 +6241,12 @@ function vrRun(key) {
   }, { cash: 0, dq: 0 });
   /* 그날 원장 종가 — 비어 있으면(0) 앞 원장에서 찾는다. 평가금이 0 으로 잡히면 새 V 가 크게 꺼진다 */
   const pxAt = i => { for (let j = i; j >= 0; j--) { const p = num(state.days[ks[j]].px[sl.px]); if (p > 0) return p; } return 0; };
+  /* 공식 종가가 있으면 그것으로 — 경계 앞 마지막 세션(실행기 close_before 와 같다, 2026-11-06) */
+  const offM = (IB_OFF && IB_OFF[sl.px]) || null, offD = offM ? Object.keys(offM).filter(k => num(offM[k]) > 0).sort() : [];
+  const offBefore = B => {
+    const lastB = offD.filter(x => x < B).pop();
+    return lastB && (lastB === prevBiz(B) || offD[offD.length - 1] >= B) ? num(offM[lastB]) : 0;
+  };
   /* ── 새 V 의 평가금에 쓸 값은 **앞 영업일의 미국 종가**다 (2026-09-27) ────────────────────────────
      fire gate 는 주말에 갱신할 때의 시세, 곧 금요일 종가를 쓴다(9/27 갱신: 139주 × $79.60). 넘기는 날(토) 원장의
      시세를 그대로 쓰면 안 된다 — 토요일에 웹을 안 열었으면 그 원장은 금요일 원장을 복사한 것(fillToToday)이라
@@ -6201,6 +6254,8 @@ function vrRun(key) {
      그래서 넘기는 날부터 새 사이클 첫날 B 까지의 원장 중 **앞 영업일 장이 끝난 뒤 ~ B 장이 열리기 전에 받은 시세**
      (pxt)를 쓴다. 손으로 넣은 값이나 받은 시각이 없는 옛 값은 이월만 아니면 믿는다. 없으면 넘기는 날 원장 값으로 돌아간다. */
   const closeFor = (i, B) => {
+    const oc = offBefore(B);
+    if (oc > 0) return oc;
     const from = nyMs(prevBiz(B), 16, 0), to = nyMs(B, 9, 30);
     for (let j = i; j < ks.length && ks[j] <= B; j++) {
       const r = state.days[ks[j]], p = num(r.px[sl.px]);
@@ -8592,6 +8647,7 @@ async function initSupabase() {
   if (!sbTok) return false;
   try {
     const { days, meta } = await sbPull();
+    if (meta.apiCloses) IB_OFF = meta.apiCloses;   // 공식 종가 — 주문표를 올리기 전에 받아 둔다
     /* 검증 줄(2026-10-07) — 어느 쪽 원장이 새것이든 **자리마다 더 새 읽기**를 남긴다. 아래 갈래 안에 두면 이 기기 원장이 새것일 때
        서버의 다른 기기 판정을 안 받고 제 것을 도로 올려 덮는다 */
     if (meta.vfyStat && typeof meta.vfyStat === 'object') {
@@ -8763,7 +8819,8 @@ const API_TX_FROM = '2026-10-14';
 /* 원장 체결(tr)에 뉴욕 체결일(fd)이 붙기 시작한 날(2026-09-15, usTradeDay). 그 앞의 줄은 체결일을 몰라 묶음으로 못 맞춘다 — 대조는 이날부터 */
 const API_VERIFY_FROM = '2026-09-15';     // 거래일 — 이날부터 배당·이자·수수료를 메리츠 입출금 그대로 넣는다(그 앞은 5% 어림·배당 인식으로 이미 넣었다)
 const API_KEYS = ['apiLast3020', 'apiLast3081', 'apiBook3020', 'apiBook3081', 'apiLog3020', 'apiLog3081',
-  'apiProbe', 'apiStop', 'apiMatch', 'apiPushKey', 'apiPushed', 'pushSub', 'apiSummary', 'apiState3081', 'apiMode', 'apiNotice', 'noticeAck', 'apiIncident'];
+  'apiProbe', 'apiStop', 'apiMatch', 'apiPushKey', 'apiPushed', 'pushSub', 'apiSummary', 'apiState3081', 'apiMode', 'apiNotice', 'noticeAck', 'apiIncident',
+  'apiCloses', 'apiUsdNeed'];
 const API_POLL = 45e3;                // 30초 배출마다 부르되 이 간격 안이면 건너뛴다
 const API_BOOK_STALE = 30 * 3600e3;   // 장부가 이보다 오래면 동기화가 멈춘 것
 const API_ACK = 'jasan_api_ack';
@@ -8790,6 +8847,7 @@ async function apiFetch(force) {
     const rows = await sbReq('/rest/v1/meta?k=in.(' + API_KEYS.join(',') + ')&select=k,v,updated_at');
     const m = {}; (rows || []).forEach(r => { m[r.k] = { v: r.v, u: Date.parse(r.updated_at) || 0 }; });
     API.m = m; API.err = ''; API.errAt = 0; API.ok = true;   // ok — 한 번이라도 받았다(폰 알림 확인은 그 뒤에, 검토 2026-10-14)
+    if (m.apiCloses && m.apiCloses.v) IB_OFF = m.apiCloses.v;
     /* 정시 깨우기 기록 (2026-10-13, supabase/dispatch.sql) — 함수가 아직 없으면(404) null: 설정 전이라 알리지 않는다 */
     try { API.disp = await sbReq('/rest/v1/rpc/trader_dispatch_recent', { method: 'POST', body: '{}' }) || []; }
     catch (e) { API.disp = /404|PGRST202|does not exist/.test(String(e.message)) ? null : API.disp; }
@@ -9009,7 +9067,8 @@ function apiAsks() {
   unpaired(kinOpen).forEach(a => {
     const id = `${a.acct}:ask:kin:${a.r.id}`;
     const s = a.kind === 'in' ? 1 : -1, man = +(a.amt / 1e4).toFixed(4);
-    out.push({ id, acct: a.acct, kind: a.kind, d: a.d, warn: a.r.chk === false,
+    /* 2026-11-06 사용자: "입출금인지 수익인지만 확인받아서 이후 전체적으로 반영" — flow: 묻는 것이 그 둘이다(apiAskDo act 'flow' · 'gain') */
+    out.push({ id, acct: a.acct, kind: a.kind, d: a.d, warn: a.r.chk === false, flow: true,
       title: `원화 ${s > 0 ? '입금' : '출금'} ${fmt(a.amt, 0)}원`,
       sub: [a.r.name, a.r.cnft ? '상대 ' + a.r.cnft : '', a.r.src === 'bal' ? '금액은 잔액 차이' : '',
         a.r.chk === false ? '금액이 잔액 차이와 다릅니다 — 메리츠 앱에서 확인하고 누르세요' : ''].filter(Boolean).join(' · '),
@@ -9018,7 +9077,7 @@ function apiAsks() {
   unpaired(usdOpen).forEach(a => {
     const id = `${a.acct}:ask:usd:${a.r.id}`;
     const s = a.kind === 'in' ? 1 : -1;
-    out.push({ id, acct: a.acct, kind: a.kind, d: a.d, title: `외화 ${s > 0 ? '입금' : '출금'} $${fmt(a.amt, 2)}`,
+    out.push({ id, acct: a.acct, kind: a.kind, d: a.d, flow: true, title: `외화 ${s > 0 ? '입금' : '출금'} $${fmt(a.amt, 2)}`,
       sub: [a.r.name, fxNow > 0 ? `기준원금은 지금 환율 ${fmt(fxNow, 2)}원으로` : '환율이 아직 없습니다'].filter(Boolean).join(' · '),
       eff: { usd: s * a.amt, krw: 0, p: fxNow > 0 ? +(s * a.amt * fxNow / 1e4).toFixed(2) : null } });
   });
@@ -9039,24 +9098,30 @@ function apiAsks() {
 const apiAskEffTxt = e => [e.usd ? `외화예수금 ${e.usd > 0 ? '+' : '−'}$${fmt(Math.abs(e.usd), 2)}` : '',
   e.krw ? `원화예수금 ${e.krw > 0 ? '+' : '−'}${fmt(Math.abs(e.krw) * 1e4, 0)}원` : '',
   e.p ? `기준원금 ${e.p > 0 ? '+' : '−'}${fmt(Math.abs(e.p), e.p % 1 ? 1 : 0)}만원` : ''].filter(Boolean).join(' · ');
+/* act — 입출금 줄: flow(입출금 — 예수금 ± · 기준원금 ±, 수익 그대로) · gain(수익 — 예수금 ± 만, 기준원금 그대로라 그만큼 수익이 움직인다) · skip(이미 넣음).
+   환전 줄: apply · skip. 넣은 것은 btx 로 남아 장부 대조 › 입출금에서 되돌린다 */
 function apiAskDo(id, act) {
   const a = apiAsks().find(x => x.id === id);
   if (!a) { toast('이미 처리했거나 장부에서 사라졌습니다'); return; }
-  if (act === 'apply' && a.eff.p == null) { toast('환율이 없어 기준원금을 정할 수 없습니다'); return; }
-  const x = latest(), k = latestKey(), e = { id, kind: 'ask', what: a.kind, act, d: a.d, title: a.title, t: Date.now() };
-  if (act === 'apply') {
-    const fx0b = num(state.fx0), fx0 = a.fx && a.fx.buy ? apiFx0After(a.fx.usd, a.fx.krw) : null;
+  const put = act !== 'skip', gain = act === 'gain';
+  if (put && !gain && a.eff.p == null) { toast('환율이 없어 기준원금을 정할 수 없습니다'); return; }
+  const x = latest(), k = latestKey(), e = { id, kind: 'ask', what: a.kind, act: put ? 'apply' : 'skip', d: a.d, title: a.title, t: Date.now() };
+  if (gain) e.gain = true;
+  if (put) {
+    const fx0b = num(state.fx0), fx0 = a.fx && a.fx.buy ? apiFx0After(a.fx.usd, a.fx.krw) : null, p = gain ? 0 : a.eff.p;
     x.usd = +(num(x.usd) + a.eff.usd).toFixed(2);
     x.krw = +(num(x.krw) + a.eff.krw).toFixed(4);
-    if (a.eff.p) state.principal = +(num(state.principal) + a.eff.p).toFixed(4);
+    if (p) state.principal = +(num(state.principal) + p).toFixed(4);
     if (fx0) state.fx0 = fx0;
-    Object.assign(e, { usd: a.eff.usd, krw: a.eff.krw, p: a.eff.p || 0, fx0, fx0b, fxUsd: fx0 ? a.fx.usd : 0, fxKrw: fx0 ? a.fx.krw : 0 });
+    Object.assign(e, { usd: a.eff.usd, krw: a.eff.krw, p: p || 0, fx0, fx0b, fxUsd: fx0 ? a.fx.usd : 0, fxKrw: fx0 ? a.fx.krw : 0 });
   }
   (x.btx = x.btx || []).push(e);
   markDirty(k); schedulePush(); saveLocal();
   API.rec = null; try { apiReconcile(); } catch (err) { }
   renderAll(); renderApiAlert();
-  toast(act === 'apply' ? `${a.title} — 원장에 반영했습니다` : `${a.title} — 넣지 않고 넘깁니다`);
+  toast(!put ? `${a.title} — 이미 넣은 것으로 넘깁니다`
+    : gain ? `${a.title} — 수익으로 반영했습니다 (기준원금 그대로)`
+      : a.flow ? `${a.title} — 입출금으로 반영했습니다 · 기준원금 ${fmt(num(state.principal), 0)}만원` : `${a.title} — 원장에 반영했습니다`);
 }
 function apiAskUndo(id) {
   const h = apiAskDone()[id];
@@ -9092,20 +9157,26 @@ function apiAskUndo(id) {
 function apiAskCard() {
   const asks = apiAsks();
   if (!asks.length) return '';
-  return `<div class="card rows" style="margin-top:12px"><div class="grp-h" style="padding-left:15px;white-space:normal">환전·입출금 ${asks.length} — 원장에 반영할까요?</div>`
+  return `<div class="card rows" style="margin-top:12px"><div class="grp-h" style="padding-left:15px;white-space:normal">환전·입출금 ${asks.length} — 어떻게 넣을까요?</div>`
     + asks.map(a => `<div class="row" style="flex-wrap:wrap;row-gap:6px"><div style="min-width:0;flex:1 1 100%;white-space:normal">
         <div class="nm" style="white-space:normal;color:var(--ink)">${esc(a.title)} <span class="u">${esc(a.acct)} · ${esc(String(a.d).slice(5).replace('-', '/'))}</span></div>
         <span class="sub" style="white-space:normal${a.warn ? ';color:var(--up)' : ''}">${esc(a.sub || '')}</span>
-        <div class="sub" style="white-space:normal;margin-top:2px">반영하면 ${esc(apiAskEffTxt(a.eff.p == null ? { ...a.eff, p: 0 } : a.eff))}</div></div>
-      <div style="display:flex;gap:6px;margin-left:auto"><button data-apiask="${escA(a.id)}" data-act="apply" style="padding:6px 12px;font-size:12px">반영</button>
-        <button class="ghost" data-apiask="${escA(a.id)}" data-act="skip" style="padding:6px 10px;font-size:12px">넣지 않음</button></div></div>`).join('')
-    + `<p class="note" style="margin:0;padding:8px 15px 11px">원장 마지막 날에 넣습니다(입력 탭 입출금과 같게). 손으로 이미 넣었으면 <b>넣지 않음</b>. 잘못 눌렀으면 장부 대조 › 입출금에서 되돌립니다.</p></div>`;
+        ${a.flow ? `<div class="sub" style="white-space:normal;margin-top:2px"><b>입출금</b> ${esc(apiAskEffTxt(a.eff.p == null ? { ...a.eff, p: 0 } : a.eff))} · 수익 그대로</div>
+        <div class="sub" style="white-space:normal"><b>수익</b> ${esc(apiAskEffTxt({ ...a.eff, p: 0 }))} · 기준원금 그대로라 그만큼 수익이 움직입니다</div>`
+        : `<div class="sub" style="white-space:normal;margin-top:2px">반영하면 ${esc(apiAskEffTxt(a.eff.p == null ? { ...a.eff, p: 0 } : a.eff))}</div>`}</div>
+      <div style="display:flex;gap:6px;margin-left:auto">${apiAskBtns(a)}</div></div>`).join('')
+    + `<p class="note" style="margin:0;padding:8px 15px 11px">원장 마지막 날에 넣습니다(입력 탭 입출금과 같게). 손으로 이미 넣었으면 <b>이미 넣음</b>. 잘못 눌렀으면 장부 대조 › 입출금에서 되돌립니다.</p></div>`;
 }
+const apiAskBtns = a => (a.flow
+  ? `<button data-apiask="${escA(a.id)}" data-act="flow" style="padding:6px 12px;font-size:12px">입출금</button>
+     <button data-apiask="${escA(a.id)}" data-act="gain" style="padding:6px 12px;font-size:12px">수익</button>`
+  : `<button data-apiask="${escA(a.id)}" data-act="apply" style="padding:6px 12px;font-size:12px">반영</button>`)
+  + `<button class="ghost" data-apiask="${escA(a.id)}" data-act="skip" style="padding:6px 10px;font-size:12px">이미 넣음</button>`;
 function apiAskDoneRows() {
   const m = apiAskDone();
   return Object.entries(m).sort((p, q) => num(q[1].e.t) - num(p[1].e.t)).slice(0, 12).map(([id, h]) => `<tr><td class="num">${esc(String(h.e.d || '').slice(5).replace('-', '/'))}</td>
     <td style="text-align:left;white-space:normal">${esc(h.e.title || '')}</td>
-    <td style="color:${h.e.act === 'apply' ? 'var(--c2)' : 'var(--muted)'}">${h.e.act === 'apply' ? '반영' : '안 넣음'}</td>
+    <td style="color:${h.e.act === 'apply' ? 'var(--c2)' : 'var(--muted)'}">${h.e.act === 'apply' ? (h.e.gain ? '수익' : h.e.what === 'fx' ? '반영' : '입출금') : '안 넣음'}</td>
     <td>${h.e.what === 'fx' || daysBetween(String(h.e.d || ''), iso(new Date())) <= 18
       ? `<button class="ghost" data-apiundo="${escA(id)}" style="padding:3px 8px;font-size:11px">되돌리기</button>` : '<span class="u">창 밖</span>'}</td></tr>`).join('');
 }
@@ -9299,7 +9370,7 @@ function apiReconcile() {
     } else rec.cash.cap = fit.cap;
     /* 옛 몫은 첫 대조 한 번에만 쓴다 — 견줄 수 있었던 판이면(늦음·묻는 것 없음) 맞췄든 아니든 끝낸다. 남겨 두면 뒤의 진짜 차이를 덮는다 */
     if (!late && !askUsd && legacy >= 0 && !(state.usdChk || {}).iestMig) { (state.usdChk = state.usdChk || { d: '', t: 0, log: [] }).iestMig = 1; changed = true; }
-    if (!late && Math.abs(rec.cash.diff) > USD_EPS) rec.issues.push({ acct: '', kind: 'cash', cash: rec.cash });
+    if (!late && !askUsd && Math.abs(rec.cash.diff) > USD_EPS) rec.issues.push({ acct: '', kind: 'cash', cash: rec.cash });
   }
   /* 원화예수금 — 메리츠 예수금(3020 + 3081, 원)과 원장(만원). 원화도 밤마다 RP 로 넘어가 그동안은 예수금이 0 이라 견줄 수 없다(book.krw.ok) —
      RP 가 돌아온 낮의 장부(12:15)로 견준다. 이자 한도 안이면 자동으로 맞추고, 넘으면 알린다(입금이면 입력 탭 입출금으로 — 기준원금이 움직인다) */
@@ -9320,7 +9391,8 @@ function apiReconcile() {
       markDirty(latestKey()); changed = true;
       rec.krw.auto = rec.krw.diff; rec.krw.cap = fit.cap; rec.krw.diff = 0; rec.krw.was = them;
     } else rec.krw.cap = fit.cap;
-    if (!late && Math.abs(rec.krw.diff) > KRW_EPS) rec.issues.push({ acct: '', kind: 'krw', krw: rec.krw });
+    /* 묻는 입출금이 남아 있으면 그 카드가 까닭을 말한다 — 같은 차이를 '오류' 로 또 띄우지 않는다(2026-11-06: 출금을 묻는 동안 '원화예수금이 메리츠와 다릅니다' 가 함께 떴다) */
+    if (!late && !askKrw && Math.abs(rec.krw.diff) > KRW_EPS) rec.issues.push({ acct: '', kind: 'krw', krw: rec.krw });
   } else rec.krw = { skip: books.some(b => b && b.krw && b.krw.rp_held) ? 'rp' : 'none' };
   if (changed) {
     saveLocal();
@@ -9359,8 +9431,10 @@ function apiRunBad(r) {
   if (r.stopped && API_BENIGN.some(b => String(r.stopped).includes(b))) return false;
   if (r.stopped) return true;
   const quiet = r.mode === 'live' ? ['주문 시간'] : ['주문 시간', '수집기와 겹치지 않음'];
+  /* 더 거는 대폭락 줄이 빠지거나 거부된 것은 경고가 아니다(오늘 표는 나갔다) — 실행기 Report._hard 와 같다 */
+  const hard = (r.lines || []).filter(l => !(l.extra && l.extra.alpha && (l.state === 'rejected' || l.state === 'skipped')));
   return (r.gates || []).some(g => !g.ok && !quiet.includes(g.name))
-    || (r.lines || []).some(l => l.state === 'rejected' || l.state === 'unknown' || (r.mode === 'live' && l.state === 'skipped' && l.why));
+    || hard.some(l => l.state === 'rejected' || l.state === 'unknown' || (r.mode === 'live' && l.state === 'skipped' && l.why));
 }
 const apiRunT = r => Date.parse((r && r.t) || '') || 0;
 /* 메리츠 조회가 잠깐 끊긴 판 — 뒤에 같은 계좌를 다시 읽은 판이 있으면 풀린 것이다 (2026-10-19, 사용자: "VR 관련 오류 … 확인바람").
@@ -9488,6 +9562,12 @@ function apiAlerts() {
      원장이 통째로 비어 저녁 주문표가 체결 전 수량으로 만들어진다. 서울 화~토 09시까지 06시 뒤 장부(06:15·07:15), 월 13시까지 12:15 장부 */
   const dw = apiDispatchWarn();
   if (dw) out.push(dw);
+  /* 달러 미리 보기 (2026-11-06, 실행기 watch.usd_need) — 금액은 여기서만(폰 알림 글에는 안 넣는다). '확인' 은 하루 단위 */
+  const un = apiV('apiUsdNeed') || {}, dayT = now - now % 864e5;
+  if (un.vr && num(un.vr.short) > 0 && now - num(un.t) < API_BOOK_STALE) out.push({ key: 'vrusd', t: dayT, lv: 'bad', title: `VR 달러 $${fmt(num(un.vr.short), 2)} 부족 — TQQQ 15% 하락 가정`,
+    body: `3081 주문가능 $${fmt(num(un.vr.able), 2)} · 필요 $${fmt(num(un.vr.need), 2)}(${fmt(num(un.vr.lines), 0)}줄, ${un.vr.low ? '$' + fmt(num(un.vr.low), 2) + ' 까지' : ''}${un.vr.next ? ' · 다음 사이클 어림' : ''}) — 3020 → 3081 외화대체나 환전으로` });
+  if (un.ib && num(un.ib.short) > 0 && now - num(un.t) < API_BOOK_STALE) out.push({ key: 'ibusd', t: dayT, lv: 'bad', title: `무매 달러 $${fmt(num(un.ib.short), 2)} 부족 — 오늘 매수표 기준`,
+    body: `3020 주문가능 $${fmt(num(un.ib.able), 2)} · 오늘 매수 합 $${fmt(num(un.ib.need), 2)} — 이대로면 주문 판이 매수를 내지 않습니다` });
   const bm = apiBookMissing();
   if (bm) out.push({ key: 'bookmiss', t: bm.t, lv: 'warn', title: '오늘 메리츠 장부 동기화가 없습니다', body: bm.body });
   const vrm = apiVrMissing();
@@ -9508,11 +9588,12 @@ function apiAlerts() {
     const f = rec.issues.filter(i => i.kind === 'fill' || i.kind === 'hold');
     if (f.length) out.push({ key: 'rec', t: num(Math.max(...API_ACCTS.map(a => num((apiBook(a) || {}).t)))), lv: 'warn',
       title: `메리츠와 원장이 ${f.length}곳 다릅니다`, body: f.slice(0, 2).map(apiIssueText).join(' · ') });
+    /* 묻는 것은 맨 위 띠에 **고르는 단추 그대로** — 띠의 '확인' 은 경고만 닫는다. 2026-11-06 '반영할까요?' 띠에 '확인' 을 눌러도 기준원금이 그대로였다(사용자).
+       답하기 전에는 '확인' 으로 닫히지 않는다(renderApiAlert) */
     const asks = apiAsks();
-    /* 열쇠 = 지금 묻는 것들의 묶음 — 새 건이 오면 열쇠가 바뀌어 '확인' 을 눌렀어도 다시 뜬다(검토 2026-10-14: 날짜+개수는 줄었다 늘면 같아졌다) */
-    const akey = 'ask' + asks.map(a => a.id).sort().join('|').split('').reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 7).toString(36);
-    if (asks.length) out.push({ key: akey, t: 1, lv: 'warn',
-      title: `환전·입출금 ${asks.length}건 — 원장에 반영할까요?`, body: asks.slice(0, 2).map(a => a.title).join(' · ') + ' — 무매/VR › 공통 맨 위' });
+    if (asks.length) out.unshift({ key: 'ask', t: 1, lv: 'warn', ask: asks[0],
+      title: asks[0].flow ? `${asks[0].title} — 입출금인가요, 수익인가요?` : `${asks[0].title} — 원장에 반영할까요?`,
+      body: (asks[0].warn ? '금액이 잔액 차이와 다릅니다 — 카드에서 확인하고 고르세요 · ' : '') + (asks.length > 1 ? `묻는 것 ${asks.length}건 — ` : '') + '무매/VR › 공통 맨 위에서 자세히' });
     const c = rec.issues.find(i => i.kind === 'cash');
     if (c) out.push({ key: 'cash', t: num(c.cash.t), lv: 'warn', title: `외화예수금이 메리츠와 ${c.cash.diff >= 0 ? '+' : '−'}$${fmt(Math.abs(c.cash.diff), 2)} 다릅니다`, body: '이자 한도 밖 — 무매/VR › 공통 › 장부 대조' });
     const kr = rec.issues.find(i => i.kind === 'krw');
@@ -9539,22 +9620,30 @@ function apiAckSet(list) {
 function renderApiAlert() {
   const el = $('#apiAlert'), badge = $('#ibBadge');
   const all = apiAlerts(), ack = apiAck();
-  const open = all.filter(x => x.lv !== 'info' && !(num(ack[x.key]) >= num(x.t)));
+  const open = all.filter(x => x.lv !== 'info' && (x.ask || !(num(ack[x.key]) >= num(x.t))));
   const info = all.filter(x => x.lv === 'info');
   if (badge) { badge.hidden = !open.length; badge.textContent = open.length > 9 ? '9+' : String(open.length); }
   if (!el) return;
   const show = open.length ? open : info;
   if (!show.length) { el.hidden = true; el.innerHTML = ''; return; }
-  const top = show[0], tone = top.lv === 'bad' ? 'var(--up)' : top.lv === 'info' ? 'var(--c3)' : 'var(--brass)';
+  /* 빨간 경고가 먼저 — 묻는 띠가 앞서면 답을 미루는 동안 실행 오류의 제목이 띠에 안 보인다. 닫으면 묻는 띠가 나온다 */
+  const top = show.find(x => x.lv === 'bad') || show[0], tone = top.lv === 'bad' ? 'var(--up)' : top.lv === 'info' ? 'var(--c3)' : 'var(--brass)';
   el.hidden = false;
   el.style.setProperty('--al', tone);
+  el.style.flexWrap = top.ask ? 'wrap' : '';
   el.innerHTML = `<div class="al-t"><b>${esc(top.title)}</b>${show.length > 1 ? `<span class="al-n">외 ${show.length - 1}</span>` : ''}
-      <span class="al-b">${esc(top.body || '')}</span></div>
-    <button class="al-go" data-apigo>보기</button>${open.length ? '<button class="al-x" data-apiack aria-label="확인">확인</button>' : ''}`;
+      <span class="al-b">${esc(top.body || '')}</span></div>`
+    + (top.ask && top.ask.warn
+      ? '<button class="al-go" data-apigo>보기</button>'                // 금액이 잔액 차이와 다르다 — 카드의 경고를 읽고 고르게
+      : top.ask
+      ? `<div style="display:flex;gap:6px;flex:1 1 100%;justify-content:flex-end">${apiAskBtns(top.ask)}</div>`
+      : `<button class="al-go" data-apigo>보기</button>${open.length ? '<button class="al-x" data-apiack aria-label="확인">확인</button>' : ''}`);
 }
 document.getElementById('apiAlert')?.addEventListener('click', e => {
+  const ak = e.target.closest('[data-apiask]');
+  if (ak) { apiAskDo(ak.dataset.apiask, ak.dataset.act); if (UI.tab === 'ib' && UI.ib === 'all') renderIB(); return; }
   if (e.target.closest('[data-apigo]')) { goTab('ib'); ibPick('all'); return; }
-  if (e.target.closest('[data-apiack]')) { apiAckSet(apiAlerts().filter(x => x.lv !== 'info')); renderApiAlert(); }
+  if (e.target.closest('[data-apiack]')) { apiAckSet(apiAlerts().filter(x => x.lv !== 'info' && !x.ask)); renderApiAlert(); }
 });
 
 /* ── 긴급 정지 ─────────────────────────────────────────────────────────── */
@@ -9980,7 +10069,7 @@ function apiDispatchCard() {
 }
 /* 위 — 경고 · 자동매매(긴급 정지 · 판 둘 · 아침 요약) */
 function apiTopPanel() {
-  const stop = apiV('apiStop') || {}, al = apiAlerts(), sm = apiV('apiSummary');
+  const stop = apiV('apiStop') || {}, al = apiAlerts().filter(a => !a.ask), sm = apiV('apiSummary');   // 묻는 것은 바로 아래 카드가 말한다
   const err = API.err ? `<div class="warn" style="margin-top:12px"><span>◔</span><div>자동매매 기록을 받지 못했습니다 — ${esc(API.err.slice(0, 160))}</div></div>` : '';
   const alerts = al.length ? `<div class="card rows" style="margin-top:12px"><div class="grp-h" style="padding-left:15px">경고 ${al.length}</div>`
     + al.map(a => `<div class="row"><div style="min-width:0;white-space:normal"><div class="nm" style="white-space:normal;color:${a.lv === 'bad' ? 'var(--up)' : a.lv === 'info' ? 'var(--c3)' : 'var(--brass)'}">${esc(a.title)}</div>
