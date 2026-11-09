@@ -275,8 +275,25 @@ button.act:hover{filter:brightness(1.07)}
 button.act:disabled{opacity:.45;cursor:default;filter:none}
 button.ghost{font:inherit;font-size:12.5px;font-weight:500;border-radius:8px;padding:8px 12px;cursor:pointer;border:1px solid var(--line2);background:var(--surf);color:var(--ink2)}
 button.ghost:hover{background:var(--surf2)}
-/* 검증 버튼 아래 한 줄 — 마지막 검증 시각과 판정. 누르면 그 검증의 자세한 내역 (2026-10-07) */
-.vfyCol{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:2px}
+/* 외부검증 (2026-11-07) — 버튼 하나 + 체크 셋, 그 아래 줄 넷(메리츠 장부 · 무매 · VR · DC). 360px 폰에서도 한 줄씩.
+   칸은 minmax(0,…) 라야 글자가 길어도 화면 밖으로 밀지 않는다(넘치는 글은 말줄임 · title) */
+.xv{display:grid;grid-template-columns:minmax(0,1.25fr) repeat(3,minmax(0,1fr));gap:3px 6px;margin-top:10px}
+.xv>*{min-width:0}
+.xv .xvGo{width:100%;min-height:40px;padding:8px 2px;font-size:12.5px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xvC{display:flex;align-items:center;justify-content:center;gap:5px;min-height:40px;padding:0 4px;border:1px solid var(--line2);
+  border-radius:8px;background:var(--surf);color:var(--ink2);font-size:12.5px;cursor:pointer;user-select:none;-webkit-user-select:none}
+.xvC span{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.xvC:has(input:checked){border-color:color-mix(in srgb,var(--brass) 55%,transparent);background:var(--brass-soft);color:var(--ink)}
+/* 아래 전역 input 규칙(폭 100% · 안쪽 여백 · 배경)이 체크 칸까지 늘리지 않게 */
+.xvC input{width:17px;height:17px;flex:none;margin:0;padding:0;border:0;border-radius:0;background:none;accent-color:var(--brass)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .xvC input{color-scheme:dark}}
+:root[data-theme="dark"] .xvC input{color-scheme:dark}
+.xv .vfyS{width:100%}
+#xvHead{margin:9px 3px 0}
+#xvHead:empty{display:none}
+#xvHead .ok{color:var(--c2);font-weight:600}
+#xvHead .bad{color:var(--up);font-weight:600}
+/* 검증 줄 — 마지막 검증 시각과 판정. 누르면 그 검증의 자세한 내역 (2026-10-07) */
 .vfyS{font:inherit;font-size:11px;line-height:1.3;background:none;border:0;padding:4px 1px;margin:0;color:var(--muted);
   white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;text-align:center;border-radius:6px;font-variant-numeric:tabular-nums}
 .vfyS:hover{background:var(--surf2)}
@@ -485,17 +502,21 @@ details.apir>.apib{padding:0 15px 12px 31px}
       <!-- 자동매매 — 경고 · 긴급 정지 · 무매 3020 · VR 3081 · 아침 요약 (공통일 때만, renderIB 가 채운다) -->
       <div id="ibTop"></div>
       <div id="ibCommon">
-      <!-- 셋 다 같은 폭 한 줄. 글자를 줄여 두 줄짜리 버튼을 없앴다.
-           '주문표 띄우기' 는 2026-10-06 에 뺐다(사용자 요청) — 주문표는 동기화마다 서버에 올라가고, 폰에서는
-           빠른설정 '무매 주문표' 타일·홈 화면 아이콘으로 띄운다. 그 자리에 DC 검증(미래에셋 국내주식 잔고 대조) -->
-      <!-- 버튼마다 바로 아래 한 줄 — 마지막 검증 시각과 판정. 누르면 그 검증의 자세한 내역 (2026-10-07, 사용자 요청) -->
-      <div style="display:flex;gap:7px;margin-top:10px">
-        <div class="vfyCol"><button class="ghost" id="vfyIB" style="width:100%;padding:10px 2px;font-size:12.5px">무매 검증</button>
-          <button class="vfyS" data-vs="ib" disabled>—</button></div>
-        <div class="vfyCol"><button class="ghost" id="vfyVR" style="width:100%;padding:10px 2px;font-size:12.5px">VR 검증</button>
-          <button class="vfyS" data-vs="vr" disabled>—</button></div>
-        <div class="vfyCol"><button class="ghost" id="vfyDC" style="width:100%;padding:10px 2px;font-size:12.5px">DC 검증</button>
-          <button class="vfyS" data-vs="dc" disabled>—</button></div>
+      <!-- 외부검증 (2026-11-07, 사용자 요청) — 무매·VR·DC 검증 버튼 셋을 버튼 하나와 오른쪽 체크 셋(처음엔 모두 켬)으로 합쳤다.
+           누르면 고른 것을 수집기가 한 번에 차례로 읽고(jasan://xverify, 수집기 4.46), 동시에 메리츠 장부(보유·외화/원화 예수금)를
+           정시 일정과 상관없이 바로 새로 받는다(서버 trader_sync_now → 실행기 sync, 조회만). 체크를 다 끄면 '메리츠 갱신' — 장부만.
+           체크는 저장하지 않는다 — 열 때마다 셋 다 켜진 채로 시작한다.
+           아래 줄 넷 — 메리츠 장부 · 무매 · VR · DC 의 마지막 시각과 판정. 누르면 그 자세한 내역 (2026-10-07, 사용자 요청)
+           ('주문표 띄우기' 는 2026-10-06 에 뺐다(사용자 요청) — 주문표는 동기화마다 서버에 올라가고, 폰에서는 빠른설정 타일·홈 화면 아이콘으로 띄운다) -->
+      <div class="xv" role="group" aria-label="외부검증">
+        <button class="ghost xvGo" id="vfyGo">외부검증</button>
+        <label class="xvC"><input type="checkbox" data-xv="ib" checked autocomplete="off"><span>무매</span></label>
+        <label class="xvC"><input type="checkbox" data-xv="vr" checked autocomplete="off"><span>VR</span></label>
+        <label class="xvC"><input type="checkbox" data-xv="dc" checked autocomplete="off"><span>DC</span></label>
+        <button class="vfyS" data-vs="api" disabled>—</button>
+        <button class="vfyS" data-vs="ib" disabled>—</button>
+        <button class="vfyS" data-vs="vr" disabled>—</button>
+        <button class="vfyS" data-vs="dc" disabled>—</button>
       </div>
       <div id="vfyOut"></div>
       </div>
@@ -797,7 +818,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-11-07 18:44';
+const BUILD = '2026-11-09 10:52';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -4533,6 +4554,97 @@ const VFY_KEY = 'jasan_vfy';
 const vfyPending = () => { try { return JSON.parse(localStorage.getItem(VFY_KEY) || 'null'); } catch (e) { return null; } };
 const vfySet = v => { try { v ? localStorage.setItem(VFY_KEY, JSON.stringify(v)) : localStorage.removeItem(VFY_KEY); } catch (e) { } };
 
+/* ── 외부검증 (2026-11-07, 사용자 요청) ──────────────────────────────────────────────────────
+   사용자: 무매 검증 / VR 검증 / DC 검증 세 버튼을 '외부검증' 버튼 하나와 오른쪽 체크 셋(무매·VR·DC, 기본 모두 켬)으로 —
+   체크한 것을 한 번에 검증하고, 동시에 메리츠 API 값(보유·외화/원화 예수금)을 일정과 상관없이 바로 갱신.
+
+   · 폰 — 한 주소로 고른 것을 다 넘긴다: jasan://xverify?what=ib,vr,dc&t0=<누른 시각>. 수집기(4.46)가 무매 → VR → DC 차례로
+     읽고, 올릴 때마다 run = t0 를 붙인다. 그래서 **이 판의 결과만** 받는다 — 폰 시계와 이 기기 시계를 견주지 않고,
+     VR 자동진행이 올린 guideVR 을 이 판 것으로 잘못 받지도 않는다. DC 까지 했으면 끝에 이 화면을 #vfy=x 로 다시 연다.
+     옛 수집기는 그 주소를 모른다 — 크롬이 되돌림 주소(#vfy=xold)로 돌려보내면 4.46 이 필요하다고 말하고, 하나씩 읽는
+     옛 주소 버튼을 낸다(크롬은 사람이 누르지 않은 앱 호출을 막는다 — 옛 주소 셋을 이어 부를 수 없다).
+   · 기다림 — 루프 하나(pollXv) · 세대 하나(vfyGen). 항목마다 몫(무매·VR 90초 · DC 4분)을 **벽시계로** 항목 차례대로 잇는다 —
+     앞 항목이 온 때(안 왔으면 그 마감)부터 다음 항목의 몫이 시작된다. 뒤로 간 탭의 타이머가 느려져도 늘어나지 않는다.
+   · 메리츠 — 누르는 순간 서버에 장부를 청한다(apiSyncNow — 메리츠 API 연동 구획). 폰 앱으로 넘어가기 **전에** 요청이
+     나가야 해서 같은 클릭 안에서 먼저 보낸다. 이 기다림은 vfyBusy 를 걸지 않는다(검증 칸·줄을 막지 않는다).
+   · 체크를 다 끄면 '메리츠 갱신' — 폰 앱은 열지 않고 장부만 받는다. 체크는 저장하지 않는다(열 때마다 셋 다 켬). */
+const XV_ALL = ['ib', 'vr', 'dc'];
+const XV_META = { ib: 'guideIB', vr: 'guideVR', dc: 'dcAsset' };
+const XV_KEY_OF = { guideIB: 'ib', guideVR: 'vr', dcAsset: 'dc' };
+const XV_LBL = { ib: '무매', vr: 'VR', dc: 'DC' };
+const XV_BUDGET = { ib: 90e3, vr: 90e3, dc: 240e3 };   // 제 차례부터 — 예전 무매/VR 45×2초 · DC 120×2초와 같다
+const XV_MAX = 9 * 60e3;                                  // 걸어 둔 흔적의 수명 — 세 몫의 합(7분)보다 넉넉히
+let xvRun = null;                                         // 지금(마지막) 판 — { id, since, base, items, m, got, at, shown, end, fresh }
+let xvPressAt = 0;                                        // 두 번 눌림(3초 안) 거르기
+let xvOld = false;                                        // #vfy=xold 뒤 — 하나씩 읽는 옛 주소 버튼을 판마다 다시 낸다(다음 [외부검증] 까지)
+/* 메리츠 장부 바로 받기의 상태 — 메리츠 API 연동 구획의 apiSyncNow 참고. 부팅 전에 그려도(renderVfyStat) 걸리지 않게 여기 둔다 */
+const API_SYNC_KEY = 'jasan_apisync';
+const API_SYNC_MAX = 6 * 60e3;                            // 장부를 기다리는 한도(벽시계)
+const API_RUN_WAIT = 12 * 60e3, API_RUN_MAX = 20 * 60e3;  // 판 앞뒤(run_*) — 판 시각 + 12분까지, 누른 때부터 20분 넘게는 안
+let apiSync = { gen: 0 };                                 // st: ask · wait · run → got · part · late · busy · none · off · bad
+
+/* 걸어 둔 흔적 — { what, items, t0, x }. what 은 옛 빌드(다른 탭에 남은 옛 화면)도 무언가 받아 가게 남긴다. 옛 모양 { what, t0 } 도 읽는다.
+   x — 외부검증 판(run = t0 인 결과만 받는다). 없으면 옛 한 항목 판(누른 뒤 올라온 결과를 받는다) */
+function vfyPendingN() {
+  const p = vfyPending();
+  if (!p || typeof p !== 'object' || !num(p.t0)) return null;
+  const items = XV_ALL.filter(k => Array.isArray(p.items) ? p.items.includes(k) : p.what === k);
+  return items.length ? { items, t0: num(p.t0), x: p.x === 1 || p.x === true } : null;
+}
+/* 기다림 — 화면에 돌아오면(visibilitychange) 바로 깨운다. 뒤로 간 탭의 타이머는 크롬이 크게 늦춘다 */
+const xvWake = new Set();
+function xvNap(ms) {
+  return new Promise(res => {
+    let t = 0;
+    const done = () => { clearTimeout(t); xvWake.delete(done); res(); };
+    t = setTimeout(done, ms); xvWake.add(done);
+  });
+}
+function xvWakeAll() { [...xvWake].forEach(f => f()); }
+/* 고른 항목 — 늘 무매 → VR → DC 차례 */
+function xvPicked() {
+  return XV_ALL.filter(k => { const c = document.querySelector(`#ibCommon input[data-xv="${k}"]`); return !!(c && c.checked); });
+}
+/* 다 끄면 '메리츠 갱신' — 폰 앱은 열지 않고 장부만 받는다 */
+function renderXvPick() {
+  const b = $('#vfyGo'); if (!b) return;
+  const n = xvPicked().length;
+  b.textContent = n ? '외부검증' : '메리츠 갱신';
+  b.title = n ? '고른 것을 폰에서 한 번에 읽고 메리츠 장부도 바로 새로 받습니다' : '폰 앱은 열지 않고 메리츠 장부(보유·예수금)만 바로 새로 받습니다';
+}
+/* 수집기에 넘기는 주소 — 수집기 OverlayLauncher(xverify)와 같은 약속. 되돌림 주소는 늘 붙인다: 옛 수집기면 크롬이 여기로 돌려보낸다 */
+function xvIntent(items, t0) {
+  const back = encodeURIComponent(location.href.split('#')[0] + '#vfy=xold');
+  return `intent://xverify?what=${items.join(',')}&t0=${t0}#Intent;scheme=jasan;package=kr.jasan.collector;S.browser_fallback_url=${back};end`;
+}
+/* 옛 한 항목 주소 — 4.46 앞 수집기용(#vfy=xold 화면의 버튼).
+   무매/VR 은 돌아올 주소를 넘기지 않는다 — 폰이 브라우저를 열지 않는다(결과는 이 화면이 서버에서 직접 받는다).
+   DC 검증은 **주소를 따로** 쓴다(jasan://dcverify, 수집기 4.40 · 검토). 옛 수집기는 verify 의 what 이 vr 이 아니면
+   전부 무매 길로 보내 fire gate 를 열고 메리츠 MY자산 지문까지 갔다. 새 주소를 못 받는 수집기면 크롬이
+   되돌림 주소(#vfy=dcold)로 이 화면에 돌아와 '4.40 이 필요하다' 고 말한다 */
+function vfyIntent1(what) {
+  const back = encodeURIComponent(location.href.split('#')[0] + '#vfy=dcold');
+  return what === 'dc'
+    ? `intent://dcverify#Intent;scheme=jasan;package=kr.jasan.collector;S.browser_fallback_url=${back};end`
+    : `intent://verify?what=${what}#Intent;scheme=jasan;package=kr.jasan.collector;end`;
+}
+/* 그 옛 주소 버튼 셋 — #vfy=xold 화면에 내고, 한 항목을 읽어 칸을 새로 지은 뒤에도 첫 줄 아래에 다시 낸다(xvHeadDraw · xvOld) */
+const xvOldBtns = () => `<div style="display:flex;gap:6px;margin-top:8px">${XV_ALL.map(k => `<button class="ghost" data-vfy1="${k}"
+  style="flex:1 1 0;min-width:0;padding:8px 2px;font-size:12px">${XV_LBL[k]} 검증</button>`).join('')}</div>`;
+/* 수집기가 판 끝에 여는 주소의 이 판 표시 — #vfy=x&run=<누른 때>&what=ib,vr,dc (수집기 VerifyPlan.webUrl). 없거나 못 읽으면 null */
+function xvHashRun(hash) {
+  let q = null;
+  try { q = new URLSearchParams(String(hash || '').replace(/^#/, '')); } catch (e) { return null; }
+  const rs = q.get('run') || '', run = Number(rs), what = String(q.get('what') || '').split(',');
+  const items = XV_ALL.filter(k => what.includes(k));      // 늘 무매 → VR → DC · 모르는 낱말은 버린다
+  return /^\d{1,16}$/.test(rs) && Number.isSafeInteger(run) && run > 0 && items.length ? { run, items } : null;
+}
+const VFY_LOGIN = `<div class="warn" style="margin-top:9px"><span>◔</span><div>
+  서버에 연결되어 있어야 폰이 읽은 결과와 메리츠 장부를 받아올 수 있습니다. 입력 탭에서 로그인해 주세요.</div></div>`;
+const VFY_NOSB = `<div class="warn" style="margin-top:9px"><span>◔</span><div>
+  <b>이 브라우저는 서버에 연결되어 있지 않습니다.</b> 결과는 서버에 올라가 있으니
+  <b>검증을 실행한 브라우저</b>에서 무매/VR 탭을 열거나, 입력 탭에서 로그인해 주세요.</div></div>`;
+
 /* 검증 결과를 이어받는다.
 
    ── 원래 탭으로 돌아오지 못해도 결과가 뜨게 한다 (2026-09-08) ──────────
@@ -4542,8 +4654,9 @@ const vfySet = v => { try { v ? localStorage.setItem(VFY_KEY, JSON.stringify(v))
 
    결과는 이미 서버(meta.guideIB/guideVR)에 있다. 그러니 원래 탭도, 원래
    브라우저도 필요 없다 — 주소 뒤의 `#vfy=ib` 하나만 보면 된다. 앱이 돌아올 때
-   그걸 붙여 준다. 그 표시가 있으면 무매/VR 탭으로 가서 최근 5분 안의 결과를
-   받아 온다.
+   그걸 붙여 준다. 그 표시가 있으면 무매/VR 탭으로 가서 최근 결과를 받아 온다
+   (외부검증은 `#vfy=x&run=<누른 때>&what=<고른 것>` — 그 판의 고른 것만 받는다. 판 표시도 걸어 둔 판도 없으면
+   어림해 기다리지 않고 그날 읽은 것을 보인다. 예전 한 항목은 5분이었다).
 
    원래 탭으로 잘 돌아온 경우에는 localStorage 에 걸어 둔 것으로 이어받는다
    (그쪽이 더 빠르고, 언제 시작했는지도 정확하다). */
@@ -4551,35 +4664,79 @@ const vfySet = v => { try { v ? localStorage.setItem(VFY_KEY, JSON.stringify(v))
    넓혔더니, 검증한 날에는 웹을 열 때마다 무매/VR 탭에서 시작했다. 첫 화면은 종합이다.
    결과는 무매/VR 탭에 들어가면 그때 채워진다(showTab 에서 latestVerify(true)). */
 function resumeVerify(force) {
-  const h = (location.hash || '').match(/vfy=(dcold|ib|vr|dc)/);
+  /* (?!\w) — 'dc' 가 'dcold' 를, 'x' 가 'xold' 를 먹지 않게(갈래 차례도 긴 것이 먼저) */
+  const h = (location.hash || '').match(/vfy=(dcold|xold|x|ib|vr|dc)(?!\w)/);
+  const hp = h && h[1] === 'x' ? xvHashRun(location.hash) : null;     // 수집기가 알려 온 이 판(run)과 고른 것(what) — 해시를 지우기 전에 읽는다
   /* 해시가 붙어 왔으면 **돌던 것을 끊고** 새로 받는다. 브라우저가 탭을 재사용하면
      페이지는 그대로고 주소만 바뀌므로, 앞서 돌던 폴링이 남아 있을 수 있다. */
   if (!h && vfyBusy) return;
   if (h) {
     /* 주소의 표시는 한 번만 쓴다. 새로고침할 때마다 다시 도는 것을 막는다 */
     try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { }
-    /* 'DC 검증' 주소를 수집기가 못 받았다 — 크롬이 되돌림 주소로 돌려보냈다 (4.40 · runVerify 참고) */
+    const box = $('#vfyOut');
+    /* 'DC 검증' 주소를 수집기가 못 받았다 — 크롬이 되돌림 주소로 돌려보냈다 (4.40 · vfyIntent1 참고) */
     if (h[1] === 'dcold') {
-      vfyGen++; vfyBusy = false; vfySet(null);
+      vfyGen++; vfyBusy = false; vfySet(null); xvRun = null;
       goTab('ib'); ibPick('all');
-      const box = $('#vfyOut');
-      if (box) box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>수집기가 DC 검증을 받지 못했습니다.</b>
+      if (box) {
+        box.dataset.xv = '';
+        box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>수집기가 DC 검증을 받지 못했습니다.</b>
         DC 검증은 수집기 <b>4.40 이상</b>이 있어야 합니다 — 새 버전을 설치한 뒤 다시 눌러 주세요.</div></div>`;
+      }
       return;
     }
-    const p = vfyPending();
-    vfySet(null);
+    /* '외부검증' 주소를 수집기가 못 받았다(4.46 앞) — 돌던 기다림을 끊고 하나씩 읽는 옛 주소 버튼을 낸다.
+       버튼마다 사람이 누르는 것이라 크롬이 앱 호출을 들여보낸다. 메리츠 장부 기다림은 그대로 둔다 */
+    if (h[1] === 'xold') {
+      vfyGen++; vfyBusy = false; vfySet(null); xvRun = null;
+      xvPressAt = 0;                                 // 3초 거르기는 [외부검증] 두 번 눌림용 — 아래 버튼의 첫 누름을 먹지 않게
+      xvOld = true;                                  // 한 항목을 읽어 칸을 새로 지은 뒤에도 버튼을 다시 낸다(xvHeadDraw)
+      goTab('ib'); ibPick('all');
+      if (box) {
+        /* 메리츠 장부는 요청이 실제로 도는 중일 때만 '받는 중' 이라 한다 — 꺼짐(off)·설정 전(none)·실패면 결과를 약속하지 않는다 */
+        const api = ['ask', 'wait', 'run'].includes(apiSync.st) ? ` (메리츠 장부는 그대로 받는 중입니다 — 위 '메리츠' 줄)` : ` (메리츠 장부는 위 '메리츠' 줄을 보세요)`;
+        box.dataset.xv = '';
+        box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>수집기가 외부검증을 받지 못했습니다.</b>
+        한 번에 읽기는 수집기 <b>4.46 이상</b>이 있어야 합니다 — 새 버전을 설치한 뒤 다시 눌러 주세요.
+        그전에는 하나씩 읽을 수 있습니다${api}.
+        ${xvOldBtns()}</div></div>`;
+      }
+      return;
+    }
+    /* 걸어 둔 판이 있으면 그 판을 잇는다 — 수집기의 DC 길(옛 dcverify)은 #vfy=dc 로 돌아오므로 걸어 둔 판의 항목을 먼저 본다.
+       흔적은 **기다림이 끝날 때** 지운다(예전엔 여기서 먼저 지워, 이어받는 중에 한 번 더 새로고침하면 판을 잃었다) */
+    const p0 = vfyPendingN(), now = Date.now(), hk = h[1];
+    const p = p0 && now - p0.t0 <= XV_MAX ? p0 : null;
     goTab('ib'); ibPick('all');                      // 결과 칸은 공통에만 있다 (2026-09-25)
-    /* 언제 시작했는지 모를 수 있으므로 '최근 5분 안' 이면 받는다 */
-    pollVerify(h[1], p && num(p.t0) ? num(p.t0) : Date.now() - 5 * 60e3, true);
+    /* 수집기가 이 판(run)과 고른 것(what)을 알려 왔다 — 그 판의 고른 것만 받는다. 이 주소는 판이 **끝난 뒤에** 열린다(다 올렸거나
+       못 올렸다) — 두 번 물어도 없는 항목은 몫을 기다리지 않고 바로 '서버에 없음'(pollXv 의 fin). 이 브라우저에 더 새 판이
+       걸려 있으면 그쪽이 지금 판이다(수집기는 새 판을 받으면 앞 판을 멈추고 웹을 열지 않는다 — 겹친 것) */
+    if (hp && !(p && p.t0 > hp.run)) {
+      if (p && p.t0 < hp.run) vfySet(null);          // 이 브라우저의 더 옛 판 — 새 판이 덮었다(남겨 두면 나중에 그 판을 다시 기다린다)
+      pollXv(hp.items, hp.run, true, 'x', true, true);
+      return;
+    }
+    /* 판 표시도 걸어 둔 판도 없다(다른 브라우저로 열렸다 · 이 탭의 기다림이 이미 끝났다) — 누른 시각도 고른 것도 모르니 기다리지 않는다.
+       예전엔 셋 다 · 최근 9분 안의 run 으로 어림해 고르지 않은 항목을 '안 옴' 이라 하거나 앞 판 결과를 이 판 것으로 보였다.
+       그날 읽은 것을 그대로 보인다 — 이 탭이 방금 다 받아 보인 판이면 그대로 둔다 */
+    if (!p && hk === 'x') {
+      vfyGen++; vfyBusy = false;
+      const r = xvRun, shown = r && r.end && box && box.dataset.xv === r.id && r.items.length && r.items.every(k => r.got[k]);
+      if (box && !shown && !vrAutoBusy) { box.dataset.xv = ''; box.innerHTML = ''; xvRun = null; }
+      latestVerify(true);
+      return;
+    }
+    /* 옛 한 항목(#vfy=ib·vr·dc)이 걸어 둔 것 없이 왔으면(다른 브라우저) 누른 시각을 모른다 — 최근 9분 안에 올라온 것 */
+    const items = p && (hk === 'x' || p.items.includes(hk)) ? p.items : [hk];
+    pollXv(items, p ? p.t0 : now - XV_MAX, true, p && p.x ? 'x' : 'old', !!p);
     return;
   }
-  const p = vfyPending();
+  const p = vfyPendingN();
   if (!p) { if (force) latestVerify(true); return; }
-  if (Date.now() - num(p.t0) > 5 * 60e3) { vfySet(null); if (force) latestVerify(true); return; }
+  if (Date.now() - p.t0 > XV_MAX) { vfySet(null); if (force) latestVerify(true); return; }
   if (!force && UI.tab !== 'ib') return;
   goTab('ib'); ibPick('all');
-  pollVerify(p.what, num(p.t0), true);
+  pollXv(p.items, p.t0, true, p.x ? 'x' : 'old');
 }
 
 /* 걸어 둔 것이 없어도 **최근 검증 결과가 있으면 보여 준다.**
@@ -4600,120 +4757,245 @@ async function latestVerify(quiet) {
   let rows = null;
   try { rows = await sbReq('/rest/v1/meta?k=in.(guideIB,guideVR,dcAsset)&select=k,v'); } catch (e) { return; }
   if (stale() || box.innerHTML.trim()) return;
-  let best = null, dcv = null;
-  (rows || []).forEach(r => {
-    const v = r.v; if (!v || !num(v.t)) return;
-    if (r.k === 'dcAsset') dcv = v;
-    else if (!best || num(v.t) > num(best.t)) best = v;
-  });
-  /* DC 검증(2026-10-06)은 **덧붙인다** — 그날 것이면 무매/VR 결과·메리츠 자산 대조와 함께 보인다.
-     처음엔 DC 가 그날 마지막이면 그것만 그리고 돌아가, 18:30 자산 대조의 '보유수량 다름' 같은 알림이
-     그날 내내 안 보였다(검토). 더 나중 것이 위에 온다 */
-  const dcToday = dcv && iso(new Date(num(dcv.t))) === iso(new Date());
-  const dcFirst = dcToday && (!best || num(dcv.t) > num(best.t));
-  const putDc = () => {
-    if (dcToday && !stale() && !box.querySelector('#dcvWrap')) box.insertAdjacentHTML(dcFirst ? 'afterbegin' : 'beforeend', dcVerifyReport(dcv));
-  };
-  if (dcToday && !quiet) { goTab('ib'); ibPick('all'); }
-  /* **그날 안에는 계속 보여 준다.** 예전에는 5분이었다. 폰이 검증을 마치면 알림을
+  /* **그날 읽은 것은 셋 다** 무매 → VR → DC 차례로 보여 준다(외부검증 2026-11-07 — 예전엔 무매/VR 중 나중 것 하나와 DC 만).
+     **그날 안에는 계속 보여 준다.** 예전에는 5분이었다. 폰이 검증을 마치면 알림을
      하나 남겼는데, 그 알림을 누르면 원래 쓰던 크롬 탭이 아니라 엉뚱한 브라우저가
      열렸다. 그래서 알림을 아예 없앴고(OverlayLauncher), 대신 결과가 이 화면에
      그날이 갈 때까지 남아 있게 했다. 검증하고 한참 뒤에 웹을 열어도 결과가 보인다. */
+  const got = {};
+  (rows || []).forEach(r => {
+    const k = r && XV_KEY_OF[r.k], v = r && r.v;
+    if (k && v && typeof v === 'object' && num(v.t) && sameDay(v.t, Date.now())) got[k] = v;
+  });
+  const items = XV_ALL.filter(k => got[k]);
+  if (items.length) {
+    /* 첫 줄(#xvHead)은 비워 둔다 — 판이 아니라 그날 읽은 것을 모아 보인 것이다. 맨 뒤 #xv-ia 는 메리츠 자산 대조 자리 */
+    xvBox({ id: 'day:' + items.join(','), since: 0, base: 0, items, m: 'day', got, at: {}, shown: {}, ia: true }, 'new');
+    if (!quiet) { goTab('ib'); ibPick('all'); }
+  }
   /* 무매 검증 결과가 없어도 **메리츠 자산 대조는 보여 준다** — 18:30 자동주문 앞단계로
      폰이 혼자 읽어 둔 날이 그렇다(수집기 4.12). 그날은 guideIB 가 갱신되지 않는다 */
-  if (!best || !num(best.t) || iso(new Date(num(best.t))) !== iso(new Date())) {
-    try { await syncMtsAsset(box); } catch (e) { }
-    putDc();
-    return;
-  }
-  if (box.innerHTML.trim() || stale()) return;
-  const what = best.what === 'vr' ? 'vr' : 'ib', txt = String(best.text || '');
-  if (!quiet) { goTab('ib'); ibPick('all'); }
-  if (txt.startsWith('ERR')) recordVfy(what, num(best.t), -1, txt.replace(/^ERR\s*/, '').split(/\r?\n/)[0]);
-  box.innerHTML = txt.startsWith('ERR')
-    ? `<div class="warn" style="margin-top:9px"><span>◔</span><div>
-        <b>${what === 'vr' ? 'VR' : '무매'} 앱을 읽지 못했습니다.</b><br>${esc(txt.replace(/^ERR\s*/, ''))}</div></div>`
-    : verifyReport(what, txt, num(best.t));
-  /* 메리츠 자산 대조도 그날 것이 있으면 이어서 붙인다 (수집기 4.12) */
-  try { await syncMtsAsset(box); } catch (e) { }
-  putDc();
+  try { await syncMtsAsset((items.length && $('#xv-ia')) || box); } catch (e) { }
 }
 
-async function runVerify(what) {
-  if (vfyBusy) return;
+/* [외부검증] — 메리츠 장부 요청을 먼저 띄우고(같은 클릭 안), 수집기를 부르고, 기다린다.
+   **다시 누르면 처음부터 다시 한다** — 수집기도 돌던 것을 멈추고 다시 시작한다. 3초 안에 또 눌린 것은 두 번 눌림으로 본다 */
+function runXv() {
   const box = $('#vfyOut'); if (!box) return;
-  if (!SB || !sbTok) {
-    box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div>
-      서버에 연결되어 있어야 폰이 읽은 결과를 받아올 수 있습니다. 입력 탭에서 로그인해 주세요.</div></div>`;
-    return;
-  }
+  if (!SB || !sbTok) { box.dataset.xv = ''; box.innerHTML = VFY_LOGIN; return; }
   const t0 = Date.now();
-  vfySet({ what, t0 });
-  /* 돌아올 주소는 넘기지 않는다. 폰이 브라우저를 열지 않기 때문이다 —
-     결과는 이 화면이 서버에서 직접 받아 온다(latestVerify). */
-  /* DC 검증은 **주소를 따로** 쓴다(jasan://dcverify, 수집기 4.40 · 검토). 옛 수집기는 verify 의 what 이 vr 이 아니면
-     전부 무매 길로 보내 fire gate 를 열고 메리츠 MY자산 지문까지 갔다. 새 주소를 못 받는 수집기면 크롬이
-     되돌림 주소(#vfy=dcold)로 이 화면에 돌아와 '4.40 이 필요하다' 고 말한다 */
-  const back = encodeURIComponent(location.href.split('#')[0] + '#vfy=dcold');
-  try {
-    location.href = what === 'dc'
-      ? `intent://dcverify#Intent;scheme=jasan;package=kr.jasan.collector;S.browser_fallback_url=${back};end`
-      : `intent://verify?what=${what}#Intent;scheme=jasan;package=kr.jasan.collector;end`;
-  } catch (e) { }
-  pollVerify(what, t0, false);
+  if (t0 - xvPressAt < 3000) return;
+  xvPressAt = t0;
+  xvOld = false;                                      // 옛 수집기의 하나씩 버튼은 이 판에서 다시 묻는다(#vfy=xold 로 돌아오면 다시 낸다)
+  const items = xvPicked();
+  apiSyncNow(t0);                                     // 요청이 지금 나간다 — 아래에서 폰 앱으로 넘어가기 전에
+  if (!items.length) { xvApiOnly(t0); return; }
+  vfySet({ what: items[0], items, t0, x: 1 });
+  /* 기다리기(await) 전에 — 크롬은 사람이 누른 그 순간의 앱 호출만 들여보낸다 */
+  try { location.href = xvIntent(items, t0); } catch (e) { }
+  pollXv(items, t0, false, 'x');
+}
+/* 체크를 다 끈 [메리츠 갱신] — 폰 앱은 열지 않는다. 검증을 기다리는 중이면 그 판의 첫 줄에 함께 적힌다 */
+function xvApiOnly(t0) {
+  if (vfyBusy && xvRun && !xvRun.end) { xvHeadDraw(); return; }
+  xvRun = { id: 'api' + t0, since: t0, base: t0, items: [], m: 'api', got: {}, at: {}, shown: {}, end: t0 };
+  xvBox(xvRun, 'new');
+  xvHeadDraw();
 }
 
-async function pollVerify(what, t0, resumed) {
-  if (what === 'dc') return pollDc(t0, resumed);            // DC 검증은 미래에셋 잔고 — 결과 모양이 다르다 (2026-10-06)
-  const gen = ++vfyGen;
-  const box = $('#vfyOut'); if (!box) return;
-  const key = what === 'vr' ? 'guideVR' : 'guideIB';
-  const lbl = what === 'vr' ? 'VR' : '무매';
-  vfyBusy = true;
-  const say = m => { box.innerHTML = `<p class="note" style="margin:9px 3px 0">${m}</p>`; };
-  say(resumed ? `${lbl} 검증 결과를 기다리는 중…`
-    : `${lbl} 앱을 여는 중… 폰에서 앱이 뜨고 표를 훑습니다. 다 읽으면 이 화면으로 돌아옵니다.`);
+/* 하나씩 — 옛 수집기(4.46 앞)가 외부검증을 못 받았을 때 #vfy=xold 화면의 버튼이 부른다. 받는 법은 옛것 그대로
+   (누른 뒤 올라온 결과). 주소는 vfyIntent1. 다시 누르면 처음부터(외부검증과 같다) */
+function runVerify(what) {
+  const box = $('#vfyOut'); if (!box || !XV_ALL.includes(what)) return;
+  if (!SB || !sbTok) { box.dataset.xv = ''; box.innerHTML = VFY_LOGIN; return; }
+  const t0 = Date.now();
+  if (t0 - xvPressAt < 3000) return;
+  xvPressAt = t0;
+  vfySet({ what, items: [what], t0 });
+  try { location.href = vfyIntent1(what); } catch (e) { }
+  pollXv([what], t0, false, 'old');
+}
 
-  for (let i = 0; i < 45; i++) {                       // 최대 90초
-    await new Promise(r => setTimeout(r, 2000));
-    if (gen !== vfyGen) return;                        // 더 새 폴링이 시작됐다
-    /* 다른 브라우저로 열렸는데 거기는 로그인이 안 돼 있으면 아무리 기다려도
-       못 받는다. 90초를 헛되이 세지 말고 바로 말한다. */
-    if (i >= 2 && (!SB || !sbTok)) {
-      vfyBusy = false;
-      box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div>
-        <b>이 브라우저는 서버에 연결되어 있지 않습니다.</b> 결과는 서버에 올라가 있으니
-        <b>검증을 실행한 브라우저</b>에서 무매/VR 탭을 열거나, 입력 탭에서 로그인해 주세요.</div></div>`;
-      return;
-    }
-    let rows = null;
-    try { rows = await sbReq('/rest/v1/meta?k=eq.' + key + '&select=v'); } catch (e) { }
-    const v = rows && rows[0] && rows[0].v;
-    if (v && num(v.t) > t0) {
-      vfyBusy = false; vfySet(null);
-      const txt = String(v.text || '');
-      if (txt.startsWith('ERR')) {
-        recordVfy(what === 'vr' ? 'vr' : 'ib', num(v.t), -1, txt.replace(/^ERR\s*/, '').split(/\r?\n/)[0]);
-        box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div>
-          <b>${lbl} 앱을 읽지 못했습니다.</b><br>${esc(txt.replace(/^ERR\s*/, ''))}</div></div>`;
-        return;
-      }
-      box.innerHTML = verifyReport(what, txt, num(v.t));
-      /* 무매 검증 뒤 메리츠 MY자산 대조(수집기 4.12)는 **4.43 에서 뺐다** (사용자 2026-10-13: "MY자산 단계 빼기") —
-         보유·평단·외화·원화예수금은 메리츠 API 장부가 매일 대조한다. 그 화면으로 가는 길만 남긴다 */
-      if (what !== 'vr') box.insertAdjacentHTML('beforeend', '<p class="note" style="margin:9px 3px 0">보유수량·평단·외화·원화예수금 대조는 '
-        + '<a href="#api" style="color:var(--brass)">무매/VR › 공통 › 메리츠 장부 대조</a>가 맡습니다(메리츠 API, 매일).</p>');
-      return;
-    }
-    say(`${lbl} 앱 화면을 읽는 중… ${(i + 1) * 2}초`);
+/* 이 판의 결과인가 — m: 'x' 외부검증(run = since) · 'old' 옛 한 항목(누른 뒤 올라온 것 — 폰 시계 t 로 견준다).
+   누른 시각을 모르는 외부검증(예전 'xl' — 최근 9분 안의 run 으로 어림)은 없앴다 — resumeVerify 가 그날 읽은 것을 보인다 */
+function xvFresh(run, v) {
+  if (!v || typeof v !== 'object' || !num(v.t)) return false;
+  return run.m === 'x' ? Number(v.run) === run.since : num(v.t) > run.since;
+}
+/* 항목마다 지금 어디인가 — done 받음 · read 제 차례(읽는 중) · queue 앞 항목을 기다림 · late 몫이 지났다.
+   몫은 항목 차례대로 잇는다: 앞 항목이 온 때(안 왔으면 그 마감)부터 다음 항목의 몫이 시작된다. 오는 차례는 상관없다.
+   gone — 폰은 끝났는데(#vfy=x&run) 두 번 물어도 서버에 없다: 남은 항목은 몫과 상관없이 late */
+function xvStates(run, now) {
+  let start = run.base;
+  return run.items.map(k => {
+    const dl = start + XV_BUDGET[k], got = !!run.got[k];
+    const st = got ? 'done' : run.gone || now >= dl ? 'late' : now >= start ? 'read' : 'queue';
+    const o = { k, st, el: st === 'read' ? now - start : 0 };
+    start = got ? (num(run.at[k]) || start) : dl;
+    return o;
+  });
+}
+/* VR 자동진행이 이 판 뒤에 결과 칸을 썼으면 칸을 다시 짓지 않는다 — 그 판의 안내·멈춘 까닭을 덮으면 안 된다 */
+const xvMay = run => !vrAutoBusy && vrAutoAt < run.base;
+/* 결과 칸 — #xvHead(한 줄) 아래 항목마다 #xv-ib · #xv-vr · #xv-dc(고정 차례). 쓸 때마다 id 로 다시 찾는다 —
+   VR 자동진행·자세히 보기가 칸을 통째로 갈았을 수 있다. may: 'new' 늘 새로 · true 모양이 다르면 새로 · false 새로 짓지 않는다.
+   새로 지으면 이미 받은 항목(run.got)을 다시 그린다 */
+function xvBox(run, may) {
+  const box = $('#vfyOut'); if (!box) return null;
+  const ok = box.dataset.xv === run.id && box.querySelector('#xvHead') && run.items.every(k => box.querySelector('#xv-' + k));
+  if (ok && may !== 'new') return box;
+  if (!may) return null;
+  box.dataset.xv = run.id;
+  box.innerHTML = '<div id="xvHead"></div>' + run.items.map(k => `<div id="xv-${k}"></div>`).join('') + (run.ia ? '<div id="xv-ia"></div>' : '');
+  run.shown = {};
+  run.items.forEach(k => { if (run.got[k]) xvPut(k, run.got[k], false, run); });
+  return box;
+}
+/* 항목 하나를 그린다 — 판정(recordVfy)은 verifyReport · dcVerifyReport 가 적는다. 칸이 없으면(VR 자동진행이 칸을 쓰는 중)
+   판정만 적고, 화면·자동진행·DC 반영 버튼이 쓰는 값(vfyLast · dcLast)은 그대로 둔다. 한 항목이 터져도 나머지는 받는다 */
+function xvPut(k, v, fresh, run) {
+  const el = $('#xv-' + k), keepL = vfyLast, keepD = dcLast;
+  let html = '';
+  try { html = xvHtml(k, v, fresh); }
+  catch (e) {
+    html = `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>${XV_LBL[k]} 결과를 대조하지 못했습니다.</b><br>${esc(String((e && e.message) || e).slice(0, 200))}</div></div>`;
   }
-  vfyBusy = false; vfySet(null);
-  box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div>
-    <b>결과가 오지 않았습니다.</b> 폰에서 확인해 주세요 —
+  if (el) { el.innerHTML = html; el.dataset.t = String(num(v.t)); }
+  else { vfyLast = keepL; dcLast = keepD; }
+  if (run) run.shown[k] = 'got';
+  /* 좌수가 그대로인 DC 읽기는 다음 금액 계산의 기준으로 적는다(원장은 안 건드린다) — 예전 pollDc 와 같다 */
+  if (k === 'dc' && fresh && v.ok) try { dcTakeBaseline(v, dcAssetDiff(v)); } catch (e) { }
+}
+function xvHtml(k, v, fresh) {
+  if (k === 'dc') return dcVerifyReport(v);              // DC 검증은 미래에셋 잔고 — 결과 모양이 다르다 (2026-10-06)
+  const txt = String(v.text || ''), lbl = XV_LBL[k];
+  if (txt.startsWith('ERR')) {
+    recordVfy(k, num(v.t), -1, txt.replace(/^ERR\s*/, '').split(/\r?\n/)[0]);
+    return `<div class="warn" style="margin-top:9px"><span>◔</span><div>
+      <b>${lbl} 앱을 읽지 못했습니다.</b><br>${esc(txt.replace(/^ERR\s*/, ''))}</div></div>`;
+  }
+  /* 무매 검증 뒤 메리츠 MY자산 대조(수집기 4.12)는 **4.43 에서 뺐다** (사용자 2026-10-13: "MY자산 단계 빼기") —
+     보유·평단·외화·원화예수금은 메리츠 API 장부가 매일 대조한다. 그 화면으로 가는 길만 남긴다 */
+  return verifyReport(k, txt, num(v.t)) + (k === 'ib' && fresh ? '<p class="note" style="margin:9px 3px 0">보유수량·평단·외화·원화예수금 대조는 '
+    + '<a href="#api" style="color:var(--brass)">무매/VR › 공통 › 메리츠 장부 대조</a>가 맡습니다(메리츠 API, 매일).</p>' : '');
+}
+/* 기다리는 칸 — 제 차례인 칸에는 안내를, 몫이 지난 칸에는 '안 왔다' 를 적는다. 받은 칸은 건드리지 않는다 */
+function xvWaitTxt(k, el) {
+  const s = Math.round(el / 1000) + '초';
+  return k === 'dc' ? `DC — 폰에서 미래에셋 <b>국내주식 잔고</b>까지 갑니다. 로그인을 물으면 폰에서 직접 해 주세요… ${s}`
+    : `${XV_LBL[k]} — 폰에서 fire gate 앱이 뜨고 ${k === 'vr' ? 'VR ' : ''}표를 훑습니다… ${s}`;
+}
+function xvLateHtml(k, run) {
+  /* 수집기는 판을 다 마치고 이 화면을 열었다 — 기다릴 것이 없다. 올리기가 실패한 것이다(수집기도 '다 올리지 못했습니다' 를 띄운다) */
+  if (run.gone) return `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>${XV_LBL[k]} — 폰은 끝났는데 결과가 서버에 없습니다.</b>
+    수집기의 서버 연결을 확인해 주세요(수집기 앱이 서버에 로그인되어 있는지 · 폰의 데이터 연결).</div></div>`;
+  if (k === 'dc') return `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>DC 검증 결과가 오지 않았습니다.</b>
+    폰에서 확인해 주세요 — ① 수집기 앱이 ${run.m === 'old' ? '4.40' : '4.46'} 이상인지 ② 미래에셋이 열렸는지 ③ 국내주식 잔고 화면까지 갔는지.</div></div>`;
+  return `<div class="warn" style="margin-top:9px"><span>◔</span><div>
+    <b>${XV_LBL[k]} 결과가 오지 않았습니다.</b> 폰에서 확인해 주세요 —
     ① 수집기 앱의 <b>접근성 서비스</b>가 켜져 있는지
     ② 무매/VR 앱이 실제로 열렸는지
     ③ 수집기 앱이 서버에 로그인되어 있는지.
     <br>앱이 안 열렸다면 수집기 앱에서 대상 앱을 지정해 주세요.</div></div>`;
+}
+function xvDraw(run) {
+  if (xvRun !== run || !xvBox(run, xvMay(run))) return;
+  xvStates(run, run.end || Date.now()).forEach(s => {
+    const el = $('#xv-' + s.k); if (!el || s.st === 'done') return;
+    if (s.st === 'late') {                               // 몫이 지난 것과 '서버에 없음'(gone)은 글이 다르다 — 바뀌면 다시 쓴다
+      const lk = run.gone ? 'gone' : 'late';
+      if (run.shown[s.k] !== lk) { el.innerHTML = xvLateHtml(s.k, run); run.shown[s.k] = lk; }
+      return;
+    }
+    if (s.st === 'queue') { if (run.shown[s.k]) { el.innerHTML = ''; run.shown[s.k] = ''; } return; }
+    el.innerHTML = `<p class="note" style="margin:9px 3px 0">${xvWaitTxt(s.k, s.el)}</p>`; run.shown[s.k] = 'read';
+  });
+  xvHeadDraw();
+}
+/* 첫 줄 — 읽는 중: '무매 ✓ 양호 · VR 읽는 중 24초 · DC 차례 기다림 · 메리츠 장부 받는 중 40초'
+   끝: '외부검증 18:42 — 무매 ✓ 양호 · VR ⚠ 3건 · DC ✓ 양호 · 메리츠 18:44 새로 받음 ✓'. 메리츠는 이 판 뒤에 청한 것만 */
+function xvHeadDraw() {
+  const run = xvRun, box = $('#vfyOut'), el = $('#xvHead');
+  if (!run || !box || !el || box.dataset.xv !== run.id) return;
+  const api = apiSync.st && num(apiSync.t0) >= run.since ? esc(apiSyncSay()) : '';
+  if (!run.items.length) {
+    el.innerHTML = `<p class="note" style="margin:0"><b>메리츠 갱신</b> ${esc(vfyWhen(run.since))} — ${api || '요청하지 못했습니다'}
+      <br>폰 앱은 열지 않고 메리츠 장부(보유·외화/원화 예수금)만 새로 받습니다 — 체크를 켜면 폰 검증도 함께 합니다.</p>`;
+    return;
+  }
+  const vs = state.vfyStat || {};
+  const seg = xvStates(run, run.end || Date.now()).map(s => {
+    const L = XV_LBL[s.k], v = run.got[s.k], r = vs[s.k];
+    if (s.st === 'done') return `${L} ${r && num(r.t) === num(v.t) ? vfySay(r) : '받음'}`;
+    if (s.st === 'late') return `${L} <span class="bad">안 옴</span>`;
+    if (s.st === 'read') return `${L} 읽는 중 ${Math.round(s.el / 1000)}초`;
+    return `${L} 차례 기다림`;
+  });
+  if (api) seg.push(api);
+  /* 누른 시각 — 모르고 이어받았으면(다른 브라우저) 받은 결과의 run(외부검증) · t(옛 한 항목) 중 가장 이른 것 */
+  const t0 = run.known ? run.since
+    : Math.min(...Object.values(run.got).map(v => num(v.run) || num(v.t)).filter(t => t > 0), run.base);
+  const lead = run.end ? `<b>${run.m === 'old' ? '검증' : '외부검증'}</b> ${esc(vfyWhen(t0))} — ` : '';
+  const hint = !run.end && run.fresh && run.m === 'x'
+    ? '<br>폰에서 수집기가 고른 것을 차례로 읽습니다 — 다 읽으면 이 화면으로 돌아옵니다. 다시 누르면 처음부터 다시 합니다.' : '';
+  el.innerHTML = `<p class="note" style="margin:0">${lead}${seg.join(' · ')}${hint}</p>`;
+  /* 옛 수집기(#vfy=xold 뒤) — 한 항목을 읽으며 칸을 새로 지으면 버튼이 사라졌다. 첫 줄 아래에 다시 낸다(이미 있으면 그대로 — 누르는 중에 갈지 않는다) */
+  if (xvOld && run.m === 'old' && !box.querySelector('[data-vfy1]')) el.insertAdjacentHTML('afterend', xvOldBtns());
+}
+
+/* 기다린다 — 루프는 이것 하나다(외부검증 · 옛 한 항목 · 이어받기). 새 판이 시작되면(vfyGen) 앞 판은 물러난다 —
+   두 루프가 같은 화면에 결과를 쓰면 늦게 끝난 쪽이 이겨 버린다. 기다릴 때마다(await 뒤) 세대를 다시 본다.
+   fin — 폰은 이미 끝났다(수집기가 #vfy=x&run 으로 열었다): 두 번 받아 봐도 없는 항목은 몫을 기다리지 않고 '서버에 없음'(gone) */
+async function pollXv(items, since, resumed, m, known = true, fin = false) {
+  const gen = ++vfyGen;
+  vfyBusy = true;
+  if (!$('#vfyOut')) { vfyBusy = false; return; }
+  const prev = xvRun && xvRun.since === since && xvRun.m === m ? xvRun : null;
+  const run = xvRun = { id: `x${since}:${items.join(',')}`, since, base: Date.now(), items: items.slice(), m,
+    got: {}, at: {}, shown: {}, end: 0, fresh: !resumed, known, fin, asks: 0, gone: false };
+  /* 같은 판을 다시 이어받으면(부팅·hashchange·visibilitychange 가 겹친다) 이미 받은 것은 그대로 — 다시 그리지 않는다 */
+  if (prev) items.forEach(k => { if (prev.got[k]) { run.got[k] = prev.got[k]; run.at[k] = run.base; run.shown[k] = 'got'; } });
+  xvBox(run, resumed ? xvMay(run) : 'new');
+  for (let first = true; ; first = false) {
+    xvDraw(run);
+    if (!(first && resumed)) await xvNap(2000);
+    if (gen !== vfyGen) return;                        // 더 새 판이 시작됐다
+    /* 다른 브라우저로 열렸는데 거기는 로그인이 안 돼 있으면 아무리 기다려도 못 받는다. 몫을 헛되이 세지 말고 바로 말한다.
+       걸어 둔 흔적은 남긴다 — 로그인된 브라우저가 이어받는다 */
+    if (Date.now() - run.base >= 4000 && (!SB || !sbTok)) {
+      vfyBusy = false; run.end = Date.now();
+      const box = $('#vfyOut');
+      if (box) { box.dataset.xv = ''; box.innerHTML = VFY_NOSB; }
+      return;
+    }
+    const want = items.filter(k => !run.got[k]);
+    /* 끝은 **물은 때**로 판정한다 — 받은 것은 그때의 서버다. 물음이 뒤로 간 탭에서 얼어 있다 깨면(물은 뒤 몇 분) 그사이 올라온 것을
+       못 보고 '안 옴' 이 될 수 있었다 */
+    let asked = Date.now();
+    if (want.length && SB && sbTok) {
+      let rows = null;
+      asked = Date.now();
+      try { rows = await sbReq(`/rest/v1/meta?k=in.(${want.map(k => XV_META[k]).join(',')})&select=k,v`); } catch (e) { }
+      if (gen !== vfyGen) return;                      // 묻는 사이 더 새 판이 시작됐다
+      /* 못 물었다(끊김 · 12초 넘김 · 얼었다 깬 탭의 물음) — '아직 없음' 과 다르다. 끝을 판정하지 않고 다시 묻는다:
+         깬 뒤 한 번은 받아 보고 나서야 '안 옴' 이라 한다. 다만 XV_MAX 까지만 — 계속 끊겨 있으면 이 루프가 안 끝나 vfyBusy 가 영영 켜져 있게 된다 */
+      if (rows === null && Date.now() - run.base < XV_MAX) continue;
+      want.forEach(k => {
+        const r = (rows || []).find(x => x && x.k === XV_META[k]), v = r && r.v;
+        if (!xvFresh(run, v)) return;
+        xvBox(run, xvMay(run));                        // 칸이 갈렸으면 먼저 다시 짓는다(이미 받은 것은 다시 그린다)
+        run.got[k] = v; run.at[k] = Date.now();
+        xvPut(k, v, true, run);
+      });
+      /* 폰은 끝났다 — 두 번 받아 봐도(올린 직후 한 번 엇갈릴 몫) 없는 항목은 올리지 못한 것이다 */
+      if (rows !== null && run.fin && ++run.asks >= 2 && items.some(k => !run.got[k])) run.gone = true;
+    }
+    if (xvStates(run, asked).every(s => s.st === 'done' || s.st === 'late')) break;
+  }
+  run.end = Date.now();
+  vfyBusy = false;
+  const p = vfyPendingN(); if (p && p.t0 === since) vfySet(null);
+  xvDraw(run);
 }
 
 /* ===================== VR 자동진행 (2026-09-24, 수집기 4.31, 사용자 요청) =====================
@@ -4732,6 +5014,7 @@ async function pollVerify(what, t0, resumed) {
         **대조한 그 주문표**(줄·사이클)를 적는다. 하나라도 다르면 ok:false 와 까닭 — 수집기는 멈춘다(사용자 선택)
    새 사이클 주문표는 토요일에 이미 나온다 — vrRun 이 사이클 마지막 영업일 다음 날 넘긴다(vrTurn). */
 let vrAutoBusy = false;
+let vrAutoAt = 0;                                      // 마지막으로 시작한 때 — 외부검증 칸이 그 판의 글을 덮지 않게(xvMay)
 const vrAutoHash = () => { const m = (location.hash || '').match(/vrauto=(\d+)/); return m ? +m[1] : 0; };
 
 async function vrPutMeta(k, v) {
@@ -4752,7 +5035,7 @@ async function vrAutoStart(t0) {
   if (Date.now() - t0 > 30 * 60e3) return;             // 오래된 주소를 새로고침한 것
   if (num(lsGet(VRA_KEY)) === t0) return;              // 이 판은 이미 받았다(다른 길·다른 탭)
   try { localStorage.setItem(VRA_KEY, String(t0)); } catch (e) { }
-  vrAutoBusy = true;
+  vrAutoBusy = true; vrAutoAt = Date.now();
   try { await vrAutoFlow(t0); }
   catch (e) { await vrAutoStop(t0, '웹앱에서 오류가 났습니다: ' + e.message); }
   finally { vrAutoBusy = false; }
@@ -4919,12 +5202,22 @@ function vfyWhen(t) {
 }
 function renderVfyStat() {
   $$('.vfyS[data-vs]').forEach(b => {
+    /* 맨 앞 줄은 메리츠 장부(외부검증 2026-11-07) — 마지막 장부 시각과 대조 판정, 바로 받는 중이면 그 걸음 */
+    if (b.dataset.vs === 'api') {
+      let c = null;
+      try { c = apiSyncCell(); } catch (e) { c = { html: '메리츠 —', on: false, tip: '' }; }
+      b.innerHTML = c.html; b.disabled = !c.on; b.title = c.tip;
+      return;
+    }
     const s = vfyLine(b.dataset.vs);
     if (!s) { b.textContent = '아직 없음'; b.disabled = true; b.title = ''; return; }
     b.innerHTML = `${esc(vfyWhen(s.t))} ${vfySay(s)}`;
     b.disabled = false;
     b.title = new Date(num(s.t)).toLocaleString('ko-KR') + (s.why ? ' · ' + s.why : '');
   });
+  /* 외부검증 첫 줄(#xvHead)도 같은 판정(state.vfyStat)을 보인다 — DC 반영처럼 판정이 바뀌면 함께 고친다.
+     결과 칸이 지금 판을 들고 있을 때만 그린다(xvHeadDraw 가 스스로 거른다) */
+  try { xvHeadDraw(); } catch (e) { }
 }
 /* 서버의 마지막 읽기를 보고 아직 판정이 없는 것을 채운다 — 검증을 이 기기에서 안 봤어도(18:30 자동진행·다른 기기) 줄이 선다.
    **오늘 읽은 것만** 견준다. 지난 읽기는 시각만 적는다(판정 없음) */
@@ -4959,10 +5252,20 @@ async function refreshVfyStat() {
 }
 /* 줄을 누르면 그 검증의 자세한 내역 — 서버의 그 읽기를 다시 그린다. 지난 날 것이면 그때 판정을 위에 적는다 */
 async function showVfyDetail(k) {
+  if (k === 'api') { apiShowBook(); return; }               // 메리츠 줄 — 장부 대조 칸으로(결과 칸은 그대로)
+  /* 그 읽기가 이미 외부검증 칸에 떠 있으면(기다리는 중이든 끝났든) 그 칸으로 데려간다 — 칸을 갈면 함께 받은 다른 결과가 사라진다.
+     기다리는 중에 다른 읽기를 누르면 아무것도 안 한다(받던 것을 덮지 않는다) */
+  const part = $('#xv-' + k), line = vfyLine(k);
+  if (part && part.innerHTML.trim() && (vfyBusy || (line && num(part.dataset.t) === num(line.t)))) {
+    goTab('ib'); ibPick('all');
+    part.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    return;
+  }
   if (vfyBusy) return;
   const box = $('#vfyOut'); if (!box) return;
   goTab('ib'); ibPick('all');
   if (!SB || !sbTok) {
+    box.dataset.xv = '';
     box.innerHTML = '<div class="warn" style="margin-top:9px"><span>◔</span><div>서버에 연결되어 있어야 검증 내역을 받아 올 수 있습니다. 입력 탭에서 로그인해 주세요.</div></div>';
     return;
   }
@@ -4981,7 +5284,7 @@ async function showVfyDetail(k) {
     return `<p class="note" style="margin:9px 3px 0">${esc(new Date(num(t)).toLocaleString('ko-KR'))} 에 읽은 ${what}입니다${s && num(s.t) === num(t) && s.n != null ? ' — 그때 판정 ' + vfySay(s) : ''}.
       아래는 <b>지금 원장과 다시 견준 것</b>이라 그 뒤 체결·주문표가 바뀐 만큼 다르게 나올 수 있습니다.</p>`;
   };
-  box.innerHTML = '';
+  box.dataset.xv = ''; box.innerHTML = '';
   let any = false;
   if (k === 'dc') {
     const v = get('dcAsset');
@@ -5116,7 +5419,7 @@ function verifyReport(what, txt, at) {
       앱은 ±20%(SOXL·VR 30%) 밖의 줄까지 보여 주는데 그건 오늘 걸 주문이 아니라 판정에서 뺍니다.
       <br>보유수량·평단가가 먼저 어긋나면 주문줄은 따라 어긋납니다.
       자세한 줄별 차이는 아래 <b>앱과 대조</b> 에 붙여 보세요 —
-      <button class="ghost" id="vfyPaste" data-w="${what === 'vr' ? 'vr' : 'ib'}" data-t="${esc(btoa(unescape(encodeURIComponent(txt))))}"
+      <button class="ghost" data-vfypaste data-w="${what === 'vr' ? 'vr' : 'ib'}" data-t="${esc(btoa(unescape(encodeURIComponent(txt))))}"
         style="padding:3px 8px;font-size:11.5px">읽은 글자 넣기</button></p>
     </details>`;
 }
@@ -5943,10 +6246,15 @@ let dcvForce = false;            // 사람이 맞춘 직후 다시 그릴 때만
 function dcVerifyApply(kind) {
   const v = dcLast; if (!v) return;
   const d = dcAssetDiff(v);
+  /* DC 카드만 다시 그린다 — 카드가 없으면 외부검증의 DC 칸에(칸 전체를 갈면 함께 뜬 무매/VR 결과가 지워진다) */
   const redraw = () => {
-    const w = $('#dcvWrap'), box = $('#vfyOut');
+    const w = $('#dcvWrap'), part = $('#xv-dc'), box = $('#vfyOut');
     dcvForce = true;
-    try { if (w) w.outerHTML = dcVerifyReport(v); else if (box) box.innerHTML = dcVerifyReport(v); } finally { dcvForce = false; }
+    try {
+      if (w) w.outerHTML = dcVerifyReport(v);
+      else if (part) part.innerHTML = dcVerifyReport(v);
+      else if (box) { box.dataset.xv = ''; box.innerHTML = dcVerifyReport(v); }
+    } finally { dcvForce = false; }
   };
   /* DC 계좌 번호가 정말 바뀐 경우(이직·제도 이전) — 사람이 확인하고 새 번호로 다시 묶는다. 지난 기준(매입금액)은 다른 계좌 것이라 버린다 */
   if (kind === 'acct') {
@@ -5981,41 +6289,12 @@ function dcVerifyApply(kind) {
       : kind === 'div' ? `배당 ${fmt(amt, 0)}원 · 수익으로 잡힙니다` : '좌수만 맞췄습니다 · 원금 그대로');
 }
 
-/* DC 검증 결과를 기다린다 — 미래에셋 로그인(사람)이 끼므로 넉넉히 */
-async function pollDc(t0, resumed) {
-  const gen = ++vfyGen;
-  const box = $('#vfyOut'); if (!box) return;
-  vfyBusy = true;
-  const say = m => { box.innerHTML = `<p class="note" style="margin:9px 3px 0">${m}</p>`; };
-  say(resumed ? 'DC 검증 결과를 기다리는 중…'
-    : '미래에셋을 여는 중… 폰에서 <b>국내주식 잔고</b>까지 갑니다. 로그인을 물으면 직접 해 주세요.');
-  for (let i = 0; i < 120; i++) {                      // 최대 4분
-    await new Promise(r => setTimeout(r, 2000));
-    if (gen !== vfyGen) return;
-    /* 로그인 안 된 브라우저로 열렸으면 4분을 세지 말고 바로 말한다 — pollVerify 와 같다(검토) */
-    if (i >= 2 && (!SB || !sbTok)) {
-      vfyBusy = false;
-      box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div>
-        <b>이 브라우저는 서버에 연결되어 있지 않습니다.</b> 결과는 서버에 올라가 있으니
-        <b>검증을 실행한 브라우저</b>에서 무매/VR 탭을 열거나, 입력 탭에서 로그인해 주세요.</div></div>`;
-      return;
-    }
-    let rows = null;
-    try { rows = await sbReq('/rest/v1/meta?k=eq.dcAsset&select=v'); } catch (e) { }
-    const v = rows && rows[0] && rows[0].v;
-    if (v && num(v.t) > t0) {
-      vfyBusy = false; vfySet(null);
-      box.innerHTML = dcVerifyReport(v);
-      if (v.ok) dcTakeBaseline(v, dcAssetDiff(v));
-      return;
-    }
-    say(`미래에셋 잔고를 읽는 중… ${(i + 1) * 2}초 · 로그인을 물으면 폰에서 직접 해 주세요`);
-  }
-  vfyBusy = false; vfySet(null);
-  box.innerHTML = `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>DC 검증 결과가 오지 않았습니다.</b>
-    폰에서 확인해 주세요 — ① 수집기 앱이 4.40 이상인지 ② 미래에셋이 열렸는지 ③ 국내주식 잔고 화면까지 갔는지.</div></div>`;
-}
+/* DC 검증 결과를 기다리는 일(예전 pollDc — 미래에셋 로그인이 끼어 4분)은 외부검증의 pollXv 가 맡는다(DC 몫 XV_BUDGET.dc) */
 
+/* 외부검증 체크 — 다 끄면 버튼이 '메리츠 갱신' 으로 */
+document.getElementById('p-ib')?.addEventListener('change', e => {
+  if (e.target && e.target.closest && e.target.closest('[data-xv]')) renderXvPick();
+});
 document.getElementById('p-ib')?.addEventListener('click', e => {
   if (e.target.closest('[data-trailcopy]')) {
     const t = mtsAssetRaw || '';
@@ -6045,12 +6324,13 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
   }
   const vs = e.target.closest('.vfyS[data-vs]');
   if (vs) { if (!vs.disabled) showVfyDetail(vs.dataset.vs); return; }       // 버튼 아래 줄 — 그 검증의 자세한 내역
-  if (e.target.closest('#vfyIB')) { runVerify('ib'); return; }
-  if (e.target.closest('#vfyVR')) { runVerify('vr'); return; }
-  if (e.target.closest('#vfyDC')) { runVerify('dc'); return; }
+  if (e.target.closest('#vfyGo')) { runXv(); return; }                       // 외부검증 (2026-11-07)
+  const v1 = e.target.closest('[data-vfy1]');                                // 옛 수집기 — 하나씩(#vfy=xold 화면)
+  if (v1) { runVerify(v1.dataset.vfy1); return; }
   const dcb = e.target.closest('[data-dcv]');
   if (dcb) { dcVerifyApply(dcb.dataset.dcv); return; }
-  const pb = e.target.closest('#vfyPaste');
+  /* 읽은 글자 넣기 — 무매·VR 결과가 한 칸에 함께 뜨므로 id 가 아니라 표시(data-vfypaste)로 찾는다(같은 id 가 둘이 되면 안 된다) */
+  const pb = e.target.closest('[data-vfypaste]');
   if (pb) {
     try { guideText = decodeURIComponent(escape(atob(pb.dataset.t))); } catch (err) { guideText = ''; }
     /* VR 글자를 무매 자리에 붙이면 아홉 줄이 통째로 '앱에 없음' 으로 뜬다.
@@ -8004,11 +8284,13 @@ async function sbReq(path, opt = {}) {
   const c = SB; if (!c) throw new Error('no config');
   const h = Object.assign({ apikey: c.key, 'Content-Type': 'application/json' }, opt.headers || {});
   if (sbTok) h.Authorization = 'Bearer ' + sbTok.access_token;
-  let r = await fetch(c.url.replace(/\/$/, '') + path, { ...opt, headers: h, signal: withTimeout(12000) });
+  /* keepalive (2026-11-07) — 외부검증의 메리츠 장부 요청처럼 곧 폰 앱으로 넘어가는 클릭에서 부른다. 탭이 멈추거나 닫혀도
+     요청은 서버까지 간다(본문이 작은 것만 — 크롬 한도 64KB). fetch 는 이 함수의 첫 await 앞에서 불리므로 클릭 안에서 나간다 */
+  let r = await fetch(c.url.replace(/\/$/, '') + path, { ...opt, headers: h, signal: withTimeout(12000), keepalive: !!opt.keepalive });
   if (r.status === 401 && sbTok && sbTok.refresh_token) {           // 토큰 갱신 후 1회 재시도
     await sbRefresh();
     h.Authorization = 'Bearer ' + sbTok.access_token;
-    r = await fetch(c.url.replace(/\/$/, '') + path, { ...opt, headers: h, signal: withTimeout(12000) });
+    r = await fetch(c.url.replace(/\/$/, '') + path, { ...opt, headers: h, signal: withTimeout(12000), keepalive: !!opt.keepalive });
   }
   if (!r.ok) throw new Error(path + ' ' + r.status + ' ' + (await r.text()).slice(0, 160));
   /* 빈 본문을 JSON 으로 파싱하면 터진다.
@@ -8922,10 +9204,242 @@ async function apiFetch(force) {
   } catch (e) { API.err = String(e.message || e); API.errAt = API.errAt || Date.now(); API.busy = false; renderApiAlert(); return false; }
   API.busy = false;
   try { apiReconcile(); } catch (e) { API.rec = { err: String(e.message || e) }; }
+  /* 바로 받기가 '늦음' 으로 끝났는데(기다린 몫이 지났다) 그 뒤 평소 받기에서 두 장부가 기준 뒤로 새로 왔으면 받은 것으로 맺는다 —
+     예전엔 장부가 들어와도 '메리츠 늦음' 이 30분 남고 첫 줄은 '오지 않았습니다' 그대로였다(외부검증 검토) */
+  if (apiSync.st === 'late' && num(apiSync.thr) > 0 && API_ACCTS.every(a => num((API.m['apiBook' + a] || {}).u) > num(apiSync.thr))) apiSyncDone(apiSync.gen);
   renderApiAlert();
   if (UI.tab === 'ib' && UI.ib === 'all') renderIB();
   renderApiProfit();
   return true;
+}
+
+/* ── 메리츠 장부 바로 받기 (2026-11-07, 외부검증 · 사용자 요청) ──────────────────────────────────────
+   [외부검증]·[메리츠 갱신] 을 누르면 정시 일정과 상관없이 실행기 sync(조회만 — 주문 없음)를 띄운다. 서버 함수
+   trader_sync_now 가 원장 주인만 · sync · 두 계좌 · dry 로 고정해 GitHub 에 보낸다 — 웹은 아무 값도 못 넘긴다.
+   서버가 막는 때: 3분 안에 장부를 이미 띄웠다(sync_recent — 그 장부를 기다린다) · 판 앞뒤(run_recent·run_soon — 대기 중인 판을
+   밀어내지 않게. 판 끝에 장부가 오므로 판 시각(서버 at) 뒤의 장부를 기다린다) · 누락 점검 앞뒤(check_*) · 하루 상한(daily_cap).
+   함수가 아직 없으면(404 · PGRST202) '설정 전'. 자동매매가 꺼져 있으면(apiMode off — 실행기가 장부를 안 쓴다) 청하지 않는다.
+   왔는지는 장부 두 줄의 updated_at(서버 시각)만 10초마다 가볍게 본다 — 장부 본문은 크다. 둘 다 새로 오면 그때 apiFetch 로 받는다.
+   답을 못 받았으면(폰 앱으로 넘어가며 끊김) 화면에 돌아올 때 **서버의 깨우기 기록부터 본다**(apiSyncLook) — 서버는 3분 안의
+   두 번째만 sync_recent 로 돌려주므로, 3분 뒤에 그냥 다시 물으면 장부를 한 번 더 띄운다. 기록에 없을 때만 한 번 다시 묻는다.
+   걸음은 localStorage 에 적어 새로고침 뒤에도 잇는다 */
+function apiSyncKeep() { try { const { gen, ...v } = apiSync; localStorage.setItem(API_SYNC_KEY, JSON.stringify(v)); } catch (e) { } }
+/* 새 요청 — 세대를 바꾼다(앞 요청의 답·기다림은 스스로 물러난다) */
+function apiSyncSet(o) {
+  apiSync = Object.assign({}, o, { t: Date.now() });
+  apiSyncKeep(); renderVfyStat();                        // 외부검증 첫 줄도(renderVfyStat 끝의 xvHeadDraw)
+}
+/* 같은 요청의 다음 걸음 — 그사이 더 새 요청이 있었으면 버린다 */
+function apiSyncUpd(g, o) {
+  if (g !== apiSync.gen) return false;
+  Object.assign(apiSync, o, { t: Date.now() });
+  apiSyncKeep(); renderVfyStat();
+  return true;
+}
+const API_SYNC_RPC = '/rest/v1/rpc/trader_sync_now';
+function apiSyncNow(t0) {
+  const g = num(apiSync.gen) + 1;
+  if (!SB || !sbTok) return;
+  if (apiNextMode() === 'off') { apiSyncSet({ gen: g, t0, st: 'off' }); return; }
+  /* 요청이 **지금** 나간다(fetch 는 sbReq 의 첫 await 앞에서 불린다) — 곧 폰 앱으로 넘어가 이 탭이 멈춰도 keepalive 라 서버까지 간다 */
+  const p = sbReq(API_SYNC_RPC, { method: 'POST', body: '{}', keepalive: true });
+  apiSyncSet({ gen: g, t0, st: 'ask', asked: Date.now(), tries: 1 });
+  p.then(r => apiSyncAns(g, r), e => apiSyncFail(g, e));
+}
+/* 다시 묻기는 늘 화면이 앞에 있을 때다(apiSyncFail · apiSyncResume · apiSyncBoot) — keepalive 없이(첫 요청과 다른 길로) */
+function apiSyncRetry(g) {
+  if (g !== apiSync.gen || apiSync.st !== 'ask' || !SB || !sbTok) return;
+  const p = sbReq(API_SYNC_RPC, { method: 'POST', body: '{}' });
+  apiSyncUpd(g, { asked: Date.now(), tries: num(apiSync.tries) + 1 });
+  p.then(r => apiSyncAns(g, r), e => apiSyncFail(g, e));
+}
+/* 답 — 다시 물은 것과 첫 요청의 답이 둘 다 올 수 있다. 처음 온 것만 쓴다(st 가 ask 일 때만) */
+function apiSyncAns(g, r) {
+  if (g !== apiSync.gen || apiSync.st !== 'ask') return;
+  r = r && typeof r === 'object' && !Array.isArray(r) ? r : {};
+  const at = Date.parse(r.at) || 0, why = String(r.why || ''), wait = num(r.wait_s);
+  /* 받은 것의 기준 — 늘 서버 시각끼리 견준다(기기 시계와 섞지 않는다). 띄운 장부(queued · sync_recent)는 띄운 시각 뒤의 장부,
+     판 앞뒤(run_*)는 판 시각(at — 방금 돈 판을 띄운 때 · 곧 돌 판의 정시) 뒤의 장부 = 그 판 끝 장부. 판이 누르기 전에 이미
+     끝났으면 그 장부가 곧 답이다(예전엔 누른 때 뒤의 장부를 기다려 '늦음' 으로 끝났다). at 을 못 읽었을 때만 누른 때 */
+  if (r.ok && r.status === 'queued') return apiSyncGo(g, { st: 'wait', why: '', srv: at, thr: at || num(apiSync.t0), left: r.left });
+  if (r.status === 'busy' && why === 'sync_recent') return apiSyncGo(g, { st: 'wait', why, srv: at, thr: at || num(apiSync.t0), wait });
+  if (r.status === 'busy' && /^run_/.test(why)) return apiSyncGo(g, { st: 'run', why, srv: at, thr: at || num(apiSync.t0), wait });
+  if (r.status === 'busy') { apiSyncUpd(g, { st: 'busy', why, srv: at, wait }); return; }
+  apiSyncUpd(g, { st: 'bad', why: r.why === 'no_token' ? '서버에 GitHub 토큰이 없습니다(Vault gh_dispatch_token)'
+    : r.status === 'error' ? String(r.why || '서버 오류') : '서버 답을 읽지 못했습니다' });
+}
+function apiSyncGo(g, o) { if (apiSyncUpd(g, Object.assign(o, { w0: Date.now() }))) apiSyncWatch(g); }
+function apiSyncFail(g, e) {
+  if (g !== apiSync.gen || apiSync.st !== 'ask') return;
+  const m = String((e && e.message) || e || ''), code = (m.match(/trader_sync_now (\d{3})/) || [])[1];
+  if (code === '404' || /PGRST202|Could not find the function/.test(m)) { apiSyncUpd(g, { st: 'none' }); return; }
+  if (code) {
+    apiSyncUpd(g, { st: 'bad', why: code === '403' ? '원장 주인만 띄울 수 있습니다(HTTP 403)'
+      : code === '401' ? '로그인이 만료됐습니다 — 입력 탭에서 다시 로그인해 주세요' : `HTTP ${code} ${m.replace(/^\S+ \d{3}\s*/, '').slice(0, 80)}` });
+    return;
+  }
+  if (!sbTok) { apiSyncUpd(g, { st: 'bad', why: '로그인이 만료됐습니다 — 입력 탭에서 다시 로그인해 주세요' }); return; }
+  /* 답을 못 받았다(앱을 넘어가며 끊김 · 12초 넘김) — 요청은 서버에 갔을 수 있다. 화면이 뒤에 있으면 돌아올 때(apiSyncResume) 묻는다 */
+  if (document.hidden) return;
+  if (num(apiSync.tries) < 3) { setTimeout(() => apiSyncRetry(g), 3000); return; }
+  apiSyncUpd(g, { st: 'bad', why: '서버에 닿지 않았습니다' + (m ? ' — ' + m.slice(0, 80) : '') });
+}
+/* 화면에 돌아왔다(visibilitychange) — 답을 못 받은 요청이면 서버 기록부터 본다(apiSyncLook). 기다리는 루프는 xvWakeAll 이 깨운다 */
+function apiSyncResume() {
+  const s = apiSync;
+  if (s.st !== 'ask' || !SB || !sbTok) return;
+  if (Date.now() - num(s.asked) > 20e3) apiSyncLook(s.gen);
+}
+/* 답을 못 받은 요청 — 서버의 깨우기 기록(trader_dispatch_recent)에 누른 뒤의 웹 장부(websync) 줄이 있으면 그 요청은 서버에 갔다:
+   다시 묻지 않고 그 장부를 기다린다. 서버는 3분 안의 두 번째만 sync_recent 로 돌려주므로, 폰이 무매·VR·DC 를 다 읽고 돌아온 뒤(대개 3분 넘게)
+   그냥 다시 물으면 장부를 한 번 더 띄웠다(외부검증 검토). 기록에 없을 때만 한 번 다시 묻는다 — 그래도 답이 없으면 실패.
+   기록을 못 읽었으면(끊김) 그대로 두고 다음에 다시 본다 — 누른 지 6분이 넘었으면 그만둔다 */
+let apiSyncLooking = 0;
+async function apiSyncLook(g) {
+  if (g !== apiSync.gen || apiSync.st !== 'ask' || !SB || !sbTok || apiSyncLooking === g) return;
+  apiSyncLooking = g;
+  let d = null;
+  try { d = await sbReq('/rest/v1/rpc/trader_dispatch_recent', { method: 'POST', body: '{}' }); } catch (e) { }
+  apiSyncLooking = 0;
+  if (g !== apiSync.gen || apiSync.st !== 'ask') return;           // 그사이 첫 요청의 답이 왔다
+  const t0 = num(apiSync.t0);
+  if (!Array.isArray(d)) {
+    if (Date.now() - t0 > API_SYNC_MAX) apiSyncUpd(g, { st: 'bad', why: '서버에 닿지 않았습니다' });
+    return;
+  }
+  API.disp = d;
+  /* 기기 시계와 서버 시계가 조금 어긋나도 잡게 누른 때 2분 앞부터 */
+  const x = d.find(r => r && r.cmd === 'websync' && (Date.parse(r.at) || 0) >= t0 - 120e3);
+  if (x) { const at = Date.parse(x.at) || 0; apiSyncGo(g, { st: 'wait', why: '', srv: at, thr: at || t0 }); return; }
+  if (num(apiSync.tries) < 2) { apiSyncRetry(g); return; }
+  apiSyncUpd(g, { st: 'bad', why: '서버 답을 받지 못했습니다' });
+}
+/* 새로고침·새 창 — 적어 둔 걸음을 잇는다(30분 안의 것만 보인다) */
+function apiSyncBoot() {
+  if (!SB || !sbTok) return;                             // 로그인 전이면 묻지도 기다리지도 않는다 — 로그인 뒤 열 때 잇는다
+  let v = null;
+  try { v = JSON.parse(localStorage.getItem(API_SYNC_KEY) || 'null'); } catch (e) { }
+  if (!v || typeof v !== 'object' || !num(v.t0) || Date.now() - num(v.t0) > 30 * 60e3 || num(apiSync.t0) >= num(v.t0)) return;
+  const g = num(apiSync.gen) + 1;
+  apiSync = Object.assign({}, v, { gen: g });
+  if (v.st === 'wait' || v.st === 'run') apiSyncWatch(g);
+  else if (v.st === 'ask') { apiSync.asked = 0; apiSyncLook(g); }     // 다시 묻기 전에 서버 기록부터(두 번 띄우지 않게)
+  renderVfyStat();
+}
+async function apiSyncWatch(g) {
+  const s0 = apiSync, base = num(s0.w0 || s0.t0);
+  /* 판 앞뒤(run_*)는 그 판 끝 장부를 기다린다 — 판 시각(thr, 서버) + 12분까지 · 누른 때부터 20분 넘게는 안. 곧 돌 판은 10분 뒤일 수 있어
+     6분으로는 판이 시작도 하기 전에 '늦음' 이 됐다(외부검증 검토) */
+  const end = s0.st === 'run'
+    ? Math.min(num(s0.t0 || base) + API_RUN_MAX, Math.max(base + API_SYNC_MAX, num(s0.thr) + API_RUN_WAIT))
+    : base + API_SYNC_MAX;
+  let fresh = false, fails = 0;
+  for (let i = 0; ; i++) {
+    if (g !== apiSync.gen || !SB || !sbTok) return;   // 로그아웃했으면 그만(걸음은 적힌 채 — 다시 로그인하면 apiSyncBoot 가 잇는다)
+    if (!fresh) {
+      fresh = await apiSyncFresh();
+      if (g !== apiSync.gen) return;
+      /* GitHub 이 받지 않았으면(토큰 · 권한 · trade.yml 입력 — 422 등) 6분을 기다리지 말고 바로 말한다 */
+      if (!fresh && i % 3 === 1) {
+        const bad = await apiSyncDispBad();
+        if (g !== apiSync.gen) return;
+        if (bad) { apiSyncUpd(g, { st: 'bad', why: bad }); return; }
+      }
+    }
+    let nap = 10e3;
+    if (fresh) {
+      /* 다른 받기가 도는 중(API.busy)이라 못 받은 것만 2초 뒤 다시. 받기 자체가 실패했으면(끊김 · 12초 넘김 · 서버 오류) 10초 뒤,
+         세 번이면 그만둔다 — 장부 본문은 크다(예전엔 2초마다 6분 동안 통째로 다시 받았다, 외부검증 검토) */
+      const busy = API.busy;
+      let ok = false;
+      try { ok = await apiFetch(true); } catch (e) { ok = !API.err && API.at >= num(apiSync.w0); }   // 받은 뒤 그리다 터진 것이면 받기는 됐다
+      if (g !== apiSync.gen) return;
+      if (ok) { apiSyncDone(g); return; }
+      if (busy) nap = 2000;
+      else if (++fails >= 3) break;
+    }
+    if (Date.now() >= end) break;
+    renderVfyStat();                                    // 초 세기(끝의 xvHeadDraw 가 첫 줄도 고친다)
+    await xvNap(nap);
+  }
+  apiSyncUpd(g, fresh ? { st: 'bad', why: '장부는 새로 왔는데 받지 못했습니다' + (API.err ? ' — ' + API.err.slice(0, 80) : '') } : { st: 'late' });
+}
+/* 두 계좌 장부가 기준 뒤에 새로 써졌는가 — updated_at 만(서버가 찍는다). 실패한 sync 도 장부를 새로 쓴다(그때는 '일부') */
+async function apiSyncFresh() {
+  let rows = null;
+  try { rows = await sbReq(`/rest/v1/meta?k=in.(${API_ACCTS.map(a => 'apiBook' + a).join(',')})&select=k,updated_at`); } catch (e) { return false; }
+  const thr = num(apiSync.thr);
+  return API_ACCTS.every(a => {
+    const r = (rows || []).find(x => x && x.k === 'apiBook' + a);
+    return !!r && (Date.parse(r.updated_at) || 0) > thr;
+  });
+}
+/* 띄운 요청을 GitHub 이 받았나 — 정시 깨우기 기록(trader_dispatch_recent)의 websync 줄. 아직 답이 없으면 '' */
+async function apiSyncDispBad() {
+  if (apiSync.st !== 'wait' || !num(apiSync.srv)) return '';
+  let d = null;
+  try { d = await sbReq('/rest/v1/rpc/trader_dispatch_recent', { method: 'POST', body: '{}' }); } catch (e) { return ''; }
+  if (!Array.isArray(d)) return '';
+  API.disp = d;
+  const x = d.find(r => r && r.cmd === 'websync' && Math.abs((Date.parse(r.at) || 0) - num(apiSync.srv)) < 3000);
+  if (!x) return '';
+  if (x.status != null && x.status !== 204) return `GitHub 이 받지 않았습니다 — HTTP ${x.status}${x.err ? ' · ' + String(x.err).slice(0, 80) : ''}`;
+  if (x.status == null && x.err) return 'GitHub 에 보내지 못했습니다 — ' + String(x.err).slice(0, 80);
+  return '';
+}
+function apiSyncDone(g) {
+  const books = API_ACCTS.map(apiBook), sum = apiBookSum(API.rec);
+  /* 일부러 받은 장부는 '잠깐 끊김'(apiBookBlip — 경고를 아끼는 규칙)도 봐주지 않는다 — 못 받은 칸은 지난 값(stale)이라
+     이체 뒤 달러 같은 것이 그대로다. 그때 '새로 받음 ✓' 이라 하면 틀린 말이다(외부검증 검토) */
+  const part = books.some(b => !b || b.fatal || (b.errs || []).length || (b.stale || []).length);
+  apiSyncUpd(g, { st: part ? 'part' : 'got', book: Math.max(0, ...books.map(b => (b ? num(b.t) : 0))), n: sum ? sum.nBad : 0 });
+}
+/* 걸음을 말로 — 외부검증 첫 줄(#xvHead)과 '메리츠' 줄의 title. 서버 글이 섞이므로 그리는 쪽이 esc 한다 */
+function apiSyncSay() {
+  const s = apiSync, now = Date.now(), sec = Math.max(0, Math.round((now - num(s.w0 || s.t0)) / 1000));
+  const left = Math.max(1, Math.ceil((num(s.wait) - (now - num(s.t)) / 1000) / 60));
+  switch (s.st) {
+    case 'ask': return '메리츠 장부 요청 중';
+    case 'wait': return `메리츠 장부 받는 중 ${sec}초${s.why === 'sync_recent' ? '(방금 띄운 장부)' : ''} — 보통 2~4분`;
+    case 'run': return `메리츠 — 실행기 판이 ${s.why === 'run_soon' ? '곧 돕니다' : '방금 돌았습니다'}. 판 끝 장부를 기다리는 중 ${sec}초`;
+    case 'got': return `메리츠 ${vfyWhen(s.book)} 새로 받음${num(s.n) ? ` — 장부 대조 ${fmt(num(s.n), 0)}건 다름` : ' ✓'}`;
+    case 'part': return `메리츠 ${vfyWhen(s.book)} 받음 — 일부 조회를 못 받았습니다(장부 대조를 보세요)`;
+    case 'late': return /^run_/.test(s.why || '') ? '메리츠 — 판 끝 장부가 6분 안에 오지 않았습니다. 판이 끝나면 들어옵니다'
+      : '메리츠 장부가 6분 안에 오지 않았습니다 — 설정 › 정시 깨우기에서 웹 장부 결과를 보세요';
+    case 'busy': return s.why === 'daily_cap' ? `메리츠 — 오늘 웹에서 띄울 수 있는 장부를 다 썼습니다 · ${left}분 뒤 다시`
+      : `메리츠 — 누락 점검 판이 ${s.why === 'check_soon' ? '곧 돌아' : '방금 돌아'} 지금은 새로 띄우지 않습니다 · ${left}분 뒤 다시`;
+    case 'none': return '메리츠 — 바로 받기는 서버 설정 전입니다(trader_sync_now). 정시 장부는 그대로 옵니다';
+    case 'off': return '메리츠 — 자동매매가 꺼져 있어(off) 장부를 새로 받지 않습니다';
+    case 'bad': return '메리츠 갱신 실패 — ' + (s.why || '알 수 없음');
+  }
+  return '';
+}
+/* '메리츠' 줄 — 평소엔 마지막 장부 시각과 장부 대조 판정(✓ · ⚠ 다른 수), 바로 받는 중·끝난 지 30분 안이면 그 걸음 */
+function apiSyncCell() {
+  if (!SB || !sbTok) return { html: '아직 없음', on: false, tip: '' };
+  const s = apiSync, act = ['ask', 'wait', 'run'].includes(s.st), fin = !!s.st && !act && Date.now() - num(s.t) < 30 * 60e3;
+  const sum = API.rec && API.rec.accts ? apiBookSum(API.rec) : null;
+  const idle = sum ? `메리츠 ${esc(vfyWhen(sum.lastT))} ${sum.nBad ? `<span class="bad">⚠ ${fmt(sum.nBad, 0)}</span>` : '<span class="ok">✓</span>'}` : '';
+  let html = idle;
+  if (act) html = s.st === 'ask' ? '메리츠 요청 중' : s.st === 'run' ? '메리츠 판 뒤 대기' : '메리츠 받는 중';
+  else if (fin && s.st === 'part') html = `메리츠 ${esc(vfyWhen(s.book))} <span class="bad">일부</span>`;
+  else if (fin && s.st === 'got') html = idle || `메리츠 ${esc(vfyWhen(s.book))} 받음`;   // 대조를 못 했으면(API.rec 없음) 시각만
+  else if (fin) html = ({ late: '메리츠 <span class="bad">늦음</span>', busy: '메리츠 나중에', none: '메리츠 설정 전',
+    off: '메리츠 꺼짐', bad: '메리츠 <span class="bad">실패</span>' })[s.st] || idle;
+  if (!html) return { html: API.ok ? '메리츠 —' : '아직 없음', on: !!API.ok, tip: API.ok ? '메리츠 장부 대조 보기' : '' };
+  const tip = act || fin ? apiSyncSay()
+    : `메리츠 장부 ${new Date(sum.lastT).toLocaleString('ko-KR')} · ${sum.nBad ? fmt(sum.nBad, 0) + '건 다름' : '모두 같음'} — 누르면 장부 대조`;
+  return { html, on: true, tip };
+}
+/* '메리츠' 줄을 누르면 — 장부 대조 칸을 펴서 데려간다. 결과 칸(#vfyOut)은 건드리지 않는다 */
+function apiShowBook() {
+  goTab('ib');
+  if (UI.ib !== 'all') ibPick('all');
+  let d = document.querySelector('#ibBody details[data-sec="apiBook"]');
+  if (!d) { renderIB(); d = document.querySelector('#ibBody details[data-sec="apiBook"]'); }
+  if (d && !d.open) d.open = true;                       // toggle 이 펼침을 기억한다(secToggle)
+  const el = d || $('#ibBody');
+  if (el) el.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
 /* ── 원장 연결 ─────────────────────────────────────────────────────────── */
@@ -9554,8 +10068,10 @@ function apiMissedIB() {
 /* 정시 깨우기(Supabase pg_cron → GitHub)가 제대로 도는가 — 마지막 깨우기 실패(토큰 만료·권한 401/403/404) · 토큰 없음 ·
    토큰 만료 14일 전 · 26시간 넘게 깨운 적 없음(pg_cron 멈춤). 설정 전(함수 없음)이면 조용하다 */
 function apiDispatchWarn() {
-  const d = API.disp;
-  if (!Array.isArray(d) || !d.length) return null;
+  /* 웹이 띄운 장부(websync — 외부검증 2026-11-07)는 정시 깨우기가 아니다. 그 줄로 'pg_cron 이 살아 있다' 고 보거나
+     그 줄의 실패를 '정시 깨우기 실패' 라고 하지 않는다(그 결과는 외부검증의 '메리츠' 줄이 말한다) */
+  const d = Array.isArray(API.disp) ? API.disp.filter(x => x && x.cmd !== 'websync') : null;
+  if (!d || !d.length) return null;
   const last = d[0], t = Date.parse(last.at) || 0;
   if (last.err === 'no token') return { key: 'disp', t, lv: 'bad', title: '정시 깨우기 토큰이 없습니다', body: 'Supabase Vault 에 gh_dispatch_token 을 넣어 주세요(supabase/dispatch.sql 1)' };
   if (last.status != null && last.status !== 204)
@@ -9955,6 +10471,24 @@ function apiLogRows(acct) {
       + esc([e.stopped, cnt, (e.bad || []).join(' · '), healed ? '다음 판에서 정상으로 읽음(잠깐 끊김)' : ''].filter(Boolean).join(' — ').slice(0, 260)) + `</td></tr>`;
   }).join('') + '</table></div>';
 }
+/* 장부 대조에서 '다른 것' 의 수 — 장부 대조 칸의 요약·펼침과 외부검증 '메리츠' 줄이 같은 수를 쓴다(2026-11-07 apiBookCard 에서 떼어 냄).
+   '장부 뒤 원장이 움직여' 미룬 것(late)은 세지 않는다. 장부가 하나도 없으면 null */
+function apiBookSum(rec) {
+  if (!rec || !rec.accts) return null;
+  const books = API_ACCTS.map(apiBook);
+  if (!books.some(Boolean)) return null;
+  const holds = API_ACCTS.flatMap(a => ((rec.accts[a] || {}).hold || []));
+  const c = rec.cash, k = rec.krw || {};
+  const gs = API_ACCTS.flatMap(a => ((rec.accts[a] || {}).groups || []));
+  const okN = gs.filter(g => !g.extra.length && !g.missing.length && !(g.hold || []).length).length;
+  const txMiss = r => !r.booked && API_TX_PUT.includes(r.x.kind) && r.x.d >= API_TX_FROM;
+  const nHold = holds.filter(h => !h.late && !(h.ok && h.avgOk)).length;
+  const nCash = (c && !c.late && Math.abs(c.diff) > USD_EPS ? 1 : 0) + (k.them != null && !k.late && Math.abs(k.diff) > KRW_EPS ? 1 : 0);
+  const nFill = gs.length - okN, nTx = (rec.txs || []).filter(txMiss).length;
+  const nErr = books.reduce((s, b) => s + (apiBookBlip(b) ? 0 : ((b && b.errs) || []).length), 0);
+  return { nHold, nCash, nFill, nTx, nErr, nBad: nHold + nCash + nFill + nTx + nErr,
+    lastT: Math.max(...books.filter(Boolean).map(b => num(b.t))) };
+}
 /* 메리츠 장부 대조 — 다 같으면 접어 두고 한 줄('모두 같음')만, 다른 것이 있으면 펴 둔다 */
 function apiBookCard() {
   const rec = API.rec || apiReconcile();
@@ -9999,13 +10533,8 @@ function apiBookCard() {
       <span class="u">${esc(r.x.name)}${r.x.sym ? ' ' + esc(r.x.sym) : ''}</span></td>
       <td class="num">${(v => (v >= 0 ? '+' : '−') + '$' + fmt(Math.abs(v), 2))(API_TX_PUT.includes(r.x.kind) ? num(r.x.usd) : (r.x.io === '2' ? -1 : 1) * num(r.x.amt))}${num(r.x.tax) ? `<span class="u"> 세 $${fmt(num(r.x.tax), 2)}</span>` : ''}</td>
       <td style="color:${r.booked ? 'var(--c2)' : txMiss(r) ? 'var(--up)' : 'var(--muted)'}">${r.booked ? (r.now ? '넣음' : '원장 ✓') : r.x.d < API_TX_FROM ? '연결 앞' : API_TX_PUT.includes(r.x.kind) ? '못 넣음' : '손으로'}</td></tr>`).join('');
-  /* 다른 것 — 이것이 있으면 펴 둔다. '장부 뒤 원장이 움직여' 미룬 것(late)은 세지 않는다 */
-  const nHold = holds.filter(h => !h.late && !(h.ok && h.avgOk)).length;
-  const nCash = (c && !c.late && Math.abs(c.diff) > USD_EPS ? 1 : 0) + (k.them != null && !k.late && Math.abs(k.diff) > KRW_EPS ? 1 : 0);
-  const nFill = gs.length - okN, nTx = (rec.txs || []).filter(txMiss).length;
-  const nErr = books.reduce((s, b) => s + (apiBookBlip(b) ? 0 : ((b && b.errs) || []).length), 0);
-  const nBad = nHold + nCash + nFill + nTx + nErr;
-  const lastT = Math.max(...books.filter(Boolean).map(b => num(b.t)));
+  /* 다른 것 — 이것이 있으면 펴 둔다(세는 법은 apiBookSum — 외부검증 '메리츠' 줄과 같은 수) */
+  const { nHold, nCash, nFill, nTx, nErr, nBad, lastT } = apiBookSum(rec);
   const sum = nBad ? `<b style="color:var(--up)">${[nHold + nCash ? `잔고 ${nHold + nCash}` : '', nFill ? `체결 ${nFill}` : '', nTx ? `입출금 ${nTx}` : '', nErr ? `못 받은 조회 ${nErr}` : ''].filter(Boolean).join(' · ')} 다름</b>`
     : `모두 같음 · ${apiHM(lastT)}`;
   const inner = `<div class="card rows">
@@ -10119,15 +10648,21 @@ function apiPushCard() {
   return { html, sum: fail && num(fail.t) > Date.now() - 864e5 && !col.ok ? '<b style="color:var(--up)">알림 실패</b> · ' + sum : sum };
 }
 function apiDispatchCard() {
-  const d = API.disp;
-  if (d === undefined) return { html: '<p class="note" style="margin:0 3px">아직 받지 못했습니다</p>', sum: '' };
-  if (d === null) return { html: `<div class="card pad"><p class="note" style="margin:0">Supabase 가 정시에 실행기를 깨우게 하려면 supabase/dispatch.sql 을 SQL 편집기에서 실행해 주세요. 그전에는 GitHub 예약 실행만 씁니다(늦거나 빠질 수 있음).</p></div>`, sum: '설정 전' };
-  const ex = d.map(x => String(x.expires || '')).find(Boolean);
+  const all = API.disp;
+  if (all === undefined) return { html: '<p class="note" style="margin:0 3px">아직 받지 못했습니다</p>', sum: '' };
+  if (all === null) return { html: `<div class="card pad"><p class="note" style="margin:0">Supabase 가 정시에 실행기를 깨우게 하려면 supabase/dispatch.sql 을 SQL 편집기에서 실행해 주세요. 그전에는 GitHub 예약 실행만 씁니다(늦거나 빠질 수 있음).</p></div>`, sum: '설정 전' };
+  /* 웹이 띄운 장부(websync — 외부검증)는 따로 한 줄 — 정시 깨우기의 표·요약에는 넣지 않는다(apiDispatchWarn 과 같다). 토큰은 같아 만료일은 함께 본다 */
+  const d = all.filter(x => x && x.cmd !== 'websync'), web = all.find(x => x && x.cmd === 'websync');
+  const ex = all.map(x => String((x && x.expires) || '')).find(Boolean);
   const res = x => x.status === 204 ? '띄움' : x.status != null ? 'HTTP ' + x.status : x.err ? String(x.err).slice(0, 40) : '응답 지남';
+  const resC = x => x.status === 204 ? 'var(--c2)' : x.status == null && !x.err ? 'var(--muted)' : 'var(--up)';
   const rows = d.slice(0, 6).map(x => `<tr><td class="num">${esc(apiHM(Date.parse(x.at)))}</td><td>${esc(x.cmd)}</td>
-    <td style="color:${x.status === 204 ? 'var(--c2)' : x.status == null && !x.err ? 'var(--muted)' : 'var(--up)'}">${esc(res(x))}</td></tr>`).join('');
+    <td style="color:${resC(x)}">${esc(res(x))}</td></tr>`).join('');
+  const webRow = web ? `<p class="note" style="margin:6px 0 0">웹에서 띄운 장부(외부검증·메리츠 갱신) 마지막 ${esc(apiHM(Date.parse(web.at)))}
+      <span style="color:${resC(web)};font-weight:600">${esc(res(web))}</span>${web.status != null && web.status !== 204 && web.err ? ` <span class="u">${esc(String(web.err).slice(0, 120))}</span>` : ''}</p>` : '';
   const html = `<div class="card pad">
     ${rows ? `<div class="scroll"><table class="tbl"><tr><th>시각</th><th>할 일</th><th>결과</th></tr>${rows}</table></div>` : '<p class="note" style="margin:0">아직 깨운 적이 없습니다</p>'}
+    ${webRow}
     <p class="note" style="margin:6px 0 0">Supabase(pg_cron)가 GitHub 실행기를 정시에 깨웁니다${ex ? ` · 토큰 만료 ${esc(ex.slice(0, 10))}` : ''}.
       무매 18:35·19:35·20:35 · 장부 06:15·07:15·12:15 · 누락 점검 21:50 · VR 주말. GitHub 예약 실행은 예비로 함께 돕니다(같은 판이 두 번 와도 중복 주문은 없습니다).</p></div>`;
   const l = d[0];
@@ -10212,6 +10747,9 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
     const sw = document.getElementById('sbWrap'); if (sw) sw.style.display = 'none';
   }
   renderSpanSeg(); renderAll();
+  /* 외부검증 체크는 저장하지 않는다 — 열 때마다 셋 다 켠다(브라우저가 지난 체크를 되살려도) (2026-11-07, 사용자 결정) */
+  $$('#ibCommon input[data-xv]').forEach(c => { c.checked = true; });
+  renderXvPick();
   initSupabase().then(ok => ok || initCloud()).then(() => {
     /* 여기까지 와야 '연결 안 됨' 이 사실이다. 그 전의 화면은 아직 모르는 상태였다 */
     sbReady = true; renderInput();
@@ -10219,6 +10757,7 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
     /* 폰이 검증을 마치고 `#vfy=ib` 를 붙여 돌려보냈으면 여기서 받는다.
        서버에 붙은 뒤라야 결과를 읽을 수 있어 이 자리다. 새 탭으로 열렸어도
        무매/VR 탭으로 옮겨 결과를 띄운다. */
+    apiSyncBoot();                                     // 메리츠 장부 바로 받기 — 새로고침 전에 청해 둔 것을 잇는다(외부검증 · 이어받는 첫 줄이 쓰므로 먼저)
     resumeVerify(true);
     refreshVfyStat();                                  // 검증 버튼 아래 줄 — 다른 기기·18:30 자동진행이 읽은 것도
     /* 수집기가 VR 자동진행으로 열었으면(#vrauto=…) 여기서 받는다 — 서버에 붙은 뒤라야 반영·업로드가 된다 */
@@ -10238,6 +10777,8 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
     /* 검증을 걸어 두고 폰에서 앱을 다녀왔다면, 돌아온 이 순간이 결과를 받을 때다.
        어느 탭에 있든 받는다 — 새 탭으로 열렸으면 종합 탭에서 시작한다. */
     resumeVerify(true);
+    /* 외부검증 — 기다리던 루프를 바로 깨우고(뒤에 있는 동안 타이머가 늦춰졌다), 답을 못 받은 메리츠 요청은 다시 묻는다 */
+    xvWakeAll(); apiSyncResume();
     /* 수집기가 VR 자동진행으로 이 창을 앞으로 불렀을 수 있다(수집기 4.33) — 주소가 안 바뀌었어도 서버 요청을 본다 */
     if (sbReady) vrAutoResume();
   });
