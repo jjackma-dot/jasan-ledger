@@ -112,14 +112,14 @@ main{padding:0 16px}
 /* 종합 맨 위 줄 — '현 자산 ● / 예측 자산 / ±x.x%' (2026-11-17). 분석 탭 큰 숫자(#plVal)는 그대로 두려고 #p-sum 안에만 건다.
    폭이 모자라면 오른쪽 덩어리(.hx)가 통째로 다음 줄 오른쪽으로 내려간다 — 줄바꿈이 없으면 폰 폭에서 카드를 넘어 가로 스크롤이 생긴다.
    점: live 초록(--c2) · stale 노랑(--brass, 입력 탭 '임시' 표와 같은 색) · none 회색 테두리 */
-#p-sum .hero .big{flex-wrap:wrap;row-gap:2px}
+#p-sum .hero .big,#p-ana .hero .big{flex-wrap:wrap;row-gap:2px}
 #p-sum .ldot{flex:none;align-self:center;width:9px;height:9px;margin:0 2px;border-radius:50%;border:1.5px solid var(--line2);background:transparent}
 #p-sum .ldot[data-st="live"]{background:var(--c2);border-color:var(--c2)}
 #p-sum .ldot[data-st="stale"]{background:var(--brass);border-color:var(--brass)}
-#p-sum .hx{margin-left:auto;display:inline-flex;align-items:baseline;gap:5px;font-size:15px;font-weight:500;letter-spacing:0;color:var(--muted);white-space:nowrap}
-#p-sum .hx[hidden]{display:none}
-#p-sum .hx #heroEst{color:var(--ink2)}
-#p-sum .hx .be{font-weight:600}
+#p-sum .hx,#p-ana .hx{margin-left:auto;display:inline-flex;align-items:baseline;gap:5px;font-size:15px;font-weight:500;letter-spacing:0;color:var(--muted);white-space:nowrap}
+#p-sum .hx[hidden],#p-ana .hx[hidden]{display:none}
+#p-sum .hx .est,#p-ana .hx .est{color:var(--ink2)}
+#p-sum .hx .be,#p-ana .hx .be{font-weight:600}
 
 /* chart */
 .chartwrap{position:relative;margin:2px -4px 0;touch-action:pan-y}
@@ -477,7 +477,7 @@ details.apir>.apib{padding:0 15px 12px 31px}
 
       <div class="card hero" style="margin-top:12px">
         <div class="lbl" id="plLbl">금융손익</div>
-        <div class="big num"><span id="plVal">—</span><span class="unit">만원</span></div>
+        <div class="big num"><span id="plVal">—</span><span class="unit">만원</span><span id="plX" class="hx" hidden></span></div>
         <div id="plRate" class="delta fl">—</div>
         <div class="note" style="margin-top:8px" id="plNote">손익기준 시트의 항목별 매입금액 대비 현재 평가액. 부동산은 여기 포함하지 않습니다.</div>
       </div>
@@ -830,7 +830,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-11-17 10:12';
+const BUILD = '2026-11-17 10:35';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1458,7 +1458,13 @@ function renderHero(x = latest()) {
   /* 예측이 서면 손익분기도 예측 값에서 잰다 — 원금까지의 거리를 지금 선물 기준으로 맞춘다 */
   const ep = estPx(x, sc), xe = ep ? { ...x, px: { ...x.px, ...ep.px } } : x, ce = ep ? calc(xe) : c;
   const be = heroBe(pBasis(ce, sc), beLegs(xe, ce, all), !!ep);
-  const hx = $('#heroX'); if (!hx) return;
+  fillHx($('#heroX'), ep && { id: 'heroEst', txt: HIDE ? MASK : fmt(ce[sc], 0), tip: estTip(ep, '예측 자산') }, be, 'heroBe');
+}
+const estTip = (ep, what) => `${what} — ${ep.keys.map(k => EST_N[k]).join('·')} 를 ${hhmm(ep.ref)} 종가에서 나스닥100 선물 ${pctS(ep.i)} · 환율 ${pctS(ep.f)} 만큼 옮긴 값`
+  + ` (선물 ${hhmm(ep.nqT)} 기준 · 약 10분 지연 · 원장에는 안 씀)`;
+/* 오른쪽 덩어리 '/ 예측 / ±x.x%' — 종합 맨 위 줄과 분석 탭 큰 숫자가 같이 쓴다 */
+function fillHx(hx, est, be, beId) {
+  if (!hx) return;
   hx.textContent = '';
   const part = (id, txt, tip, cls) => {
     const sl = document.createElement('span'); sl.className = 'sl'; sl.textContent = '/'; hx.appendChild(sl);
@@ -1466,10 +1472,8 @@ function renderHero(x = latest()) {
     if (cls) el.className = cls;
     hx.appendChild(el);
   };
-  if (ep) part('heroEst', HIDE ? MASK : fmt(ce[sc], 0),
-    `예측 자산 — ${ep.keys.map(k => EST_N[k]).join('·')} 를 ${hhmm(ep.ref)} 종가에서 나스닥100 선물 ${pctS(ep.i)} · 환율 ${pctS(ep.f)} 만큼 옮긴 값`
-    + ` (선물 ${hhmm(ep.nqT)} 기준 · 약 10분 지연 · 원장에는 안 씀)`);
-  if (be) part('heroBe', be.txt, be.tip, 'be ' + be.cls);
+  if (est) part(est.id, est.txt, est.tip, 'est');
+  if (be) part(beId, be.txt, be.tip, 'be ' + be.cls);
   hx.hidden = !hx.childNodes.length;
 }
 
@@ -1671,6 +1675,13 @@ function renderAnalysis() {
   $('#plVal').textContent = eok(y1);
   $('#plLbl').textContent = (total ? '누적수익 · 전체' : '누적수익 · 자산') + ' — ' + CUM_FROM;
 
+  /* 오른쪽 — '/ 예측 누적수익 / ±x.x%' (2026-11-17, 사용자 요청: 분석 탭에도). 종합 맨 위 줄과 같은 예측(estPx)·손익분기(heroBe) —
+     예측 누적수익은 국장 마감 뒤 국내 ETF 를 예측 시세로 바꾼 평가액 − 같은 원금. 화면 전용 */
+  {
+    const ep = estPx(x, UI.ana), xe = ep ? { ...x, px: { ...x.px, ...ep.px } } : x, ce = ep ? calc(xe) : c, bb = pBasis(ce, UI.ana);
+    fillHx($('#plX'), ep && { id: 'plEst', txt: eok(bb.val - bb.denom), tip: estTip(ep, '예측 누적수익') },
+      heroBe(bb, beLegs(xe, ce, UI.ana !== 'asset'), !!ep), 'plBe');
+  }
   const pr = $('#plRate');
   pr.className = 'delta ' + (y1 > 0.5 ? 'up' : y1 < -0.5 ? 'dn' : 'fl');
   pr.innerHTML = `<span>기준원금 ${fmt(denom, 0)}만원 대비</span>`
