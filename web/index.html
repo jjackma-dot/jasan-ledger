@@ -109,6 +109,17 @@ main{padding:0 16px}
 .up{color:var(--up)} .dn{color:var(--down)} .fl{color:var(--muted)}
 .up .pill{background:color-mix(in srgb,var(--up) 12%,transparent)}
 .dn .pill{background:color-mix(in srgb,var(--down) 12%,transparent)}
+/* 종합 맨 위 줄 — '현 자산 ● / 예측 자산 / ±x.x%' (2026-11-17). 분석 탭 큰 숫자(#plVal)는 그대로 두려고 #p-sum 안에만 건다.
+   폭이 모자라면 오른쪽 덩어리(.hx)가 통째로 다음 줄 오른쪽으로 내려간다 — 줄바꿈이 없으면 폰 폭에서 카드를 넘어 가로 스크롤이 생긴다.
+   점: live 초록(--c2) · stale 노랑(--brass, 입력 탭 '임시' 표와 같은 색) · none 회색 테두리 */
+#p-sum .hero .big{flex-wrap:wrap;row-gap:2px}
+#p-sum .ldot{flex:none;align-self:center;width:9px;height:9px;margin:0 2px;border-radius:50%;border:1.5px solid var(--line2);background:transparent}
+#p-sum .ldot[data-st="live"]{background:var(--c2);border-color:var(--c2)}
+#p-sum .ldot[data-st="stale"]{background:var(--brass);border-color:var(--brass)}
+#p-sum .hx{margin-left:auto;display:inline-flex;align-items:baseline;gap:5px;font-size:15px;font-weight:500;letter-spacing:0;color:var(--muted);white-space:nowrap}
+#p-sum .hx[hidden]{display:none}
+#p-sum .hx #heroEst{color:var(--ink2)}
+#p-sum .hx .be{font-weight:600}
 
 /* chart */
 .chartwrap{position:relative;margin:2px -4px 0;touch-action:pan-y}
@@ -431,7 +442,8 @@ details.apir>.apib{padding:0 15px 12px 31px}
 
       <div class="card hero" style="margin-top:12px">
         <div class="lbl" id="heroLbl">전체 자산</div>
-        <div class="big num"><span id="heroVal">—</span><span class="unit">만원</span></div>
+        <!-- 현 자산 · 실시간 점 · '/ 예측 자산 / 손익분기 %' (2026-11-17) — 점·예측·% 는 화면 전용, 원장에 안 쓴다(part3.js renderHero) -->
+        <div class="big num"><span id="heroVal">—</span><span class="unit">만원</span><i id="heroLive" class="ldot" data-st="none" role="img" aria-label=""></i><span id="heroX" class="hx" hidden></span></div>
         <div id="heroDelta" class="delta fl">—</div>
         <div class="chartwrap" id="cw-sum">
           <svg class="chart" id="ch-sum" viewBox="0 0 340 330" aria-label="항목별 누적 자산 추이"></svg>
@@ -818,7 +830,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-11-09 10:52';
+const BUILD = '2026-11-17 10:12';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1295,6 +1307,7 @@ function renderSummary() {
   /* 금액 가리기 — 세 범위 모두 가린다(2026-10-02 사용자 지정 — 그전엔 금융은 그대로 뒀다) */
   const hideTot = HIDE;
   $('#heroVal').textContent = hideTot ? MASK : fmt(c[UI.scope], 0);   // 만원 그대로 — '10억 2,858' 대신 '102,858' (2026-10-21 사용자)
+  renderHero(x);                                                       // 그 오른쪽 — 실시간 점 · 예측 자산 · 손익분기 %
   const dv = pc ? c[UI.scope] - pc[UI.scope] : null;
   const de = $('#heroDelta');
   if (dv == null) { de.className = 'delta fl'; de.textContent = '비교할 이전 기록 없음'; }
@@ -1348,6 +1361,116 @@ function renderSummary() {
     });
   });
   $('#itemRows').innerHTML = html;
+}
+
+/* ── 맨 위 줄 오른쪽 — '현 자산 ● / 예측 자산 / ±x.x%' (2026-11-17, 사용자 요청) ───────────────────────────
+   예측이 없으면 '현 자산 ● / ±x.x%'. 셋 다 **화면 전용**이다 — 원장(px·pxs·pxt)·동기화 상태에는 아무것도 안 쓴다.
+   까닭은 툴팁(title·aria-label)이 말한다. 금액 가리기는 예측 금액을 가리고 %는 둔다(비율이라 금액이 안 나온다). */
+const hhmm = t => { const d = new Date(t); return pad2(d.getHours()) + ':' + pad2(d.getMinutes()); };
+const LIVE_MS = 10 * 60e3, COL_MS = 20 * 60e3;
+/* 점이 볼 자리 — 이 범위에서 **실제로 들고 있는 것**의 시세만. 환율은 달러 자산(미국 주식·외화예수금·자녀 QLD)이 있을 때 */
+function heroKeys(x, scope) {
+  const all = scope !== 'asset', ks = [], tq = num(x.mm.T.q) + num(x.vr.T.q), sq = num(x.mm.S.q);
+  const kq = Object.values(x.kid || {}).reduce((a, b) => a + num(b), 0);
+  if (tq > 0) ks.push('T');
+  if (sq > 0) ks.push('S');
+  if (num(x.isa.q) > 0) ks.push('LEV');
+  if (all && kq > 0) ks.push('QLD');
+  if (all) DC_KEYS.forEach(k => { if (num((x.dc || {})[k]) > 0) ks.push(k); });
+  if (tq > 0 || sq > 0 || num(x.usd) !== 0 || (all && kq > 0)) ks.push('FX');
+  return ks;
+}
+/* 점 — 맨 위 금액에 쓰인 시세가 지금 막 받은 것인가.
+   live  서버 연결 · 원장 마지막 날이 오늘 · 볼 자리가 전부 자동(auto)이고 10분 안에 이 화면이 받은 값 · 환율은 하루 한 번
+         갱신되는 환율 사이트 값이 아님 · 수집앱 값은 그 줄이 20분 안의 것
+   stale 연결됐는데 하나라도 아니다 — 무엇이 왜 아닌지 툴팁에 적는다
+   none  연결 안 됨 · 이 화면에서 아직 받은 시세가 없음 · 이 범위에 시세가 필요한 보유가 없음 */
+function heroLive(x, scope) {
+  if (!SB || !sbTok) return { st: 'none', tip: '서버에 연결되어 있지 않아 실시간 시세인지 알 수 없습니다' };
+  const ks = heroKeys(x, scope);
+  if (!ks.length) return { st: 'none', tip: '이 범위에는 시세가 필요한 보유 종목이 없습니다' };
+  if (!quoteAt) return { st: 'none', tip: '아직 이 화면에서 받은 시세가 없습니다' + (quoteTry ? ` (${hhmm(quoteTry)} 조회 실패)` : '') };
+  const now = Date.now(), bad = [], lk = latestKey();
+  if (lk !== iso(new Date()) && lk !== kstDay(now)) bad.push('원장 마지막 날이 오늘이 아님');
+  ks.forEach(k => {
+    const s = (x.pxs || {})[k], t = num((x.pxt || {})[k]), src = pxSrc[k];
+    const why = s === 'manual' ? '수동 입력'
+      : s !== 'auto' ? '임시(전일 값)'
+      : now - t > LIVE_MS ? (t ? `${hhmm(t)}에 받은 값` : '받은 시각 모름')
+      : !src || src.t !== t ? '이 화면에서 받은 값이 아님'
+      : k === 'FX' && src.p === '환율' ? '하루 한 번 갱신되는 환율'
+      : src.p === '수집앱' && now - src.at > COL_MS ? `수집앱 ${src.at ? hhmm(src.at) : '시각 모름'} 값` : '';
+    if (why) bad.push(PX_NAME[k] + ' ' + why);
+  });
+  const when = '마지막 조회 ' + hhmm(quoteAt) + (quoteTry > quoteAt ? ` · ${hhmm(quoteTry)} 조회는 실패` : '');
+  return bad.length
+    ? { st: 'stale', tip: `실시간 아님 — ${bad.join(', ')} · ${when}` }
+    : { st: 'live', tip: `실시간 시세 — ${ks.map(k => PX_NAME[k]).join(' · ')} · ${when}` };
+}
+/* 손익분기 — QQQ 가 몇 % 움직이면 분석 탭 누적수익이 0 이 되나 (2026-11-17, 사용자 결정).
+   원금은 분석 탭과 같은 pBasis. 나스닥100 을 따르는 것만 (1+x)^β 로 움직이고(복리 가정 · 환율 고정) 나머지는 그대로:
+     TQQQ(무매·VR) 3 · ISA 레버리지 2 · 자녀 QLD 2 · DC RISE 1 · KoAct 0.76 · TIME 0.74 · TDF 0.64
+     (자녀·DC 는 금융·전체에서만, DC 는 종목별 좌수로 잴 때만). SOXL·현금은 고정, 부동산·예적금은 원금 비교에 없다.
+   f(x) = (평가 − 원금) + Σ V_i·((1+x)^β_i − 1) = 0 을 [−95%, +500%] 에서 이분법으로 푼다. 보이는 값은 −x —
+   '−13.0%' 는 QQQ 가 13% 올라야 원금, '+8.0%' 는 8% 내려도 원금 위. 범위 안에 근이 없으면 '−500%↑' · '+95%↑' */
+const BE_B = { T: 3, QLD: 2, LEV: 2, RISE: 1, KoAct: 0.76, TIME: 0.74, TDF: 0.64 };
+const BE_N = { T: 'TQQQ', QLD: '자녀 QLD', LEV: 'ISA 레버리지', RISE: 'DC RISE', KoAct: 'DC KoAct', TIME: 'DC TIME', TDF: 'DC TDF' };
+function beLegs(x, c, all) {
+  const p = x.px, d = x.dc || {}, legs = [];
+  const add = (k, v) => { if (v) legs.push({ k, v, b: BE_B[k] }); };
+  add('T', (num(x.mm.T.q) + num(x.vr.T.q)) * num(p.T) * c.fx / 1e4);
+  add('LEV', c.isaV);
+  if (all) {
+    add('QLD', c.kidV);
+    /* DC 는 calc 가 종목별 좌수 × 시세로 잴 때만 움직인다 — 손으로 넣은 dcv 한 칸이면 무엇이 들었는지 몰라 고정 */
+    if (DC_KEYS.reduce((a, k) => a + num(d[k]) * num(p[k]), 0) / 1e4 > 0) DC_KEYS.forEach(k => add(k, num(d[k]) * num(p[k]) / 1e4));
+  }
+  return legs;
+}
+function beSolve(base, legs) {
+  if (!(legs.reduce((a, l) => a + l.b * l.v, 0) > 0)) return null;
+  const f = r => legs.reduce((a, l) => a + l.v * (Math.pow(1 + r, l.b) - 1), base);
+  let lo = -0.95, hi = 5;
+  if (f(hi) < 0) return { cap: 'hi' };                 // QQQ 가 +500% 로도 원금에 못 닿는다
+  if (f(lo) > 0) return { cap: 'lo' };                 // QQQ 가 −95% 여도 원금 위
+  for (let n = 0; n < 200 && hi - lo > 1e-12; n++) { const m = (lo + hi) / 2; if (f(m) < 0) lo = m; else hi = m; }
+  return { r: (lo + hi) / 2 };
+}
+function heroBe(b, legs, est) {
+  if (!(b.denom > 0)) return null;
+  const s = beSolve(b.val - b.denom, legs); if (!s) return null;
+  const tail = ` (분석 탭 누적수익 0 기준 · 복리 가정 · 환율 고정 · 포함: ${legs.map(l => BE_N[l.k] + ' ' + l.b + '배').join(' · ')}`
+    + ` · SOXL·현금은 그대로${est ? ' · 예측 자산에서 잼' : ''})`;
+  if (s.cap) return s.cap === 'hi'
+    ? { txt: '−500%↑', cls: 'dn', tip: 'QQQ 가 500% 넘게 올라야 원금 회복' + tail }
+    : { txt: '+95%↑', cls: 'up', tip: 'QQQ 가 95% 넘게 내려도 원금 유지' + tail };
+  const D = -s.r * 100, a = fmt(Math.abs(D), 1);
+  if (a === '0.0') return { txt: '0.0%', cls: 'fl', tip: '지금이 원금' + tail };
+  return D < 0 ? { txt: '−' + a + '%', cls: 'dn', tip: `QQQ 가 ${a}% 오르면 원금 회복` + tail }
+    : { txt: '+' + a + '%', cls: 'up', tip: `QQQ 가 ${a}% 내릴 때까지 원금 유지` + tail };
+}
+const EST_N = { LEV: 'TIGER 레버리지', RISE: 'DC RISE', KoAct: 'DC KoAct', TIME: 'DC TIME', TDF: 'DC TDF' };
+const pctS = v => (v >= 0 ? '+' : '−') + fmt(Math.abs(v * 100), 2) + '%';
+function renderHero(x = latest()) {
+  const sc = UI.scope, all = sc !== 'asset', c = calc(x);
+  const lv = heroLive(x, sc), dot = $('#heroLive');
+  if (dot) { dot.dataset.st = lv.st; dot.title = lv.tip; dot.setAttribute('aria-label', lv.tip); }
+  /* 예측이 서면 손익분기도 예측 값에서 잰다 — 원금까지의 거리를 지금 선물 기준으로 맞춘다 */
+  const ep = estPx(x, sc), xe = ep ? { ...x, px: { ...x.px, ...ep.px } } : x, ce = ep ? calc(xe) : c;
+  const be = heroBe(pBasis(ce, sc), beLegs(xe, ce, all), !!ep);
+  const hx = $('#heroX'); if (!hx) return;
+  hx.textContent = '';
+  const part = (id, txt, tip, cls) => {
+    const sl = document.createElement('span'); sl.className = 'sl'; sl.textContent = '/'; hx.appendChild(sl);
+    const el = document.createElement('span'); el.id = id; el.textContent = txt; el.title = tip;
+    if (cls) el.className = cls;
+    hx.appendChild(el);
+  };
+  if (ep) part('heroEst', HIDE ? MASK : fmt(ce[sc], 0),
+    `예측 자산 — ${ep.keys.map(k => EST_N[k]).join('·')} 를 ${hhmm(ep.ref)} 종가에서 나스닥100 선물 ${pctS(ep.i)} · 환율 ${pctS(ep.f)} 만큼 옮긴 값`
+    + ` (선물 ${hhmm(ep.nqT)} 기준 · 약 10분 지연 · 원장에는 안 씀)`);
+  if (be) part('heroBe', be.txt, be.tip, 'be ' + be.cls);
+  hx.hidden = !hx.childNodes.length;
 }
 
 /* ===================== 분석 탭 ===================== */
@@ -1492,6 +1615,18 @@ const fixedAt = (g, sl) => num((state.fixed || {})[g + '.' + sl]);
    DC 는 미래에셋, 자녀는 토스라 계좌가 다르다. 은행 예적금(하나·우리)도 여기 아니다.
    기준원금 16,000만원이 대응하는 것이 바로 이 계좌다. */
 const meritz = c => c.usK + c.cashK + c.krw + c.isaV;
+/* 원금 대비 — 분석 탭 큰 숫자(누적수익)와 종합 탭 손익분기 %가 **같은 이 식**을 쓴다(둘이 갈라지지 않게 한 곳에, 2026-11-17).
+   범위마다 계좌도 원금도 다르다(아래 renderAnalysis 의 긴 주석):
+     자산        평가 = 메리츠                원금 = 기준원금
+     금융·전체   평가 = 메리츠 + 자녀 + DC     원금 = 기준원금 + 자녀 원금 + DC 불입금(9/1 뒤 불입까지, 2026-10-06)
+   부동산·은행 예적금은 어느 범위에도 안 들어간다. 더하는 차례를 바꾸지 말 것 — 분석 탭 값이 비트까지 예전과 같아야 한다 */
+function pBasis(c, scope) {
+  const all = scope !== 'asset', mz = meritz(c);
+  const kidCost = num(((SEED.basis || {})['자녀 QLD'] || {}).cost) / 1e4, dcCost = dcCostWon() / 1e4;
+  const val = all ? mz + c.kidV + c.dcv : mz;
+  const denom = all ? num(state.principal) + kidCost + dcCost : num(state.principal);
+  return { all, mz, kidCost, dcCost, val, denom };
+}
 
 /* 누적수익이 언제부터인가. 기준원금 16,000만원을 맞춰 둔 시점이다 (2026-09-20, 사용자 지정).
    예전 이름은 '1년 누적수익' 이었는데, 원금을 맞춘 날은 고정인데 '1년' 은 매일 달라지므로
@@ -1529,13 +1664,8 @@ function renderAnalysis() {
      자녀는 넣어 준 원금이다. 예전에는 전체를 '(메리츠 − 기준원금) + DC·자녀 손익'
      으로 냈는데, 값은 같지만 무엇과 견주는지가 화면에 안 보였다.
      이제 평가액도 원금도 세 조각으로 적는다. */
-  const B0 = {}; BKEYS.forEach(k => B0[k] = (SEED.basis && SEED.basis[k]) || { cost: 0 });
-  const man0 = w => w / 1e4;
   const total = UI.ana === 'total';
-  const mz = meritz(c);
-  const kidCost = man0(num(B0['자녀 QLD'].cost)), dcCost = man0(dcCostWon());   // 9/1 뒤 불입까지 (2026-10-06)
-  const val = total ? mz + c.kidV + c.dcv : mz;
-  const denom = total ? num(state.principal) + kidCost + dcCost : num(state.principal);
+  const { mz, kidCost, dcCost, val, denom } = pBasis(c, UI.ana);   // 종합 탭 손익분기와 같은 식 (pBasis)
   const y1 = val - denom;
 
   $('#plVal').textContent = eok(y1);
@@ -1717,11 +1847,72 @@ const SYM = {
   RISE: '368590.KS', KoAct: '0104H0.KS', TIME: '0019K0.KS', TDF: '442570.KS'
 };
 const SRC_LBL = { auto: '자동', carry: '임시', manual: '수동' };
+/* 418660 은 TIGER 미국나스닥100레버리지(합성)다 — 예전 이름표 'KODEX 레버리지' 는 틀렸다(2026-11-17 바로잡음, 자리 이름 LEV 는 그대로) */
 const PX_NAME = {
-  T: 'TQQQ', S: 'SOXL', QLD: 'QLD', LEV: 'KODEX 레버리지', FX: '환율',
+  T: 'TQQQ', S: 'SOXL', QLD: 'QLD', LEV: 'TIGER 미국나스닥100레버리지', FX: '환율',
   RISE: DC_NAME.RISE, KoAct: DC_NAME.KoAct, TIME: DC_NAME.TIME, TDF: DC_NAME.TDF
 };
 let quoting = false;
+
+/* ── 시세 출처 · 장 마감 뒤 예측 (2026-11-17, 사용자 요청 — 종합 탭 맨 위 줄의 점·예측 자산) ──────────
+   **둘 다 화면 전용이다.** 원장 px·pxs·pxt 와 동기화되는 상태에는 아무것도 안 쓴다 — VR 새 V 의 종가(closeFor)·
+   자산 검증·무매 엔진이 그 값을 읽는다. 새로고침하면 비었다가 다음 조회에서 다시 찬다.
+   pxSrc  자리마다 **지금 원장에 있는 값**을 어느 공급자가 줬나 { p: 공급자 이름, t: 그 조회가 적은 pxt, at: 값의 시각 }.
+          pxt 가 그때와 다르면(손 입력·다른 경로로 바뀐 값) 출처를 모르는 것으로 친다.
+   colAt  수집앱 quotes 줄의 시각 — 15분 주기라 받은 시각(pxt)이 새것이어도 값은 묵었을 수 있다.
+   quoteAt 이 화면에서 값을 하나라도 받은 마지막 조회 · quoteTry 마지막으로 조회를 마친 시각(실패 포함) */
+let pxSrc = {}, colAt = {}, quoteAt = 0, quoteTry = 0;
+
+/* 장 마감 뒤 예측 — 국내 ETF 를 KR 정규장 종가(보통 15:30)에서 나스닥100 선물(NQ)·원달러 환율이 그 뒤로 움직인 만큼 옮긴다.
+   서버 quotes 함수의 `?est=` 갈래가 종가·기준 시각·NQ·환율을 한 번에 준다(supabase/functions/quotes).
+   식은 45 거래일(2026-09-08~11-16) 종가 대비로 맞춘 것이다. i = NQ 변화율, f = 환율 변화율(둘 다 기준 시각 → 지금):
+     LEV   418660 TIGER 레버리지  P·(1 + 2·((1+i)(1+f) − 1))   2배가 원화 수익률에 걸린다
+     RISE  368590                 P·(1+i)(1+f)                 환노출 1배
+     KoAct 0104H0 · TIME 0019K0 · TDF 442570 — 채권·자산배분이 섞여 맞춘 계수다(설명력 R² 0.65~0.77, 어림으로만)
+   옛 함수는 `?est=` 를 모른 채 기본 시세를 돌려준다(est 키 없음) — 그때는 이 세션 동안 다시 묻지 않고 예측을 숨긴다. */
+const EST_F = {
+  LEV: (P, i, f) => P * (1 + 2 * ((1 + i) * (1 + f) - 1)),
+  RISE: (P, i, f) => P * (1 + i) * (1 + f),
+  KoAct: (P, i, f) => P * (1 + 0.76 * i + 0.48 * f),
+  TIME: (P, i, f) => P * (1 + 0.74 * i + 0.61 * f),
+  TDF: (P, i, f) => P * (1 + 0.64 * i + 0.67 * f)
+};
+const EST_MS = 10 * 60e3;              // 받은 지 10분 넘은 예측은 안 쓴다 · 기준값은 기준 시각 + 10분 안의 것이어야 한다
+let estQ = null, estOff = false, estBusy = false;
+async function estFetch() {
+  if (estOff || estBusy || !SB || !sbTok) return;
+  /* 장중에는 묻지 않는다 — 국내 시세가 곧 실시간이다. krxOpen 은 어림(휴장일·수능 날을 모른다)이고,
+     실제로 장이 열려 있는지는 답의 종목별 st 가 판정한다(estPx) */
+  if (krxOpen(Date.now())) return;
+  estBusy = true;
+  try {
+    const syms = Object.values(SYM).filter(s => /\.KS$/.test(s)).join(',');
+    const j = await sbReq('/functions/v1/quotes?est=' + encodeURIComponent(syms));
+    if (j && j.est && typeof j.est === 'object') estQ = { e: j.est, at: Date.now() };
+    else { estOff = true; estQ = null; }              // 옛 함수 — 기본 시세만 왔다
+  } catch (e) {
+    if (/ 404\b/.test(String(e && e.message))) estOff = true;   // 함수가 없다 · 다른 실패는 다음 조회 때 다시
+  }
+  estBusy = false;
+  renderHero();
+}
+/* 예측 시세 — 범위에 든 국내 ETF 만 옮긴다(레버리지는 ISA 라 늘, DC 는 금융·전체에서 그 종목 좌수가 있을 때만).
+   쓸 수 없으면 null: 기준 시각·NQ·환율이 다 있고 양수 · 기준값이 기준 시각 + 10분 안 · 지금 값이 기준 시각 뒤 ·
+   받은 지 10분 안 · 그 종목이 아직 장중(st 'OPEN')이 아님. 하나라도 옮긴 종목이 있어야 예측을 보인다 */
+function estPx(x, scope) {
+  if (!estQ || Date.now() - estQ.at > EST_MS) return null;
+  const e = estQ.e, ref = num(e.ref), nq = e.nq || {}, fx = e.fx || {};
+  const legOk = o => num(o.ref) > 0 && num(o.now) > 0 && num(o.refT) > 0 && num(o.refT) <= ref + EST_MS && num(o.nowT) > ref;
+  if (!(ref > 0) || !legOk(nq) || !legOk(fx)) return null;
+  const i = num(nq.now) / num(nq.ref) - 1, f = num(fx.now) / num(fx.ref) - 1, all = scope !== 'asset', px = {}, keys = [];
+  Object.keys(EST_F).forEach(k => {
+    if (!(k === 'LEV' ? num(x.isa.q) > 0 : all && num((x.dc || {})[k]) > 0)) return;
+    const s = (e.kr || {})[SYM[k]];
+    if (!s || !(num(s.close) > 0) || s.st === 'OPEN') return;
+    px[k] = EST_F[k](num(s.close), i, f); keys.push(k);
+  });
+  return keys.length ? { px, keys, i, f, ref, nqT: num(nq.nowT), at: estQ.at } : null;
+}
 
 function withTimeout(ms) { const c = new AbortController(); setTimeout(() => c.abort(), ms); return c.signal; }
 async function jget(url, ms = 7000) {
@@ -1775,14 +1966,18 @@ const PROVIDERS = [
 async function refreshQuotes(manualTrigger) {
   if (quoting) return; quoting = true;
   const st = $('#qState'); if (st) st.textContent = '조회 중…';
-  const x = latest(), got = {}, used = [];
+  estFetch();                                                 // 장 마감 뒤 예측 — 따로 받아 화면에만 둔다(기다리지 않는다)
+  /* 점을 지금 시각으로 다시 잰다 — 탭이 뒤에 있다 돌아오면 받기 전까지 묵은 초록이 남는다.
+     화면 그리기가 터져도 quoting 이 걸린 채 남아 시세 조회가 멈추면 안 된다 */
+  try { renderHero(); } catch (e) { }
+  const x = latest(), got = {}, used = [], from = {};
   for (const p of PROVIDERS) {
     const need = Object.keys(SYM).filter(k => got[k] == null);
     if (!need.length) break;
     let res = {};
     try { res = await p.fn() || {}; } catch (e) { }
     let hit = 0;
-    Object.entries(res).forEach(([k, v]) => { if (got[k] == null && v > 0) { got[k] = v; hit++; } });
+    Object.entries(res).forEach(([k, v]) => { if (got[k] == null && v > 0) { got[k] = v; from[k] = p.name; hit++; } });
     if (hit) used.push(p.name);
   }
   let changed = 0;
@@ -1790,7 +1985,9 @@ async function refreshQuotes(manualTrigger) {
     if (x.pxs && x.pxs[k] === 'manual') return;               // 수동값은 보존
     if (x.px[k] !== v) changed++;
     x.px[k] = v; x.pxs[k] = 'auto'; x.pxt[k] = Date.now();
+    pxSrc[k] = { p: from[k], t: x.pxt[k], at: from[k] === '수집앱' ? num(colAt[k]) : x.pxt[k] };   // 화면 전용(점)
   });
+  quoteTry = Date.now(); if (Object.keys(got).length) quoteAt = quoteTry;
   x.sma = x.sma || {};
   Object.entries(lastSma).forEach(([k, v]) => { if (x.sma[k] !== v) { x.sma[k] = v; changed++; } });
   const missing = Object.keys(SYM).filter(k => got[k] == null && x.pxs[k] === 'carry');
@@ -2127,7 +2324,7 @@ function dcDel(d) {
 /* ===================== 입력 탭 ===================== */
 const PX_FIELDS = [
   ['T', 'TQQQ 시세', 'USD', .01], ['S', 'SOXL 시세', 'USD', .01], ['QLD', 'QLD 시세', 'USD', .01],
-  ['LEV', 'KODEX 레버리지', '원', 1], ['FX', '원/달러 환율', '원', .01]
+  ['LEV', 'TIGER 미국나스닥100레버리지', '원', 1], ['FX', '원/달러 환율', '원', .01]
 ].concat(DC_KEYS.map(k => [k, DC_NAME[k], '원', 1]));
 const HOLD_FIELDS = x => [
   ['re.ber', L('ber', '부동산 A'), '만원'], ['re.dia', L('dia', '부동산 B'), '만원'], ['re.loan', '대출', '만원'],
@@ -9128,7 +9325,7 @@ PROVIDERS.splice(1, 0, {
       rows.forEach(r => {
         const k = inv[r.sym]; if (!k) return;
         if (now - new Date(r.at).getTime() > 6 * 3600e3) return;
-        if (+r.price > 0) o[k] = +r.price;
+        if (+r.price > 0) { o[k] = +r.price; colAt[k] = new Date(r.at).getTime(); }   // 줄의 시각 — 종합 점이 묵은 줄을 실시간으로 안 친다
       });
       return o;
     } catch (e) { return {}; }
@@ -9206,7 +9403,8 @@ async function apiFetch(force) {
   try { apiReconcile(); } catch (e) { API.rec = { err: String(e.message || e) }; }
   /* 바로 받기가 '늦음' 으로 끝났는데(기다린 몫이 지났다) 그 뒤 평소 받기에서 두 장부가 기준 뒤로 새로 왔으면 받은 것으로 맺는다 —
      예전엔 장부가 들어와도 '메리츠 늦음' 이 30분 남고 첫 줄은 '오지 않았습니다' 그대로였다(외부검증 검토) */
-  if (apiSync.st === 'late' && num(apiSync.thr) > 0 && API_ACCTS.every(a => num((API.m['apiBook' + a] || {}).u) > num(apiSync.thr))) apiSyncDone(apiSync.gen);
+  /* 장부는 새로 왔는데 받기가 세 번 실패해 '실패' 로 끝난 것(reget)도 같다 — 평소 받기가 되면 30분 동안 붉게 남지 않게(재검토) */
+  if ((apiSync.st === 'late' || (apiSync.st === 'bad' && apiSync.reget)) && num(apiSync.thr) > 0 && API_ACCTS.every(a => num((API.m['apiBook' + a] || {}).u) > num(apiSync.thr))) apiSyncDone(apiSync.gen);
   renderApiAlert();
   if (UI.tab === 'ib' && UI.ib === 'all') renderIB();
   renderApiProfit();
@@ -9281,14 +9479,19 @@ function apiSyncFail(g, e) {
   if (!sbTok) { apiSyncUpd(g, { st: 'bad', why: '로그인이 만료됐습니다 — 입력 탭에서 다시 로그인해 주세요' }); return; }
   /* 답을 못 받았다(앱을 넘어가며 끊김 · 12초 넘김) — 요청은 서버에 갔을 수 있다. 화면이 뒤에 있으면 돌아올 때(apiSyncResume) 묻는다 */
   if (document.hidden) return;
-  if (num(apiSync.tries) < 3) { setTimeout(() => apiSyncRetry(g), 3000); return; }
+  /* 곧장 다시 묻는 것은 서버가 두 번째를 막아 주는 동안(누른 뒤 2분 반)만 — 그 뒤엔 서버 기록부터 본다(얼었다 깨어 첫 요청이
+     이미 장부를 띄웠으면 다시 물을 때 한 번 더 띄웠다, 재검토) */
+  if (num(apiSync.tries) < 3) { setTimeout(() => Date.now() - num(apiSync.t0) < 150e3 ? apiSyncRetry(g) : apiSyncLook(g), 3000); return; }
   apiSyncUpd(g, { st: 'bad', why: '서버에 닿지 않았습니다' + (m ? ' — ' + m.slice(0, 80) : '') });
 }
-/* 화면에 돌아왔다(visibilitychange) — 답을 못 받은 요청이면 서버 기록부터 본다(apiSyncLook). 기다리는 루프는 xvWakeAll 이 깨운다 */
+/* 화면에 돌아왔다(visibilitychange) — 답을 못 받은 요청이면 서버 기록부터 본다(apiSyncLook). 기다리는 루프는 xvWakeAll 이 깨운다.
+   방금 물었으면(20초 안) 그때가 지난 뒤 다시 본다 — 화면이 앞에 있는 채로 '요청 중' 에 멈춰 있지 않게(재검토) */
 function apiSyncResume() {
   const s = apiSync;
   if (s.st !== 'ask' || !SB || !sbTok) return;
-  if (Date.now() - num(s.asked) > 20e3) apiSyncLook(s.gen);
+  const el = Date.now() - num(s.asked);
+  if (el > 20e3) apiSyncLook(s.gen);
+  else setTimeout(apiSyncResume, 20e3 - el + 500);
 }
 /* 답을 못 받은 요청 — 서버의 깨우기 기록(trader_dispatch_recent)에 누른 뒤의 웹 장부(websync) 줄이 있으면 그 요청은 서버에 갔다:
    다시 묻지 않고 그 장부를 기다린다. 서버는 3분 안의 두 번째만 sync_recent 로 돌려주므로, 폰이 무매·VR·DC 를 다 읽고 돌아온 뒤(대개 3분 넘게)
@@ -9304,14 +9507,17 @@ async function apiSyncLook(g) {
   if (g !== apiSync.gen || apiSync.st !== 'ask') return;           // 그사이 첫 요청의 답이 왔다
   const t0 = num(apiSync.t0);
   if (!Array.isArray(d)) {
+    /* 기록을 못 읽었다 — 15초 뒤 다시 본다(화면이 앞에 있으면 다른 계기가 없다, 재검토). 누른 지 6분이 넘었으면 그만 */
     if (Date.now() - t0 > API_SYNC_MAX) apiSyncUpd(g, { st: 'bad', why: '서버에 닿지 않았습니다' });
+    else setTimeout(() => apiSyncLook(g), 15e3);
     return;
   }
   API.disp = d;
   /* 기기 시계와 서버 시계가 조금 어긋나도 잡게 누른 때 2분 앞부터 */
   const x = d.find(r => r && r.cmd === 'websync' && (Date.parse(r.at) || 0) >= t0 - 120e3);
   if (x) { const at = Date.parse(x.at) || 0; apiSyncGo(g, { st: 'wait', why: '', srv: at, thr: at || t0 }); return; }
-  if (num(apiSync.tries) < 2) { apiSyncRetry(g); return; }
+  /* 기록에 없을 때 한 번 다시 묻는 것은 누른 지 6분 안만 — 밤새 묵은 '요청 중' 이 다음 날 아침 장부를 띄우지 않게(재검토) */
+  if (num(apiSync.tries) < 2 && Date.now() - t0 < API_SYNC_MAX) { apiSyncRetry(g); return; }
   apiSyncUpd(g, { st: 'bad', why: '서버 답을 받지 못했습니다' });
 }
 /* 새로고침·새 창 — 적어 둔 걸음을 잇는다(30분 안의 것만 보인다) */
@@ -9362,7 +9568,7 @@ async function apiSyncWatch(g) {
     renderVfyStat();                                    // 초 세기(끝의 xvHeadDraw 가 첫 줄도 고친다)
     await xvNap(nap);
   }
-  apiSyncUpd(g, fresh ? { st: 'bad', why: '장부는 새로 왔는데 받지 못했습니다' + (API.err ? ' — ' + API.err.slice(0, 80) : '') } : { st: 'late' });
+  apiSyncUpd(g, fresh ? { st: 'bad', reget: 1, why: '장부는 새로 왔는데 받지 못했습니다' + (API.err ? ' — ' + API.err.slice(0, 80) : '') } : { st: 'late' });
 }
 /* 두 계좌 장부가 기준 뒤에 새로 써졌는가 — updated_at 만(서버가 찍는다). 실패한 sync 도 장부를 새로 쓴다(그때는 '일부') */
 async function apiSyncFresh() {
@@ -9402,9 +9608,14 @@ function apiSyncSay() {
     case 'ask': return '메리츠 장부 요청 중';
     case 'wait': return `메리츠 장부 받는 중 ${sec}초${s.why === 'sync_recent' ? '(방금 띄운 장부)' : ''} — 보통 2~4분`;
     case 'run': return `메리츠 — 실행기 판이 ${s.why === 'run_soon' ? '곧 돕니다' : '방금 돌았습니다'}. 판 끝 장부를 기다리는 중 ${sec}초`;
-    case 'got': return `메리츠 ${vfyWhen(s.book)} 새로 받음${num(s.n) ? ` — 장부 대조 ${fmt(num(s.n), 0)}건 다름` : ' ✓'}`;
+    case 'got':
+      /* 판 앞뒤라 서버가 새로 띄우지 않았고 판 끝 장부가 누르기 전에 이미 와 있었다 — '새로 받음' 이 아니다(재검토).
+         그 뒤의 이체 같은 것은 아직 안 들어 있다 */
+      if (/^run_/.test(s.why || '') && num(s.book) && num(s.book) < num(s.t0))
+        return `메리츠 ${vfyWhen(s.book)} 판 끝 장부(누르기 전) — 판 앞뒤라 새로 띄우지 않았습니다 · ${left}분 뒤 다시${num(s.n) ? ` · 장부 대조 ${fmt(num(s.n), 0)}건 다름` : ''}`;
+      return `메리츠 ${vfyWhen(s.book)} 새로 받음${num(s.n) ? ` — 장부 대조 ${fmt(num(s.n), 0)}건 다름` : ' ✓'}`;
     case 'part': return `메리츠 ${vfyWhen(s.book)} 받음 — 일부 조회를 못 받았습니다(장부 대조를 보세요)`;
-    case 'late': return /^run_/.test(s.why || '') ? '메리츠 — 판 끝 장부가 6분 안에 오지 않았습니다. 판이 끝나면 들어옵니다'
+    case 'late': return /^run_/.test(s.why || '') ? '메리츠 — 판 끝 장부가 아직 오지 않았습니다. 판이 끝나면 들어옵니다'
       : '메리츠 장부가 6분 안에 오지 않았습니다 — 설정 › 정시 깨우기에서 웹 장부 결과를 보세요';
     case 'busy': return s.why === 'daily_cap' ? `메리츠 — 오늘 웹에서 띄울 수 있는 장부를 다 썼습니다 · ${left}분 뒤 다시`
       : `메리츠 — 누락 점검 판이 ${s.why === 'check_soon' ? '곧 돌아' : '방금 돌아'} 지금은 새로 띄우지 않습니다 · ${left}분 뒤 다시`;
