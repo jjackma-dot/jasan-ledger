@@ -830,7 +830,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-11-17 10:35';
+const BUILD = '2026-11-18 14:54';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -1906,6 +1906,8 @@ async function estFetch() {
   }
   estBusy = false;
   renderHero();
+  /* 분석 탭 큰 숫자도 같은 예측을 쓴다 — 탭을 바꿔도 다시 그리지 않으니 받은 자리에서 같이 그린다(11/18: 종합만 뜨던 것) */
+  try { renderAnalysis(); } catch (e) { }
 }
 /* 예측 시세 — 범위에 든 국내 ETF 만 옮긴다(레버리지는 ISA 라 늘, DC 는 금융·전체에서 그 종목 좌수가 있을 때만).
    쓸 수 없으면 null: 기준 시각·NQ·환율이 다 있고 양수 · 기준값이 기준 시각 + 10분 안 · 지금 값이 기준 시각 뒤 ·
@@ -4954,7 +4956,8 @@ function resumeVerify(force) {
    다른 탭에서 이미 받아 갔으면 비어 있다. 그때도 **결과는 서버에 그대로 있다** —
    무매/VR 탭을 열면 보이는 것이 맞다.
 
-   화면에 이미 무언가 떠 있으면 건드리지 않는다. 사람이 방금 누른 것을 덮으면 안 된다. */
+   화면에 이미 무언가 떠 있으면 건드리지 않는다. 사람이 방금 누른 것을 덮으면 안 된다.
+   (다만 칸에 뜬 항목의 읽기가 서버의 마지막 읽기보다 옛것이면 그 항목만 새 읽기로 바꾼다 — xvRefresh, 2026-11-18) */
 let lvGen = 0;
 async function latestVerify(quiet) {
   if (!SB || !sbTok || vfyBusy) return;
@@ -4963,8 +4966,9 @@ async function latestVerify(quiet) {
      예전엔 카드가 두 장 붙었다. 기다린 뒤마다 더 새 호출·새 폴링이 있었는지 본다 */
   const g = ++lvGen, vg = vfyGen, stale = () => g !== lvGen || vg !== vfyGen || vfyBusy;
   let rows = null;
-  try { rows = await sbReq('/rest/v1/meta?k=in.(guideIB,guideVR,dcAsset)&select=k,v'); } catch (e) { return; }
+  try { rows = await sbReq('/rest/v1/meta?k=in.(guideIB,guideVR,dcAsset,vfyStat)&select=k,v'); } catch (e) { return; }
   if (stale() || box.innerHTML.trim()) return;
+  vfyMerge(rows);                                     // 다른 창이 적은 판정 — 칸은 다시 그리기라 판정을 적지 않고 견주기만 한다(xvRender)
   /* **그날 읽은 것은 셋 다** 무매 → VR → DC 차례로 보여 준다(외부검증 2026-11-07 — 예전엔 무매/VR 중 나중 것 하나와 DC 만).
      **그날 안에는 계속 보여 준다.** 예전에는 5분이었다. 폰이 검증을 마치면 알림을
      하나 남겼는데, 그 알림을 누르면 원래 쓰던 크롬 탭이 아니라 엉뚱한 브라우저가
@@ -5063,16 +5067,48 @@ function xvBox(run, may) {
    판정만 적고, 화면·자동진행·DC 반영 버튼이 쓰는 값(vfyLast · dcLast)은 그대로 둔다. 한 항목이 터져도 나머지는 받는다 */
 function xvPut(k, v, fresh, run) {
   const el = $('#xv-' + k), keepL = vfyLast, keepD = dcLast;
-  let html = '';
-  try { html = xvHtml(k, v, fresh); }
-  catch (e) {
-    html = `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>${XV_LBL[k]} 결과를 대조하지 못했습니다.</b><br>${esc(String((e && e.message) || e).slice(0, 200))}</div></div>`;
-  }
-  if (el) { el.innerHTML = html; el.dataset.t = String(num(v.t)); }
-  else { vfyLast = keepL; dcLast = keepD; }
+  xvPaint(el, k, v, xvRender(k, v, fresh), keepL, keepD);
   if (run) run.shown[k] = 'got';
   /* 좌수가 그대로인 DC 읽기는 다음 금액 계산의 기준으로 적는다(원장은 안 건드린다) — 예전 pollDc 와 같다 */
   if (k === 'dc' && fresh && v.ok) try { dcTakeBaseline(v, dcAssetDiff(v)); } catch (e) { }
+}
+/* 항목 하나의 그림 — { html, judged(그 읽기에 적어 둔 판정), off(이 창에서 다시 견준 판정이 적어 둔 판정과 다르다) }.
+   판정은 **처음 견준 것**이 남는다(recordVfy). 다시 그릴 때(판을 기다린 창이 아닐 때 · 칸을 새로 지을 때 · xvRefresh) 이 창의 원장으로
+   다시 견주면 그사이 원장이 바뀐 만큼(다른 창에서 체결·DC·설정을 반영 · 그 뒤 체결) 다르게 나온다 — 그때 표만 보이면 버튼 아래 줄(✓)과
+   칸(⚠)이 어긋난다(2026-11-18 검토). 그래서 다르면 그 사실을 표 위에 적고, **DC 는 표를 그리지 않는다** — 그 표의 반영 버튼이
+   다른 창에서 이미 반영한 읽기를 다시 반영하게 한다. 판을 기다린 창의 첫 그림(fresh)은 그 판정 자체라 견주지 않는다 */
+function xvRender(k, v, fresh) {
+  let html = '', a = null;
+  vfyLast = null; vfyAsked = null; vfyQuiet = !fresh;
+  try {
+    html = xvHtml(k, v, fresh);
+    a = vfyAsked && vfyAsked.k === k && vfyAsked.t === num(v.t) ? vfyAsked : null;
+  } catch (e) {
+    html = `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>${XV_LBL[k]} 결과를 대조하지 못했습니다.</b><br>${esc(String((e && e.message) || e).slice(0, 200))}</div></div>`;
+  } finally { vfyQuiet = false; }
+  /* 판을 기다린 창의 첫 그림도 견준다 — 제가 적었으면 같고, 다른 창이 먼저 적은 판정을 받았으면(pollXv 가 합침) 다를 수 있다(검토).
+     DC 는 수만이 아니라 '반영했나' 도 — 반영한 창이 다시 적은 판정(d)을 이 창이 모르면 수가 같아도 반영 버튼을 내면 안 된다 */
+  /* 오늘 읽은 것만 견준다 — 지난 날 읽기는 오늘 원장(주문표·시세)과 다를 수밖에 없고, 그 사정은 자세히 보기의 oldNote 가 이미 적는다(검토) */
+  const s = (state.vfyStat || {})[k], judged = s && num(s.t) === num(v.t) && s.n != null && sameDay(v.t, Date.now()) ? s : null;
+  const off = !!(judged && a && a.n != null && (a.n !== judged.n || (k === 'dc' && num(judged.d) === 1 && !a.d)));
+  if (off) html = xvOffNote(k, v, judged, a.n) + (k === 'dc' ? '' : html);
+  return { html, judged, off };
+}
+/* 칸에 그린다 — data-t 읽기(폰 시계) · data-u 그 읽기 판정을 적은 때 · data-nt 다르다고 적은 칸. 칸이 없으면 판정만 적힌 것이고
+   화면·자동진행·DC 반영 버튼이 쓰는 값(vfyLast · dcLast)은 그대로 둔다. DC 표를 그리지 않았으면(off) 반영 버튼이 쓰는 읽기도 그대로 */
+function xvPaint(el, k, v, r, keepL, keepD) {
+  if (!el) { vfyLast = keepL; dcLast = keepD; return; }
+  el.innerHTML = r.html; el._xvh = r.html;
+  el.dataset.t = String(num(v.t)); el.dataset.u = r.judged ? String(num(r.judged.u)) : ''; el.dataset.nt = r.off ? '1' : '';
+  if (r.off && k === 'dc') dcLast = keepD;
+}
+function xvOffNote(k, v, s, mine) {
+  const L = XV_LBL[k], my = mine < 0 ? '못 읽음' : mine === 0 ? '양호' : fmt(mine, 0) + '건 다름';
+  return `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>${L} ${esc(vfyWhen(v.t))} 읽음 — 판정 ${vfySay(s)}</b> (적어 둔 판정 · 버튼 아래 줄과 같습니다)
+    <br>이 창의 원장으로 다시 견준 결과: <b>${my}</b>${k === 'dc' && num(s.d) === 1 ? ' · 다른 창에서 이미 반영한 읽기' : ''} —
+    이 창을 연 뒤 다른 창에서 체결·DC·설정을 반영했거나 그 뒤 원장이 바뀌었습니다.
+    ${k === 'dc' ? '여기서는 표와 반영 버튼을 내지 않습니다.' : '아래 표는 이 창의 원장으로 다시 견준 것입니다.'}
+    이 창을 새로 고쳐도 다르면 다시 검증해 주세요.</div></div>`;
 }
 function xvHtml(k, v, fresh) {
   if (k === 'dc') return dcVerifyReport(v);              // DC 검증은 미래에셋 잔고 — 결과 모양이 다르다 (2026-10-06)
@@ -5134,7 +5170,9 @@ function xvHeadDraw() {
   const vs = state.vfyStat || {};
   const seg = xvStates(run, run.end || Date.now()).map(s => {
     const L = XV_LBL[s.k], v = run.got[s.k], r = vs[s.k];
-    if (s.st === 'done') return `${L} ${r && num(r.t) === num(v.t) ? vfySay(r) : '받음'}`;
+    /* 다른 창·다른 판에서 다시 읽어 칸을 새 읽기로 바꿨으면(xvRefresh) 그 읽은 때를 붙인다 — 맨 앞 시각은 이 판을 누른 때다 */
+    if (s.st === 'done') return `${L} ${r && num(r.t) === num(v.t) ? vfySay(r) : '받음'}`
+      + (run.re && run.re[s.k] ? ` <span class="u">${esc(vfyWhen(v.t))} 다시 읽음</span>` : '');
     if (s.st === 'late') return `${L} <span class="bad">안 옴</span>`;
     if (s.st === 'read') return `${L} 읽는 중 ${Math.round(s.el / 1000)}초`;
     return `${L} 차례 기다림`;
@@ -5162,7 +5200,11 @@ async function pollXv(items, since, resumed, m, known = true, fin = false) {
   const run = xvRun = { id: `x${since}:${items.join(',')}`, since, base: Date.now(), items: items.slice(), m,
     got: {}, at: {}, shown: {}, end: 0, fresh: !resumed, known, fin, asks: 0, gone: false };
   /* 같은 판을 다시 이어받으면(부팅·hashchange·visibilitychange 가 겹친다) 이미 받은 것은 그대로 — 다시 그리지 않는다 */
-  if (prev) items.forEach(k => { if (prev.got[k]) { run.got[k] = prev.got[k]; run.at[k] = run.base; run.shown[k] = 'got'; } });
+  if (prev) items.forEach(k => {
+    if (!prev.got[k]) return;
+    run.got[k] = prev.got[k]; run.at[k] = run.base; run.shown[k] = 'got';
+    if (prev.re && prev.re[k]) (run.re || (run.re = {}))[k] = 1;      // 다시 읽어 바꾼 칸(xvRefresh)이면 그 표시도
+  });
   xvBox(run, resumed ? xvMay(run) : 'new');
   for (let first = true; ; first = false) {
     xvDraw(run);
@@ -5183,8 +5225,11 @@ async function pollXv(items, since, resumed, m, known = true, fin = false) {
     if (want.length && SB && sbTok) {
       let rows = null;
       asked = Date.now();
-      try { rows = await sbReq(`/rest/v1/meta?k=in.(${want.map(k => XV_META[k]).join(',')})&select=k,v`); } catch (e) { }
+      try { rows = await sbReq(`/rest/v1/meta?k=in.(${want.map(k => XV_META[k]).join(',')},vfyStat)&select=k,v`); } catch (e) { }
       if (gen !== vfyGen) return;                      // 묻는 사이 더 새 판이 시작됐다
+      /* 같은 판을 기다리는 다른 창(크롬 탭 ↔ 수집기가 연 웹앱)이 먼저 적은 판정·DC 반영을 받고 그린다 — 뒤에서 얼어 있다 늦게 깬 창이
+         제 옛 원장으로 다시 적어 덮지 않게(검토). 받은 판정과 이 창이 견준 것이 다르면 칸에 그렇게 적힌다(xvRender) */
+      vfyMerge(rows);
       /* 못 물었다(끊김 · 12초 넘김 · 얼었다 깬 탭의 물음) — '아직 없음' 과 다르다. 끝을 판정하지 않고 다시 묻는다:
          깬 뒤 한 번은 받아 보고 나서야 '안 옴' 이라 한다. 다만 XV_MAX 까지만 — 계속 끊겨 있으면 이 루프가 안 끝나 vfyBusy 가 영영 켜져 있게 된다 */
       if (rows === null && Date.now() - run.base < XV_MAX) continue;
@@ -5204,6 +5249,9 @@ async function pollXv(items, since, resumed, m, known = true, fin = false) {
   vfyBusy = false;
   const p = vfyPendingN(); if (p && p.t0 === since) vfySet(null);
   xvDraw(run);
+  /* 끝나면 한 번 더 본다 — 뒤에서 얼어 있다 깨어 끝난 판이면 그사이 다른 창이 다시 읽었을 수 있다(검토: 다음 1분 틀까지 옛 칸이 남았다).
+     이 판의 읽기는 방금 적었으니 다시 견주지 않는다(refreshVfyStat · xvRefresh 는 같은 읽기 · 같은 판정이면 건드리지 않는다) */
+  if (sbReady) refreshVfyStat(5e3);
 }
 
 /* ===================== VR 자동진행 (2026-09-24, 수집기 4.31, 사용자 요청) =====================
@@ -5356,15 +5404,24 @@ const sameDay = (a, b) => iso(new Date(num(a))) === iso(new Date(num(b)));
    원장·시세가 바뀐 만큼 엉뚱한 ⚠ 가 나와 멀쩡했던 검증을 덮었다. 덮는 것은 **사람이 맞춘 직후**(DC 반영 · 계좌 다시 맞춤 — force) 뿐이다.
    지난 날 읽기는 판정하지 않는다(n = null) — 오늘 원장과 견주는 것이라 그때의 판정이 아니다.
    u = 적은 시각 — 같은 읽기를 두 기기가 적었으면 나중 것(맞춘 쪽)이 이긴다 */
-function recordVfy(k, t, n, why, force) {
+/* vfyAsked — 마지막으로 견준 것(적었든 안 적었든): 다시 그릴 때 이 창이 견준 판정을 적어 둔 판정과 견준다(xvRender).
+   vfyQuiet — 다시 그리기(xvRender 의 fresh 아님)는 판정을 **적지 않는다**(2026-11-18 검토). 적는 것은 판을 기다린 창(pollXv) · DC 반영(force) ·
+   refreshVfyStat(서버 판정을 먼저 합친 뒤) · VR 자동진행뿐 — 칸 다시 짓기·그날 읽은 것 칸·자세히 보기가 제 원장(열린 창은 부팅 뒤 원장을 다시
+   안 받는다)으로 적으면 늦게 적은 쪽이 이겨(vfyNewer) 서버의 맞는 판정을 덮었다.
+   extra.d — DC 읽기를 이미 반영했다(그 창의 dcChk.t ≥ 읽기). 반영한 읽기를 다른 창이 모르면 그 창은 반영 버튼을 내지 않는다(xvRender) */
+let vfyAsked = null, vfyQuiet = false;
+function recordVfy(k, t, n, why, force, extra) {
+  vfyAsked = { k, t: num(t), n: n == null ? null : n, d: extra && extra.d ? 1 : 0 };
   if (!(num(t) > 0)) return;
+  if (vfyQuiet && !force) return;
   const st = state.vfyStat || (state.vfyStat = {});
   const o = st[k];
   if (o && num(o.t) > num(t)) return;                                       // 더 새 읽기의 판정이 있다
   if (o && num(o.t) === num(t) && !force) return;                           // 이미 적었다
   const old = !sameDay(t, Date.now()) && !force;
   const v = { t: num(t), n: old || n == null ? null : n, why: old ? '' : String(why || '').replace(/<[^>]*>/g, '').slice(0, 200), u: Date.now() };
-  if (o && o.t === v.t && o.n === v.n && o.why === v.why) return;
+  if (!old && extra && extra.d) v.d = 1;
+  if (o && o.t === v.t && o.n === v.n && o.why === v.why && num(o.d) === num(v.d)) return;
   st[k] = v; saveVfyLocal(); pushVfyStat(); renderVfyStat();
 }
 const vfyNewer = (a, b) => !b || num(a.t) > num(b.t) || (num(a.t) === num(b.t) && num(a.u) > num(b.u));
@@ -5428,15 +5485,22 @@ function renderVfyStat() {
   try { xvHeadDraw(); } catch (e) { }
 }
 /* 서버의 마지막 읽기를 보고 아직 판정이 없는 것을 채운다 — 검증을 이 기기에서 안 봤어도(18:30 자동진행·다른 기기) 줄이 선다.
-   **오늘 읽은 것만** 견준다. 지난 읽기는 시각만 적는다(판정 없음) */
+   **오늘 읽은 것만** 견준다. 지난 읽기는 시각만 적는다(판정 없음).
+   **다른 창·기기가 적은 판정을 먼저 받는다**(2026-11-18 검토) — 같은 요청에 meta.vfyStat 을 붙여 initSupabase 와 같게 합친다. 예전엔 판을
+   기다린 창이 이미 견준 읽기를 이 창이 제 원장(부팅 뒤 다시 안 받는다 — 다른 창이 반영한 체결·DC 가 없을 수 있다)으로 다시 견주어 적었고,
+   늦게 적은 쪽이 이겨(vfyNewer) 서버의 ✓ 가 ⚠ 로 바뀌었다. 막 올라온 읽기(30초 안)는 견주지 않는다 — 그 판을 기다린 창이 적어 올릴 몫이다.
+   gap — 서버에 다시 묻는 최소 간격: 부팅·탭 열기 60초 · 1분마다 50초(늘 묻게) · 창으로 돌아올 때·판이 끝날 때 5초.
+   원장을 서버에서 받은 뒤(remoteOn)에만 견준다 — 부팅 때 받기가 실패했으면 이 기기의 옛 원장이다(검토) */
 let vfyPrimeAt = 0;
-async function refreshVfyStat() {
+const VFY_SETTLE = 30e3;
+async function refreshVfyStat(gap = 60e3) {
   renderVfyStat();
-  if (!SB || !sbTok || vfyBusy || Date.now() - vfyPrimeAt < 60e3) return;
+  if (!SB || !sbTok || !remoteOn || vfyBusy || Date.now() - vfyPrimeAt < gap) return;
   vfyPrimeAt = Date.now();
   let rows = null;
-  try { rows = await sbReq('/rest/v1/meta?k=in.(guideIB,guideVR,dcAsset,mtsAsset)&select=k,v'); } catch (e) { return; }
+  try { rows = await sbReq('/rest/v1/meta?k=in.(guideIB,guideVR,dcAsset,mtsAsset,vfyStat)&select=k,v'); } catch (e) { return; }
   if (vfyBusy) return;
+  vfyMerge(rows);
   const keepL = vfyLast, keepD = dcLast;                 // 판정만 낸다 — 화면·자동진행이 쓰는 값은 그대로
   const map = { guideIB: 'ib', guideVR: 'vr', dcAsset: 'dc', mtsAsset: 'ia' };
   let mts = null;
@@ -5446,6 +5510,11 @@ async function refreshVfyStat() {
     const o = (state.vfyStat || {})[k];
     if (o && num(o.t) >= num(v.t)) return;
     if (!sameDay(v.t, Date.now())) { recordVfy(k, v.t, null); return; }
+    /* 외부검증 판의 읽기(run)는 **그 판을 기다린 창**이 견준다 — 이 창이 그 판이면(끝난 뒤 늦게 온 것) 바로, 아니면 9분(XV_MAX) 뒤에야
+       (그 창이 죽었을 때). 판을 기다린 창은 폰 앱이 도는 동안 뒤에 있어 몇 분 늦게 적을 수 있다(검토 — 30초 만에 PC 가 먼저 적었다).
+       판 없는 읽기(VR 자동진행 · 18:30)는 막 올라온 것(30초 안)만 기다린다 */
+    const own = v.run != null && xvRun && xvRun.since === Number(v.run);
+    if (!own && (Date.now() - num(v.t) < VFY_SETTLE || (v.run != null && Date.now() - Number(v.run) < XV_MAX))) return;
     if (k === 'ia') { mts = v; return; }
     try {
       const txt = String(v.text || '');
@@ -5455,8 +5524,94 @@ async function refreshVfyStat() {
     } catch (e) { }
   });
   vfyLast = keepL; dcLast = keepD;
+  try { xvRefresh(rows); } catch (e) { }                 // 결과 칸에 옛 읽기가 떠 있으면 새 읽기로 — 판정을 받거나 적은 뒤라 첫 줄도 새 판정을 쓴다
   /* 메리츠는 부팅 때와 같은 길 — 배당·이자를 먼저 보고(한 번만 반영) 그 뒤의 판정을 적는다(검토: 배당 날 '⚠' 가 남았다) */
   if (mts) try { await takeMtsAsset(mts, null); } catch (e) { }
+}
+/* 서버의 판정(meta.vfyStat)을 자리마다 더 새것으로 합친다 — initSupabase 와 같은 규칙(vfyNewer). 판정을 적을 수 있는 길(판 기다리기 ·
+   refreshVfyStat)과 그리는 길(그날 읽은 것 칸)은 적거나 그리기 **전에** 합친다. 저장(saveVfyLocal)은 안 한다 — 통째 state 라
+   옛 원장 창이 같은 브라우저(웹앱·크롬 탭은 저장소를 같이 쓴다)의 새 원장을 덮는다. 판정은 서버에 있다 */
+function vfyMerge(rows) {
+  const sv = ((rows || []).find(r => r && r.k === 'vfyStat') || {}).v;
+  if (!sv || typeof sv !== 'object') return false;
+  const st = state.vfyStat || (state.vfyStat = {});
+  let ch = false;
+  Object.entries(sv).forEach(([k, v]) => { if (v && num(v.t) && vfyNewer(v, st[k])) { st[k] = v; ch = true; } });
+  if (ch) renderVfyStat();
+  return ch;
+}
+/* ── 결과 칸이 옛 읽기를 들고 있으면 새 읽기로 바꾼다 (2026-11-18, 사용자 요청) ─────────────────────────────
+   사용자: "fire gate 데이터 업데이트 전 무매 검증 불일치했으나 업데이트 후 다시 검증하여 현재 양호한 상태인데 외부검증 하단에
+   무매 검증 2건이 다릅니다가 아직 떠있다. 무매검증 후 양호할 경우 새로 갱신되도록 할 것."
+   결과 칸은 결과가 **올 때 한 번** 그린다. 판은 누른 창만 기다리므로, 다시 검증한 판을 이 창이 기다리지 않았으면(웹앱 창과 크롬 탭 ·
+   다른 기기) 버튼 아래 줄은 새 판정(✓ 양호)으로 바뀌는데 칸에는 앞 판의 '2건이 다릅니다' 가 그대로 남았다.
+   그래서 서버의 마지막 읽기가 칸에 뜬 읽기(그 칸의 data-t — 둘 다 폰 시계)보다 새것이고 **판정까지 났으면**(state.vfyStat 에 그 읽기 —
+   판을 기다린 창이 적었거나 refreshVfyStat 이 적었다) 그 항목 칸만 새 읽기로 다시 그린다. 양호든 아니든 늘 마지막 읽기(버튼 아래 줄과 같다).
+   이 창의 원장으로 다시 견준 것이 적어 둔 판정과 다르면 xvRender 가 그 사실을 적는다(DC 는 표 대신 안내만).
+   · 바꾸는 칸: 끝난 외부검증 판(xvRun)과 그날 읽은 것을 모은 칸(day:). 오늘 읽은 것만.
+     같은 읽기라도 판정이 바뀌었으면(다른 창이 다시 적었다 · DC 반영 — data-u) · 다르다고 적어 둔 칸이면(data-nt — 이 창이 따라잡았나) 다시 견준다.
+     그린 것이 같으면 손대지 않는다(펴 둔 '자세히 보기' 가 접히지 않게).
+   · '안 옴' 칸은 이 판을 누른 뒤의 읽기로 채운다 — 받은 때(run.at)를 그 항목의 원래 마감으로 두어 몫 차례(xvStates)가 안 바뀌게.
+   · 자세히 보기(버튼 아래 줄을 누른 칸 — 표시 i[data-vfyd])는 그 항목의 더 새 읽기가 판정까지 났으면 그날 읽은 것 칸으로 바꾼다.
+   · 안 바꾸는 때: 기다리는 중(vfyBusy) · VR 자동진행이 칸을 쓴 뒤(vrAutoBusy · xvMay) · 경고처럼 외부검증 칸이 아닌 것 ·
+     그 칸의 입력칸에 커서가 있다(DC 금액을 넣는 중). 눌러서 포커스만 간 '자세히 보기'·링크·버튼은 막지 않는다(검토) */
+function xvRefresh(rows) {
+  const box = $('#vfyOut');
+  if (!box || vfyBusy || vrAutoBusy) return;
+  const st = state.vfyStat || {};
+  const judgedRead = k => {
+    const r = (rows || []).find(x => x && x.k === XV_META[k]), v = r && r.v, s = st[k];
+    return v && typeof v === 'object' && num(v.t) > 0 && sameDay(v.t, Date.now()) && s && num(s.t) === num(v.t) && s.n != null ? v : null;
+  };
+  const editing = el => { const a = document.activeElement; return !!(a && el.contains(a) && a.matches('input, textarea, select, [contenteditable], [contenteditable] *')); };
+  if (!box.dataset.xv) {
+    const mk = box.querySelector(':scope > i[data-vfyd]'), k = mk && mk.dataset.vfyd, v = k && XV_ALL.includes(k) ? judgedRead(k) : null;
+    if (v && num(v.t) > num(mk.dataset.t) && !editing(box)) { box.innerHTML = ''; latestVerify(true); }
+    return;
+  }
+  if (!box.querySelector('#xvHead')) return;
+  const day = box.dataset.xv.startsWith('day:');
+  const run = !day && xvRun && xvRun.end && box.dataset.xv === xvRun.id && xvMay(xvRun) ? xvRun : null;
+  if (!day && !run) return;
+  let any = false;
+  XV_ALL.forEach(k => {
+    const el = box.querySelector('#xv-' + k), v = el && judgedRead(k);
+    if (!v || editing(el)) return;
+    const shownT = num(el.dataset.t), s = st[k];
+    let late = false, re = false;
+    if (run && !run.got[k]) {
+      /* 이 판을 누른 뒤의 읽기만 — run.since 는 폰 웹이 누른 때, v.t 는 폰 수집기가 올린 때(같은 폰 시계). 앞 판의 읽기(run 이 이르다)는 아니다 */
+      if (!(num(v.t) > run.since) || (v.run != null && Number(v.run) < run.since)) return;
+      late = true; re = run.m === 'x' && Number(v.run) !== run.since;
+    } else if (num(v.t) > shownT) re = true;
+    else if (!(num(v.t) === shownT && (el.dataset.u !== String(num(s.u)) || el.dataset.nt === '1'))) return;
+    const keepL = vfyLast, keepD = dcLast, r = xvRender(k, v, false);
+    if (!late && num(v.t) === shownT && r.html === el._xvh) { vfyLast = keepL; dcLast = keepD; el.dataset.u = String(num(s.u)); return; }
+    if (run) {
+      if (late) run.at[k] = xvDue(run, k);
+      run.got[k] = v; run.shown[k] = 'got';
+      if (re) (run.re || (run.re = {}))[k] = 1;
+    }
+    xvPaint(el, k, v, r, keepL, keepD);
+    any = true;
+  });
+  if (any && run) xvHeadDraw();
+}
+/* 그 항목의 원래 마감 — xvStates 의 몫 차례와 같은 셈. '안 옴' 칸을 나중 읽기로 채울 때 받은 때(run.at)를 이것으로 두면 뒤 항목 차례가 그대로다 */
+function xvDue(run, k) {
+  let start = run.base;
+  for (const j of run.items) {
+    const dl = start + XV_BUDGET[j];
+    if (j === k) return dl;
+    start = run.got[j] ? (num(run.at[j]) || start) : dl;
+  }
+  return start;
+}
+/* 자세히 보기의 한 항목 — 외부검증 칸과 같은 그림(xvRender: 판정은 적지 않고 견주기만 · 다르면 그렇게 적고 DC 는 표·반영 버튼 없이) */
+function xvDetailHtml(k, v) {
+  const keepD = dcLast, r = xvRender(k, v, false);
+  if (r.off && k === 'dc') dcLast = keepD;
+  return r.html;
 }
 /* 줄을 누르면 그 검증의 자세한 내역 — 서버의 그 읽기를 다시 그린다. 지난 날 것이면 그때 판정을 위에 적는다 */
 async function showVfyDetail(k) {
@@ -5493,17 +5648,15 @@ async function showVfyDetail(k) {
       아래는 <b>지금 원장과 다시 견준 것</b>이라 그 뒤 체결·주문표가 바뀐 만큼 다르게 나올 수 있습니다.</p>`;
   };
   box.dataset.xv = ''; box.innerHTML = '';
-  let any = false;
+  let any = false, shownT = 0;                               // 그린 읽기 — 더 새 읽기가 판정까지 나면 xvRefresh 가 그날 읽은 것 칸으로 바꾼다
   if (k === 'dc') {
     const v = get('dcAsset');
-    if (v && num(v.t)) { box.insertAdjacentHTML('beforeend', oldNote('dc', v.t, 'DC 검증') + dcVerifyReport(v)); any = true; }
+    if (v && num(v.t)) { box.insertAdjacentHTML('beforeend', oldNote('dc', v.t, 'DC 검증') + xvDetailHtml('dc', v)); any = true; shownT = num(v.t); }
   } else {
     const g = get(k === 'vr' ? 'guideVR' : 'guideIB'), txt = String((g || {}).text || '');
     if (g && num(g.t)) {
-      any = true;
-      box.insertAdjacentHTML('beforeend', oldNote(k, g.t, lbl + ' 앱 읽기') + (txt.startsWith('ERR')
-        ? `<div class="warn" style="margin-top:9px"><span>◔</span><div><b>${lbl} 앱을 읽지 못했습니다.</b><br>${esc(txt.replace(/^ERR\s*/, ''))}</div></div>`
-        : verifyReport(k, txt, num(g.t))));
+      any = true; shownT = num(g.t);
+      box.insertAdjacentHTML('beforeend', oldNote(k, g.t, lbl + ' 앱 읽기') + xvDetailHtml(k, g));
     }
     const m = k === 'ib' ? get('mtsAsset') : null;
     if (m && num(m.t)) {
@@ -5520,6 +5673,8 @@ async function showVfyDetail(k) {
   }
   vfyLast = keepL;
   if (!any) box.insertAdjacentHTML('beforeend', `<p class="note" style="margin:9px 3px 0">서버에 ${lbl} 검증 기록이 없습니다.</p>`);
+  /* 표시 — 이 칸이 자세히 보기라는 것과 그린 읽기. 다른 무엇이 칸을 갈면 함께 사라진다(xvRefresh 가 본다) */
+  if (!box.dataset.xv) box.insertAdjacentHTML('afterbegin', `<i hidden data-vfyd="${k}" data-t="${shownT}"></i>`);
   box.scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
 
@@ -6409,7 +6564,8 @@ function dcVerifyReport(v) {
   const whyN = d.why.filter(w => !/^오래된 읽기/.test(w));
   recordVfy('dc', num(v.t), whyN.length + chg.length + ex.bad, [
     chg.length ? '좌수 ' + chg.map(r => r.k + ' ' + (r.dq > 0 ? '+' : '−') + fmt(Math.abs(r.dq), 0)).join(' · ') : '',
-    whyN.join(' · '), ex.rows.filter(o => !o.ok && !o.info).map(o => o.n + ' ' + o.g).join(', ')].filter(Boolean).join(' · '), dcvForce);
+    whyN.join(' · '), ex.rows.filter(o => !o.ok && !o.info).map(o => o.n + ' ' + o.g).join(', ')].filter(Boolean).join(' · '), dcvForce,
+    { d: d.done ? 1 : 0 });
   let act = '';
   if (d.ok && d.changed && !d.done) {
     act = `<div class="note" style="margin:8px 0 0">${esc(d.rows.filter(r => r.dq).map(r => `${r.k} ${r.dq > 0 ? '+' : '−'}${fmt(Math.abs(r.dq), 0)}좌`).join(' · '))} —
@@ -10988,6 +11144,9 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
   setInterval(() => { if (!document.hidden) refreshQuotes(false); }, 5 * 60e3);
   // 데이터가 덜 찬 상태로 남지 않게 주기적으로도 확인한다. 다 차 있으면 즉시 빠져나온다
   setInterval(() => { if (!document.hidden) recoverServer(); }, 60e3);
+  /* 무매/VR 탭을 띄워 둔 동안 — 다른 창·기기에서 다시 검증하면 버튼 아래 줄과 결과 칸을 새 읽기로(xvRefresh · 2026-11-18).
+     거름 간격(50초)을 틀(60초)보다 짧게 — 같으면 몇 ms 차이로 한 번씩 건너뛰어 2분이 됐다(검토) */
+  setInterval(() => { if (sbReady && !document.hidden && UI.tab === 'ib') refreshVfyStat(50e3); }, 60e3);
   /* 브라우저가 탭을 재사용하면 페이지가 다시 열리지 않고 **주소만** 바뀐다.
      그때도 결과를 받아야 한다 — 이게 없으면 아무 일도 일어나지 않는다. */
   addEventListener('hashchange', () => { if (vrAutoHash()) { if (sbReady) vrAutoResume(); return; } resumeVerify(true); });
@@ -11001,6 +11160,9 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
     resumeVerify(true);
     /* 외부검증 — 기다리던 루프를 바로 깨우고(뒤에 있는 동안 타이머가 늦춰졌다), 답을 못 받은 메리츠 요청은 다시 묻는다 */
     xvWakeAll(); apiSyncResume();
+    /* 다른 창(웹앱 ↔ 크롬 탭)에서 다시 검증하고 돌아왔으면 버튼 아래 줄과 결과 칸을 새 읽기로 — 기다리는 판이 있으면 그 판이 받는다(vfyBusy).
+       서버 원장을 받기 전(부팅 중)에는 묻지 않는다 — 판정은 처음 견준 것이 남는데 옛 원장과 견주게 된다. 돌아온 때는 5초 거름만 */
+    if (sbReady) refreshVfyStat(5e3);
     /* 수집기가 VR 자동진행으로 이 창을 앞으로 불렀을 수 있다(수집기 4.33) — 주소가 안 바뀌었어도 서버 요청을 본다 */
     if (sbReady) vrAutoResume();
   });
