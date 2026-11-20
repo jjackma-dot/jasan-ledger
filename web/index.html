@@ -852,7 +852,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-11-21 08:02';
+const BUILD = '2026-11-21 08:40';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -4647,6 +4647,45 @@ function winOf(sl) {
   return px => !(close > 0) || Math.abs(num(px) / close - 1) <= w + 0.0001;
 }
 
+/* ── fire gate 표 전체로 '무엇으로 나눴나' 와 앱의 V 를 되짚는다 (2026-11-21) ───────────────────────────
+   사용자: "VR검증 불일치 알림이 있고 체결 전/후 보유수량으로 나눈다는 메세지가 있는데 우리 웹앱과 firegate 중 어디가 맞는지 검토요망"
+   → "메세지 고치고 배포". 그날 fire gate 매도표 136줄은 **가격 × 체결 전 보유수량** 이 전부 한 값(15,472.57)이었다 — 우리와 같은 분모다.
+   다른 것은 V 였다(fire gate $13,454.41 = 지난 사이클 / 이 앱 $13,362.05 = 새 사이클). 그런데 예전 판정은 가격 창(±30%) 안의 몇 줄만 보고
+   '우리 상단 ÷ 앱 가격 ≈ 체결 뒤 수량' 이면 분모가 다르다고 했다 — V 차이 0.69% 가 지금 보유 273주에서 한 단위(2/273)와 겹쳐 오진했다.
+   그래서 **표 전체(창 밖 줄까지)** 로 가린다. 줄마다 가격은 '밴드 경계 ÷ 분모' 를 센트로 반올림한 값이라 분모가 맞으면 모든 줄의
+   (가격 ± 0.005) × 분모 구간이 한 점(밴드 경계)에서 겹친다. 줄이 지금 보유에서 넓게 퍼질수록 두 분모가 확실히 갈린다.
+   돌려주는 것: 쪽마다 { n, pre, post, div } — pre/post 는 겹치는 구간({lo, hi}, 없으면 null), div 는 하나만 맞을 때 그 이름 */
+function vrAppFit(g, u) {
+  const rows = ((g && g.rows) || []).filter(r => (r.side === 'B' || r.side === 'S') && num(r.px) > 0 && num(r.hold) > 0);
+  const one = side => {
+    const rs = rows.filter(r => r.side === side);
+    if (rs.length < 3) return null;
+    const test = den => {
+      let lo = -Infinity, hi = Infinity;
+      for (const r of rs) {
+        const D = den(r);
+        if (!(D > 0)) return null;
+        lo = Math.max(lo, (num(r.px) - 0.0051) * D); hi = Math.min(hi, (num(r.px) + 0.0051) * D);
+        if (lo > hi) return null;
+      }
+      return { lo, hi };
+    };
+    const pre = test(r => num(r.hold) + (side === 'S' ? u : -u)), post = test(r => num(r.hold));
+    return { side, n: rs.length, pre, post, div: pre && !post ? 'pre' : post && !pre ? 'post' : null };
+  };
+  return { S: one('S'), B: one('B') };
+}
+/* 앱의 V — 체결 전 분모로 맞은 쪽들의 밴드 경계 ÷ (1 ± 밴드). 양쪽이 다 있으면 겹치는 구간. 못 정하면 null.
+   off(v) — 이 V 가 그 구간에서 얼마나 벗어났나(구간 안이면 0) */
+function vrAppV(fit, b) {
+  const vs = ['S', 'B'].map(k => fit[k]).filter(f => f && f.div === 'pre')
+    .map(f => { const k = f.side === 'S' ? 1 + b : 1 - b; return { lo: f.pre.lo / k, hi: f.pre.hi / k, n: f.n }; });
+  if (!vs.length) return null;
+  const lo = Math.max(...vs.map(v => v.lo)), hi = Math.min(...vs.map(v => v.hi));
+  if (lo > hi + 0.01) return null;                           // 매수·매도가 서로 다른 V — 밴드 폭이 다른 것이다(아래 갈래)
+  return { V: (lo + hi) / 2, lo, hi, n: vs.reduce((a, v) => a + v.n, 0), off: v => v < lo ? v - lo : v > hi ? v - hi : 0 };
+}
+
 /* 전 줄이 한꺼번에 틀렸을 때 **공통 원인 하나**를 짚는다.
 
    ── 40건은 40개의 오류가 아니다 (2026-09-09) ──────────────────────
@@ -4678,40 +4717,40 @@ function vrCause(sl, pairs, g) {
   }
 
   const o = run.orders;
+  /* ── 표 전체로 분모와 V 를 먼저 가른다 (2026-11-21, 위 vrAppFit) ── 짝이 하나도 안 맞은 날(앱 매수표가 비었다)에도 말한다 */
+  const fit = vrAppFit(g, appU > 0 ? appU : u), aV = vrAppV(fit, b);
+  if (aV && Math.abs(aV.off(num(run.V))) > 0.5) {
+    const myV = num(run.V), cy = run.cycles && run.cycles[run.cycles.length - 1];
+    const prevV = cy && num(cy.V0) > 0 ? num(cy.V0) : 0;
+    const prev = prevV > 0 && Math.abs(aV.off(prevV)) <= 0.5;          // V 를 견주는 다른 자리와 같은 $0.5 — 센트 반올림 구간 밖으로 조금 나가도 같은 값
+    const noBuy = !((g && g.rows) || []).some(r => r.side === 'B') && (o.rows || []).some(r => r.side === 'B');
+    return `<b>나누는 수량은 같습니다(체결 전 보유수량) — 다른 것은 V 입니다.</b>
+      fire gate 표 ${fmt(aV.n, 0)}줄을 거꾸로 풀면 앱의 V 는 <b>${ibU(aV.V, 2)}</b>, 이 앱은 <b>${ibU(myV, 2)}</b> 입니다(${ibSgn(myV - aV.V, 2)}).`
+      + (prev
+        ? `<br>앱의 V 는 이 앱의 <b>지난 사이클 V(${ibU(prevV, 2)})</b> 와 같습니다 — 이 앱은 ${esc(String(cy.d || '').slice(5).replace('-', '/'))} 부터 새 사이클이고 fire gate 는 아직 지난 사이클입니다.
+          <b>fire gate 에서 사이클을 갱신한 뒤 다시 검증해 주세요.</b>${noBuy ? ' 앱 매수표가 비어 있는 것도 지난 사이클의 Pool 사용 한도를 다 쓴 탓입니다.' : ''}`
+        : `<br>사이클을 갱신했는데도 다르면 설정의 <b>기준선 V</b>(시작일 값)·<b>Pool</b> 을 앱 화면과 맞춰 보세요 —
+          Pool 차이 ÷ ${fmt(num(vrCfg(sl.k).G), 0)} 만큼 V 가 갈립니다. 아래 <b>Pool 내역</b>에서 어느 날 갈라졌는지 보세요.`);
+  }
+  /* 표 전체가 '체결 뒤 보유수량' 으로만 맞는다 — 이때만 분모가 다르다고 말한다(예전엔 창 안 몇 줄로 짐작해 V 차이를 이것으로 오진했다) */
+  const postF = ['S', 'B'].map(k => fit[k]).find(f => f && f.div === 'post');
+  if (postF) {
+    const n = postF.side === 'S' ? '매도' : '매수', K = (postF.post.lo + postF.post.hi) / 2, lim0 = postF.side === 'S' ? num(o.up) : num(o.dn);
+    return `<b>앱은 ${n} 가격을 <u>체결 뒤 보유수량</u>으로 나눕니다</b> — fire gate ${n}표 ${fmt(postF.n, 0)}줄이 전부 '가격 × 체결 뒤 수량 = ${ibU(K, 2)}' 로 맞습니다.
+      이 앱은 체결 전 보유수량으로 나눕니다(밴드 경계 ${ibU(lim0, 2)}). <b>${n} 식을 앱에 맞춰야 합니다 — 알려 주세요.</b>`;
+  }
   const bad = pairs.filter(p => p.mine && p.app && !p.ok);
-  const okN = s2 => pairs.filter(p => p.mine && p.app && p.ok && p.mine.side === s2).length;
   const badS = bad.filter(p => p.mine.side === 'S'), badB = bad.filter(p => p.mine.side === 'B');
   if (bad.length < 3) return '';
 
-  /* **한쪽만 어긋나면 그쪽 규칙이 다른 것이다.**
-
-     2026-09-10: 표기 단위를 잡고 나니 40건이 20건으로 줄었다 — 정확히 절반이다.
-     `docs/07` 을 다시 보니 2026-09-07 의 "불일치 0" 검증은 **매수표 16줄만** 이었다.
-     매도표는 앱과 맞춰 본 적이 없다. 그러니 매도 규칙을 우리가 대칭으로 짐작한
-     그대로 두고 "앱이 틀렸다" 고 말하면 안 된다.
-
-     앱 가격을 거꾸로 풀면 앱이 **무엇으로 나눴는지**가 나온다.
-     우리 식은 `밴드경계 ÷ 체결 전 보유수량` 이고, 표의 수량 칸은 체결 뒤 값이다.
-     앱이 체결 **뒤** 수량으로 나눴다면 그 값이 그대로 드러난다. */
+  /* 한쪽만 어긋날 때 '그쪽 분모가 다르다' 고 짐작하던 갈래(2026-09-10)는 걷었다(2026-11-21) — 창 안 몇 줄로는 V 차이와 분모 차이가
+     같은 모양이 된다. 분모는 위에서 표 전체로 가른다(vrAppFit). 매도 식은 그날 fire gate 매도표 136줄로 확인했다(docs/07) */
   const lim = sd => sd === 'S' ? num(o.up) : num(o.dn);
-  const post = p => num(p.mine.hold);                                   // 체결 뒤
   const pre = p => num(p.mine.hold) + (p.mine.side === 'S' ? u : -u);   // 체결 전 (우리 분모)
   const impl = p => lim(p.mine.side) / num(p.app.px);                   // 앱이 나눈 값
-  const near = (a, c) => Math.abs(a - c) < 0.5;
-  const allPost = arr => arr.length >= 3 && arr.every(p => near(impl(p), post(p)));
-
   const sideName = arr => arr === badS ? '매도' : '매수';
   const oneSide = badS.length >= 3 && badB.length === 0 ? badS
     : badB.length >= 3 && badS.length === 0 ? badB : null;
-
-  if (oneSide && allPost(oneSide)) {
-    const n = sideName(oneSide), other = n === '매도' ? '매수' : '매도';
-    return `<b>${n} 줄만 어긋납니다 — 앱은 ${n} 가격을 <u>체결 뒤 보유수량</u>으로 나눕니다.</b>
-      이 앱은 <b>체결 전 보유수량</b>으로 나눕니다(${other}는 그 규칙으로 ${fmt(okN(other === '매수' ? 'B' : 'S'), 0)}줄 전부 맞았습니다).
-      예: 이 앱 ${ibU(num(oneSide[0].mine.px))} = ${ibU(lim(oneSide[0].mine.side), 0)} ÷ ${fmt(pre(oneSide[0]), 0)}주,
-      앱 ${ibU(num(oneSide[0].app.px))} = ${ibU(lim(oneSide[0].mine.side), 0)} ÷ ${fmt(post(oneSide[0]), 0)}주.
-      <b>${n} 식을 앱에 맞추면 됩니다 — 근거가 화면에 있으니 알려 주세요.</b>`;
-  }
 
   /* 양쪽이 같은 규칙으로 어긋나면 기준선이 밀린 것이다. 줄마다 ΔV 를 되돌려
      한 곳으로 모이는지 본다. */
@@ -5873,8 +5912,12 @@ function verifyReport(what, txt, at) {
        '지금 Pool − 그 줄까지 비용' 을 내림한 값이라(docs/07) 첫 줄에서 가격 차이만큼 되돌리면 두 Pool 의 차이가
        ±$1 안으로 나온다. 차이가 V 는 $0.5, Pool 은 $2 를 넘을 때만 센다 — 그 아래는 주문표를 바꾸지 못한다. */
     const vr = sl.vr ? vrRun(sl.k) : null;
-    const dV = vr && num(g.V) > 0 ? num(vr.V) - num(g.V) : 0;
-    const vWhy = Math.abs(dV) > 0.5 ? `V 앱 ${ibU(g.V, 2)} / 여기 ${ibU(vr.V, 2)}` : '';
+    /* 앱 화면의 V 를 못 읽었으면 표 전체로 되짚은 V(vrAppV, 2026-11-21) — fire gate 사이클을 갱신하지 않은 날 표만 읽혀도 V 차이를 센다.
+       되짚은 V 는 구간이라 우리 V 가 그 구간 밖일 때만 차이로 본다 */
+    const fitV = vr && !(num(g.V) > 0) ? vrAppV(vrAppFit(g, num(g.unit) > 0 ? num(g.unit) : Math.max(1, num(vr.orders.unit))), num(vrCfg(sl.k).band) / 100) : null;
+    const appV = num(g.V) > 0 ? num(g.V) : fitV ? fitV.V : 0;
+    const dV = vr && appV > 0 ? (fitV ? fitV.off(num(vr.V)) : num(vr.V) - appV) : 0;
+    const vWhy = Math.abs(dV) > 0.5 ? `V 앱 ${ibU(appV, 2)} / 여기 ${ibU(vr.V, 2)}` : '';
     const pb = sl.vr ? pairs.filter(p => p.mine && p.app && num(p.app.pool) > 0 && num(p.mine.pool) > 0)
       .sort((a, b) => Math.abs(num(a.mine.hold) - q) - Math.abs(num(b.mine.hold) - q))[0] : null;
     /* 매수 줄은 Pool 에서 비용을 빼고 매도 줄은 더한다 — 가격 차이를 되돌리는 방향이 반대다 */
