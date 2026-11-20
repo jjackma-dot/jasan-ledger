@@ -325,6 +325,28 @@ input[type=number],input.num{font-family:"IBM Plex Mono",monospace;font-variant-
 /* 라벨 안에 또 들어가는 부가 설명 — .u 가 이미 감싼 자리에 겹쳐 쓰지 않으려고 둔다 */
 .erow label .u2{font-size:10.5px;color:var(--muted);margin-left:4px;font-weight:400}
 .erow input{width:118px;flex:none;padding:6px 8px;font-size:12.5px}
+/* 입력 › 보유 현황 › 별도 TQQQ (2026-11-21) — 수량 줄 아래 '설명 · [수익|입출금] · ☐ 제외'. 전역 input 규칙(폭 100% · .erow 118px)이
+   체크칸을 늘리지 않게 외부검증 체크(.xvC)와 같은 값으로 묶는다. 고친 기록은 접어 둔다 */
+.erow.xtQ{gap:8px}
+.erow.xtQ select{flex:none;width:auto;padding:5px 8px;font-size:12.5px}
+.erow.xtQ input{width:96px}
+.erow.xtO{gap:8px;padding-top:4px;border-top:0}
+.erow .xtSay{font-size:11px;color:var(--muted);line-height:1.35}
+.erow label.xtEx{flex:none;display:inline-flex;align-items:center;gap:5px;min-height:32px;font-size:12.5px;color:var(--ink2);cursor:pointer}
+.erow label.xtEx input{width:17px;height:17px;flex:none;margin:0;padding:0;border:0;border-radius:0;background:none;accent-color:var(--brass)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .erow label.xtEx input{color-scheme:dark}}
+:root[data-theme="dark"] .erow label.xtEx input{color-scheme:dark}
+details.erow.xtLog{display:block;padding-top:6px;padding-bottom:8px}
+.xtLog summary{font-size:11.5px;color:var(--muted);cursor:pointer}
+.xtLog summary::before{content:"\25B8 ";color:var(--brass)}
+.xtLog[open] summary::before{content:"\25BE "}
+.xtL{display:flex;align-items:center;gap:8px;font-size:11.5px;color:var(--ink2);padding:5px 0;border-top:1px solid var(--line)}
+.xtL:first-of-type{border-top:0}
+.xtL .num:nth-child(2){min-width:58px;text-align:right}
+.xtL .num:nth-child(3){min-width:52px;text-align:right;color:var(--muted)}
+.xtL .f{color:var(--brass);font-weight:600}
+.xtL .g{color:var(--c2);font-weight:600}
+.xtL button{margin-left:auto;flex:none;padding:3px 8px;font-size:11px}
 /* 실적/계획 › 시뮬레이션 설정 — 칸 높이를 고르게 (2026-10-02, 사용자 요청).
    details.inl 의 위 여백 12px 가 구분선 **바깥**에 붙어, 접힌 네 칸이 66 · 54 · 54 · 42px 로
    들쭉날쭉했고 글자도 칸 위쪽에 쏠렸다. 안쪽 줄은 입력칸 줄 높이(48px)에 맞춘다 — 체크 칸 줄이 38px 였다 */
@@ -830,7 +852,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-11-18 14:54';
+const BUILD = '2026-11-21 08:02';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -949,6 +971,9 @@ function calc(x) {
   const usdStock = (num(x.mm.T.q) + num(x.vr.T.q)) * num(p.T) + num(x.mm.S.q) * num(p.S);
   const fx = num(p.FX);
   const usK = usdStock * fx / 1e4;
+  /* 별도 TQQQ (2026-11-21) — 무매·VR 밖 다른 계좌의 TQQQ. 메리츠 계좌가 아니라 usK·meritz() 에는 안 넣고 주식으로 세 범위 합계에만.
+     제외(state.xt.ex)면 수량을 0 으로 본다 — 합계·누적수익·원금회복 % 어디에도 안 들어간다(기록만 남는다) */
+  const xtQ = xtQty(x), xtV = xtQ * num(p.T) * fx / 1e4;
   const cashK = num(x.usd) * fx / 1e4;
   const isaV = num(x.isa.q) * num(p.LEV) / 1e4;
   const kidQ = Object.values(x.kid).reduce((a, b) => a + num(b), 0);
@@ -960,10 +985,10 @@ function calc(x) {
      실제 시세로 재면 그날 +345만원 차이였다. 좌수가 하나도 없으면 예전처럼 손으로 넣은 값을 쓴다. */
   const dcAuto = DC_KEYS.reduce((a, k) => a + num((x.dc || {})[k]) * num(x.px[k]), 0) / 1e4;
   const dcv = dcAuto > 0 ? dcAuto : num(x.dcv), krw = num(x.krw);
-  const fin = krw + savT + isaV + kidV + cashK + dcv + usK;
-  const asset = reT + krw + savT + isaV + cashK + usK;
-  const stockAcct = krw + savT + isaV + cashK + usK;      // DC·자녀 제외 금융자산
-  return { usdStock, usK, cashK, isaV, kidV, kidQ, reT, savT, dcv, krw, fx, stockAcct, fin, asset, total: reT + fin };
+  const fin = krw + savT + isaV + kidV + cashK + dcv + usK + xtV;
+  const asset = reT + krw + savT + isaV + cashK + usK + xtV;
+  const stockAcct = krw + savT + isaV + cashK + usK + xtV;      // DC·자녀 제외 금융자산
+  return { usdStock, usK, cashK, isaV, kidV, kidQ, reT, savT, dcv, krw, fx, xtQ, xtV, stockAcct, fin, asset, total: reT + fin };
 }
 const dayKeys = () => Object.keys(state.days).sort();
 /* 아직 아무 값도 없는 상태인가 */
@@ -990,6 +1015,7 @@ function items(x) {
     { g: '주식', cat: 'core', k: 'mmT', n: '무매 TQQQ', s: fmt(x.mm.T.q) + '주', v: num(x.mm.T.q) * num(p.T) * c.fx / 1e4 },
     { g: '주식', cat: 'core', k: 'mmS', n: '무매 SOXL', s: fmt(x.mm.S.q) + '주', v: num(x.mm.S.q) * num(p.S) * c.fx / 1e4 },
     { g: '주식', cat: 'core', k: 'vrT', n: 'VR TQQQ', s: fmt(x.vr.T.q) + '주', v: num(x.vr.T.q) * num(p.T) * c.fx / 1e4 },
+    ...(c.xtQ > 0 ? [{ g: '주식', cat: 'core', k: 'xt', n: '별도 TQQQ', s: fmtQ(c.xtQ) + '주', v: c.xtV }] : []),
     { g: '주식', cat: 'core', k: 'isa', n: 'ISA 레버리지', s: fmt(x.isa.q) + '주', v: c.isaV },
     { g: '현금', cat: 'core', k: 'usd', n: '외화예수금', s: '$' + fmt(x.usd, 0), v: c.cashK },
     { g: '현금', cat: 'core', k: 'krw', n: '원화예수금', v: c.krw },
@@ -1370,7 +1396,7 @@ const hhmm = t => { const d = new Date(t); return pad2(d.getHours()) + ':' + pad
 const LIVE_MS = 10 * 60e3, COL_MS = 20 * 60e3;
 /* 점이 볼 자리 — 이 범위에서 **실제로 들고 있는 것**의 시세만. 환율은 달러 자산(미국 주식·외화예수금·자녀 QLD)이 있을 때 */
 function heroKeys(x, scope) {
-  const all = scope !== 'asset', ks = [], tq = num(x.mm.T.q) + num(x.vr.T.q), sq = num(x.mm.S.q);
+  const all = scope !== 'asset', ks = [], tq = num(x.mm.T.q) + num(x.vr.T.q) + xtQty(x), sq = num(x.mm.S.q);
   const kq = Object.values(x.kid || {}).reduce((a, b) => a + num(b), 0);
   if (tq > 0) ks.push('T');
   if (sq > 0) ks.push('S');
@@ -1418,7 +1444,7 @@ const BE_N = { T: 'TQQQ', QLD: '자녀 QLD', LEV: 'ISA 레버리지', RISE: 'DC 
 function beLegs(x, c, all) {
   const p = x.px, d = x.dc || {}, legs = [];
   const add = (k, v) => { if (v) legs.push({ k, v, b: BE_B[k] }); };
-  add('T', (num(x.mm.T.q) + num(x.vr.T.q)) * num(p.T) * c.fx / 1e4);
+  add('T', (num(x.mm.T.q) + num(x.vr.T.q) + xtQty(x)) * num(p.T) * c.fx / 1e4);   // 별도 TQQQ 도 3배(2026-11-21 · 제외면 0)
   add('LEV', c.isaV);
   if (all) {
     add('QLD', c.kidV);
@@ -1459,6 +1485,25 @@ function renderHero(x = latest()) {
   const ep = estPx(x, sc), xe = ep ? { ...x, px: { ...x.px, ...ep.px } } : x, ce = ep ? calc(xe) : c;
   const be = heroBe(pBasis(ce, sc), beLegs(xe, ce, all), !!ep);
   fillHx($('#heroX'), ep && { id: 'heroEst', txt: HIDE ? MASK : fmt(ce[sc], 0), tip: estTip(ep, '예측 자산') }, be, 'heroBe');
+  heroFit();
+}
+/* 맨 위 줄 맞추기 (2026-11-21, 사용자: "종합>전체 예상금액이 1.5줄로 약간 밀려보임. 자산,전체 가장 큰 글씨를 아주 약간 줄여 최적화").
+   큰 숫자 · 만원 · 점 · '/ 예측 / ±x.x%' 가 한 줄에 안 들면(오른쪽 덩어리가 다음 줄로 내려가면) 아래 차례로 줄여 보고 한 줄에 드는 첫 단계에서 멈춘다.
+   먼저 큰 숫자만(34 → 30px), 그래도 안 들면 만원·오른쪽 덩어리를 한 단계씩(15 → 14 → 13px, 간격 5 → 3px)과 큰 숫자 28px 까지.
+   잰 것(IBM Plex Mono · 여섯 자리 · 예측·% 함께): 412px 폭 34 그대로 · 393px 30 · 384px 30/14 · 375px 29/14 · 360px 28/13.
+   끝 단계로도 안 들면(더 좁은 화면) 처음 크기로 두고 예전처럼 오른쪽 덩어리만 다음 줄 오른쪽에 둔다.
+   자리 수가 적은 금융 범위·예측이 없는 장중은 대개 그대로다. 탭이 가려져 있으면 잴 수 없어 그대로 두고, 종합을 열 때 다시 잰다 */
+const HERO_FIT = [[33, 15, 5], [32, 15, 5], [31, 15, 5], [30, 15, 5], [30, 14, 4], [29, 14, 4], [28, 14, 4], [28, 13, 3]];
+function heroFit() {
+  const big = $('#p-sum .hero .big'), v = $('#heroVal'), hx = $('#heroX'), u = big && big.querySelector('.unit');
+  if (!big || !v || !hx || !u) return;
+  const set = (b, h, g) => { big.style.fontSize = b; u.style.fontSize = h; hx.style.fontSize = h; hx.style.gap = g; };
+  set('', '', '');
+  if (hx.hidden || !v.getClientRects().length) return;
+  const one = () => hx.getBoundingClientRect().top < v.getBoundingClientRect().bottom - 2;
+  if (one()) return;
+  for (const [b, h, g] of HERO_FIT) { set(b + 'px', h + 'px', g + 'px'); if (one()) return; }
+  set('', '', '');
 }
 const estTip = (ep, what) => `${what} — ${ep.keys.map(k => EST_N[k]).join('·')} 를 ${hhmm(ep.ref)} 종가에서 나스닥100 선물 ${pctS(ep.i)} · 환율 ${pctS(ep.f)} 만큼 옮긴 값`
   + ` (선물 ${hhmm(ep.nqT)} 기준 · 약 10분 지연 · 원장에는 안 씀)`;
@@ -1567,13 +1612,17 @@ function plRows() {
     plRow('무매 TQQQ', bT, num(p.T), fx),
     plRow('무매 SOXL', bS, num(p.S), fx),
     plRow('VR TQQQ', bV, num(p.T), fx),
+    /* 별도 TQQQ (2026-11-21) — 평가액 − 이 TQQQ 원금(입출금으로 고른 변경분). 수익으로 골랐으면 원금 0 이라 평가액 전부가 손익.
+       매도수익 줄(메리츠 계좌)과 겹치지 않는다 — 항등식: 항목 합 + 매도수익 = (메리츠 + 별도) − (기준원금 + 별도 원금) */
+    ...(c.xtQ > 0 || xtCostMan() ? [{ cat: 'core', grp: '보유주식', n: '별도 TQQQ', sub: fmtQ(c.xtQ) + '주 · ' + (xtCostMan() ? '원금 ' + fmt(xtCostMan(), 0) + '만원' : '수익'),
+      v: c.xtV - xtCostMan(), cost: xtCostMan() }] : []),
     { cat: 'core', grp: '보유주식', n: 'ISA 레버리지', v: c.isaV - man(num(B['주식 레버리지'].cost)), cost: man(num(B['주식 레버리지'].cost)) },
     { cat: 'core', grp: '환차손익', n: '환차손익', sub: '매입금액 + 달러예수금 × 환율차', v: (usdCost + num(x.usd)) * (fx - fx0) / 1e4, cost: (usdCost + num(x.usd)) * fx0 / 1e4 },
     { cat: 'ex', grp: '자산 외', n: '자녀 QLD', sub: '환차손익 포함', v: c.kidV - man(num(B['자녀 QLD'].cost)), cost: man(num(B['자녀 QLD'].cost)) },
     { cat: 'ex', grp: '자산 외', n: 'DC 퇴직연금', sub: dcDivWon() ? `배당 ${fmt(dcDivWon() / 1e4, 1)}만원 포함` : '', v: c.dcv - man(dcCostWon()), cost: man(dcCostWon()) }   // 원금 = 손익기준 + 9/1 뒤 불입(dcCostWon)
   ];
   /* 주식 반영수익 = (DC·자녀 제외 전체 금융자산) − 원금 */
-  const realized = { n: '주식 반영수익', sub: '무매+VR+레버리지 − 원금', v: c.stockAcct - num(state.principal), cost: num(state.principal) };
+  const realized = { n: '주식 반영수익', sub: '무매+VR+레버리지 − 원금', v: c.stockAcct - num(state.principal) - xtCostMan(), cost: num(state.principal) + xtCostMan() };
 
   /* ── 매도수익 (2026-09-20, 사용자 요청) ────────────────────────────────
      위 일곱 줄은 **지금 들고 있는 것**의 매입원가 대비 손익이다. 이미 팔아서 끝난
@@ -1627,9 +1676,12 @@ const meritz = c => c.usK + c.cashK + c.krw + c.isaV;
 function pBasis(c, scope) {
   const all = scope !== 'asset', mz = meritz(c);
   const kidCost = num(((SEED.basis || {})['자녀 QLD'] || {}).cost) / 1e4, dcCost = dcCostWon() / 1e4;
-  const val = all ? mz + c.kidV + c.dcv : mz;
-  const denom = all ? num(state.principal) + kidCost + dcCost : num(state.principal);
-  return { all, mz, kidCost, dcCost, val, denom };
+  /* 별도 TQQQ (2026-11-21) — 메리츠 밖이라 따로 더한다. 두 범위 모두(주식). 원금은 '입출금' 으로 고른 변경분만(xtCostMan) · 제외면 둘 다 0.
+     0 을 더하는 것은 비트까지 그대로다 — 별도 TQQQ 가 없으면 예전 값과 같다 */
+  const xtV = num(c.xtV), xtCost = xtCostMan();
+  const val = (all ? mz + c.kidV + c.dcv : mz) + xtV;
+  const denom = (all ? num(state.principal) + kidCost + dcCost : num(state.principal)) + xtCost;
+  return { all, mz, kidCost, dcCost, xtV, xtCost, val, denom };
 }
 
 /* 누적수익이 언제부터인가. 기준원금 16,000만원을 맞춰 둔 시점이다 (2026-09-20, 사용자 지정).
@@ -1669,7 +1721,7 @@ function renderAnalysis() {
      으로 냈는데, 값은 같지만 무엇과 견주는지가 화면에 안 보였다.
      이제 평가액도 원금도 세 조각으로 적는다. */
   const total = UI.ana === 'total';
-  const { mz, kidCost, dcCost, val, denom } = pBasis(c, UI.ana);   // 종합 탭 손익분기와 같은 식 (pBasis)
+  const { mz, kidCost, dcCost, xtV, xtCost, val, denom } = pBasis(c, UI.ana);   // 종합 탭 손익분기와 같은 식 (pBasis)
   const y1 = val - denom;
 
   $('#plVal').textContent = eok(y1);
@@ -1694,15 +1746,22 @@ function renderAnalysis() {
      답은 은행 예적금이다 — 메리츠 계좌가 아니라 기준원금에 대응하지 않으므로 뺀다
      (docs/02 '계좌가 셋이다'). 화면에 합계만 있으면 어디서 벌어졌는지 짚을 수가 없다. */
   const savOut = c.savT;
+  /* 별도 TQQQ 가 있으면(제외 아님) 평가액·원금에 한 칸씩 붙는다(2026-11-21) */
+  const xtOn = xtV > 0 || xtCost !== 0;
+  const xtVal = xtOn ? ` + 별도 TQQQ ${fmt(xtV, 0)}` : '', xtDen = xtOn ? ` + 별도 TQQQ ${fmt(xtCost, 0)} <span class="u">${xtCost ? '입출금분' : '수익으로 — 0'}</span>` : '';
   const body = total
-    ? `전체 평가액 <b>${fmt(val, 0)}만원</b> = 메리츠 ${fmt(mz, 0)} + DC ${fmt(c.dcv, 0)} + 자녀 ${fmt(c.kidV, 0)}`
+    ? `전체 평가액 <b>${fmt(val, 0)}만원</b> = 메리츠 ${fmt(mz, 0)} + DC ${fmt(c.dcv, 0)} + 자녀 ${fmt(c.kidV, 0)}${xtVal}`
       + `<br>기준원금 <b>${fmt(denom, 0)}만원</b> = 메리츠 ${fmt(num(state.principal), 0)}`
-      + ` + DC ${fmt(dcCost, 0)} <span class="u">불입금</span> + 자녀 ${fmt(kidCost, 0)}`
+      + ` + DC ${fmt(dcCost, 0)} <span class="u">불입금</span> + 자녀 ${fmt(kidCost, 0)}${xtDen}`
       + `<br>메리츠 ${fmt(mz, 0)} = 미국주식 ${fmt(c.usK, 0)} + 달러예수금 ${fmt(c.cashK, 0)}`
       + ` + 원화예수금 ${fmt(c.krw, 0)} + ISA ${fmt(c.isaV, 0)}`
-    : `메리츠 계좌 평가액 <b>${fmt(mz, 0)}만원</b> = 미국주식 ${fmt(c.usK, 0)}`
-      + ` + 달러예수금 ${fmt(c.cashK, 0)} + 원화예수금 ${fmt(c.krw, 0)} + ISA ${fmt(c.isaV, 0)}`
-      + `<br>기준원금 <b>${fmt(num(state.principal), 0)}만원</b>`;
+    : xtOn
+      ? `평가액 <b>${fmt(val, 0)}만원</b> = 메리츠 ${fmt(mz, 0)}${xtVal}`
+        + `<br>메리츠 ${fmt(mz, 0)} = 미국주식 ${fmt(c.usK, 0)} + 달러예수금 ${fmt(c.cashK, 0)} + 원화예수금 ${fmt(c.krw, 0)} + ISA ${fmt(c.isaV, 0)}`
+        + `<br>기준원금 <b>${fmt(denom, 0)}만원</b> = 메리츠 ${fmt(num(state.principal), 0)}${xtDen}`
+      : `메리츠 계좌 평가액 <b>${fmt(mz, 0)}만원</b> = 미국주식 ${fmt(c.usK, 0)}`
+        + ` + 달러예수금 ${fmt(c.cashK, 0)} + 원화예수금 ${fmt(c.krw, 0)} + ISA ${fmt(c.isaV, 0)}`
+        + `<br>기준원금 <b>${fmt(num(state.principal), 0)}만원</b>`;
   /* 목록을 더하면 큰 숫자가 나오는지 **화면이 스스로 검산한다.** 이 항등식이 깨지면
      매도수익 줄의 정의가 어긋난 것이므로 조용히 넘어가면 안 된다. */
   const shown = rows.filter(r => !r.bridge).reduce((a, r) => a + r.v, 0);
@@ -1767,7 +1826,7 @@ function renderAnalysis() {
   const usB = IB_SLOTS.reduce((a, sl) => a + usBasis(sl, x).cost, 0);
   const totalCost = (usB + num(x.usd)) * num(state.fx0) / 1e4
     + man(num(B['자녀 QLD'].cost)) + man(dcCostWon()) + man(num(B['주식 레버리지'].cost)) + num(B['부동산'].cost)
-    + c.krw + c.savT;
+    + c.krw + c.savT + xtCostMan();                           // 별도 TQQQ 원금(입출금분, 2026-11-21) — 손익 줄과 같은 기준
   const direct = c.total - totalCost;
   const sumAll = allRows.reduce((a, r) => a + r.v, 0);
   const gap = Math.abs(direct - (sumAll + reP + loan));
@@ -1777,7 +1836,7 @@ function renderAnalysis() {
      CUM_FROM 몫은 메리츠 계좌 기준으로 고정한다 — 범위(자산/전체)를 따라가면
      총액(주식 기준)과 앞뒤가 안 맞는다. 과거수익은 나머지다. */
   const cumAll = num(state.stPast) + realized.v;
-  const cum1 = meritz(c) - num(state.principal);
+  const cum1 = meritz(c) + num(c.xtV) - num(state.principal) - xtCostMan();   // 별도 TQQQ(2026-11-21)는 이 기간 안에 산 것 — 0 이면 예전과 같다
 
   /* 무매·VR 은 Pool(대기 현금)을 끼고 도는 전략이다. 라오어 무한매수법 4.0 과
      VR 5.0 은 매입금액을 정해진 분할로 쪼개 넣고 남은 돈을 Pool 로 들고 있는다.
@@ -1812,20 +1871,20 @@ function renderAnalysis() {
   $('#idCheck').innerHTML = `<details${gap < 0.5 ? '' : ' open'}><summary style="cursor:pointer;font-size:11.5px;color:var(--muted);letter-spacing:.1em;text-transform:uppercase;font-weight:600;list-style:none">
       검증과 분해 <span style="color:var(--${gap < 0.5 ? 'c2' : 'up'});letter-spacing:0;text-transform:none">· 차이 ${fmt(gap, 2)}만원</span></summary>
     <div class="scroll" style="margin-top:8px"><table class="tbl">
-    <tr><td>손익 7개 항목 합</td><td>${fmt(sumAll, 1)}</td></tr>
+    <tr><td>손익 ${allRows.length}개 항목 합</td><td>${fmt(sumAll, 1)}</td></tr>
     <tr><td>부동산 <span class="u">대출 제외</span></td><td>${fmt(reP, 1)}</td></tr>
     <tr><td>대출 <span class="u">부채</span></td><td>${fmt(loan, 1)}</td></tr>
     <tr><td>전체자산 − 총 매입원가</td><td>${fmt(direct, 1)}</td></tr>
     <tr><td style="color:var(--ink);font-weight:600">차이</td><td style="color:var(--${gap < 0.5 ? 'c2' : 'up'});font-weight:600">${fmt(gap, 2)} 만원</td></tr>
     </table></div>
     <p class="note" style="margin-top:8px">${gap < 0.5
-      ? `무매 + VR + 환차손익 + ISA + 자녀 + DC + 부동산 + 대출의 합이 전체 손익과 정확히 일치합니다.
+      ? `무매 + VR${allRows.some(r => r.n === '별도 TQQQ') ? ' + 별도 TQQQ' : ''} + 환차손익 + ISA + 자녀 + DC + 부동산 + 대출의 합이 전체 손익과 정확히 일치합니다.
          부동산에 과거 실현수익 ${fmt(num(state.rePast), 0)}만원을 더한 <b>누적수익은 ${fmt(reCum, 0)}만원</b>입니다.`
       : '차이가 있습니다. 매입 평균환율 또는 손익기준 매입금액을 확인하세요.'}</p>
     <div class="scroll" style="margin-top:12px"><table class="tbl">
     <tr><th>주식 반영수익 분해</th><th>만원</th></tr>
     <tr><td>주식계좌 평가액</td><td>${fmt(c.stockAcct, 0)}</td></tr>
-    <tr><td>− 원금</td><td>${fmt(num(state.principal), 0)}</td></tr>
+    <tr><td>− 원금${xtCostMan() ? ` <span class="u">기준원금 ${fmt(num(state.principal), 0)} + 별도 TQQQ ${fmt(xtCostMan(), 0)}</span>` : ''}</td><td>${fmt(num(state.principal) + xtCostMan(), 0)}</td></tr>
     <tr><td style="color:var(--ink);font-weight:600">= 반영수익</td><td style="font-weight:600">${fmt(realized.v, 0)}</td></tr>
     <tr><td>그중 원장 이후 <span class="u">실현 + 미실현</span></td><td>${fmt(unreal, 0)}</td></tr>
     <tr><td>원장 이전 실현분</td><td>${fmt(realized.v - unreal, 0)}</td></tr>
@@ -2104,6 +2163,116 @@ function ensureMeta() {
   });
 }
 
+/* ===================== 별도 TQQQ (2026-11-21, 사용자 요청) =====================
+   사용자: "입력에서 무매,VR 이 아닌 '별도 TQQQ' 보유량을 입력할 수 있게 하고 수익/입출금 중 고를 수 있게 할 것. 해당 TQQQ도 원금회복 % 의
+   계산에 반영할 것. 수량은 며칠에 한 번씩 바뀔 예정이므로 처음 수익으로 골랐다면 보유수량 수정 시 수익에 지속 반영. 오른쪽 제외 체크박스를
+   체크하면 현 수익에서 제외할 수 있게 할 것."
+   사용자 결정(11/21): 무매·VR 계좌(3020·3081)가 **아닌** 다른 계좌·증권사(메리츠 API·알림톡과 안 겹친다) · 금융·자산·전체 **모두**(주식처럼) ·
+   입출금이면 늘어난 수량 × 그날 시세를 **자동으로** 원금에 · 제외는 **자산 합계에서도** 뺀다(기록만 남김).
+   · 수량은 그날 원장 `x.xt.q` — 다음 날로 이월된다(fillToToday 가 통째로 베낀다). 메리츠 계좌가 아니라 meritz() 에는 안 넣는다.
+   · 고르기 · 제외 · 고친 기록은 `state.xt = { m: 'gain'|'flow', ex, log }` — meta 'xt' 로 기기끼리 맞춘다(dcFlows 와 같은 자리).
+   · 수량을 고칠 때마다 기록 한 줄: 늘어난(줄어든) 수량 × 그날 TQQQ 시세 × 환율(만원). **그때 고른 것**이 입출금이면 그 금액이 이 TQQQ 의 원금이다 —
+     처음 수익으로 골랐으면 뒤에 고치는 수량도 수익으로 쌓인다. 고른 것을 바꾸면 그 뒤로 고치는 것부터다. 지난 줄은 기록에서 하나씩 바꾼다(xtFlip).
+   · 원금은 기준원금(state.principal)에 섞지 않고 따로 센다(xtCostMan) — 제외를 켜면 평가액과 원금이 함께 빠지게(섞으면 원금만 남아 누적수익이 꺼진다).
+   · 반영하는 곳: calc(합계) · items(종합 목록·그래프) · pBasis(누적수익·원금회복 %) · beLegs(TQQQ 3배) · heroKeys(점) · plRows(분석 항목) ·
+     cumulative(실적/계획 주식 누적수익). 제외면 어디에도 안 들어간다. 별도 TQQQ 가 없으면 모든 값이 비트까지 예전과 같다(0 을 더한다) */
+const XT0 = Object.freeze({ m: 'gain', ex: false, log: [] });
+let xtLogOpen = false;                                      // 고친 기록을 펴 두었나 — 줄을 바꾸면 보유 현황을 다시 그리는데 그때 접히지 않게
+/* 수량 — 소수 주(모으기 등)도 있을 수 있어 넷째 자리까지, 끝의 0 은 뗀다 */
+const fmtQ = q => { const r = Math.round(num(q) * 1e4) / 1e4, d = (String(Math.abs(r)).split('.')[1] || '').length; return fmt(r, Math.min(4, d)); };
+const xtS = () => state.xt || XT0;
+const xtW = () => { if (!state.xt || typeof state.xt !== 'object') state.xt = { m: 'gain', ex: false, log: [] }; if (!Array.isArray(state.xt.log)) state.xt.log = []; return state.xt; };
+const xtQty = x => xtS().ex ? 0 : Math.max(0, num(x && x.xt && x.xt.q));
+/* 이 TQQQ 의 원금(만원) — 입출금으로 고른 변경분의 합. 제외면 0 */
+function xtCostMan() {
+  const s = xtS();
+  if (s.ex || !Array.isArray(s.log)) return 0;
+  return s.log.reduce((a, e) => a + (e && e.m === 'flow' ? num(e.amt) : 0), 0);
+}
+/* 설명 한 줄 — 지금 고른 것 · 원금 · (입출금인데) 수익으로 잡힌 수량 */
+function xtSayText() {
+  const s = xtS(), log = Array.isArray(s.log) ? s.log : [];
+  const sum = m => log.reduce((a, e) => a + (e && e.m === m ? num(e.dq) : 0), 0);
+  const cost = log.reduce((a, e) => a + (e && e.m === 'flow' ? num(e.amt) : 0), 0), gq = sum('gain'), fq = sum('flow');
+  if (s.ex) return '제외 — 합계·누적수익·원금회복 %에 안 넣습니다(기록만 남김)';
+  return s.m === 'flow'
+    ? `입출금 — 고칠 때 늘어난 수량 × 그날 시세를 원금에${cost ? ` · 원금 ${fmt(cost, 0)}만원` : ''}${gq ? ` · 수익으로 잡힌 ${fmtQ(gq)}주` : ''}`
+    : `수익 — 평가액이 누적수익${fq ? ` · 입출금으로 잡힌 ${fmtQ(fq)}주(원금 ${fmt(cost, 0)}만원)` : ''}`;
+}
+function xtLogHtml() {
+  const s = xtS(), log = Array.isArray(s.log) ? s.log : [];
+  if (!log.length) return '';
+  const rows = log.slice(0, 12).map((e, i) => `<div class="xtL"><span class="num">${esc(String(e.d || '').slice(5).replace('-', '.'))}</span>
+      <span class="num">${num(e.dq) > 0 ? '+' : '−'}${fmtQ(Math.abs(num(e.dq)))}주</span>
+      <span class="num">${num(e.amt) >= 0 ? '' : '−'}${fmt(Math.abs(num(e.amt)), 0)}만</span>
+      <span class="${e.m === 'flow' ? 'f' : 'g'}">${e.m === 'flow' ? '입출금' : '수익'}</span>
+      <button class="ghost" data-xtflip="${i}">${e.m === 'flow' ? '수익으로' : '입출금으로'}</button></div>`).join('');
+  return `<details class="erow xtLog"${xtLogOpen ? ' open' : ''}><summary>별도 TQQQ 고친 기록 <span class="u">${log.length}건${log.length > 12 ? ' · 최근 12건' : ''}</span></summary>${rows}
+      <p class="note" style="margin:6px 0 0">수량을 고칠 때 <b>그때 고른 것</b>(수익/입출금)으로 쌓입니다. 금액은 늘어난 수량 × 그날 TQQQ 시세 × 환율입니다.
+      잘못 고른 줄은 오른쪽 버튼으로 바꿀 수 있습니다 — 입출금 줄만 이 TQQQ 의 원금이 됩니다.</p></details>`;
+}
+/* 보유 현황의 별도 TQQQ 자리. **수익/입출금을 수량보다 앞에** 둔다 — 위에서 아래로 채우면 고른 것이 첫 수량부터 들어간다(검토: 수량을 먼저 넣고
+   아래에서 입출금을 고르면 첫 수량이 수익으로 잡혔다). 제외는 오른쪽(사용자). 설명·고친 기록은 바뀔 때 그 자리만 다시 그린다(xtSync) */
+function xtRowHtml(x) {
+  const s = xtS(), q = num(x && x.xt && x.xt.q);
+  return `<div class="erow xtQ"><label>별도 TQQQ 보유 <span class="u">주 · 무매·VR 밖 계좌</span></label>
+     <select data-xtm aria-label="별도 TQQQ 수량을 고칠 때 수익인지 입출금인지"><option value="gain"${s.m !== 'flow' ? ' selected' : ''}>수익</option><option value="flow"${s.m === 'flow' ? ' selected' : ''}>입출금</option></select>
+     <input class="num" type="number" step="any" min="0" data-xtq value="${q}" aria-label="별도 TQQQ 보유 수량(주)"></div>
+   <div class="erow xtO"><label class="xtSay" id="xtSay">${esc(xtSayText())}</label>
+     <label class="xtEx"><input type="checkbox" data-xtex${s.ex ? ' checked' : ''}><span>제외</span></label></div>
+   <div id="xtLogBox">${xtLogHtml()}</div>`;
+}
+/* 바뀐 자리만 다시 그린다 — 보유 현황 전체(#holdEdit)를 다시 그리면 사람이 막 누른 다음 칸·버튼이 사라져 폰 키보드가 닫히고 그 탭이 먹혔다(검토).
+   다른 보유 칸처럼 종합·분석·실적/계획만 다시 그린다 */
+function xtSync() {
+  const say = $('#xtSay'), box = $('#xtLogBox');
+  if (say) say.textContent = xtSayText();
+  if (box) box.innerHTML = xtLogHtml();
+  renderSummary(); renderAnalysis(); renderPlan();
+}
+/* 보유 현황의 별도 TQQQ 칸이 바뀌었다 — 처리했으면 true */
+function xtChange(el) {
+  if (!el || !el.matches || !el.matches('[data-xtq],[data-xtm],[data-xtex]')) return false;
+  const s = xtW();
+  if (el.matches('[data-xtm]')) {
+    s.m = el.value === 'flow' ? 'flow' : 'gain';
+    /* 오늘 넣은 줄이 다른 쪽으로 잡혀 있으면 함께 바꿀지 묻는다 — 수량을 먼저 넣고 고른 경우(검토). 지난 날 줄은 고친 기록에서 하나씩 */
+    const lk = latestKey(), other = s.log.filter(e => e && e.d === lk && e.m !== s.m);
+    const label = s.m === 'flow' ? '입출금(원금)' : '수익';
+    if (other.length && confirm(`오늘 넣은 ${other.length}줄(${other.map(e => (num(e.dq) > 0 ? '+' : '−') + fmtQ(Math.abs(num(e.dq))) + '주').join(', ')})도 ${label}으로 바꿀까요?`)) {
+      other.forEach(e => { e.m = s.m; });
+      toast(`별도 TQQQ — 오늘 넣은 ${other.length}줄도 ${label}으로 바꿨습니다`);
+    } else toast(`별도 TQQQ — 이제부터 고치는 수량은 ${label}으로`);
+  } else if (el.matches('[data-xtex]')) {
+    s.ex = !!el.checked;
+    toast(s.ex ? '별도 TQQQ 제외 — 합계·누적수익·원금회복 %에서 뺐습니다' : '별도 TQQQ 다시 넣었습니다');
+  } else {
+    const x = latest(), old = num(x.xt && x.xt.q), raw = String(el.value).trim(), q = +raw;
+    /* 빈칸·음수·숫자 아님은 받지 않는다 — 0 으로 치면 '다 팔았다' 가 되어 입출금이면 원금이 빠진다(검토). 0 은 직접 0 을 넣었을 때만 */
+    if (raw === '' || !isFinite(q) || q < 0) { toast('별도 TQQQ — 0 이상의 수량을 넣어 주세요'); el.value = old; return true; }
+    const dq = +(q - old).toFixed(6);
+    if (!dq) { el.value = old; return true; }
+    /* 금액은 늘어난 수량 × 그날 시세 × 환율 — 수익으로 넣어도 적어 둔다(나중에 그 줄을 입출금으로 바꾸면 그 금액이 원금). 그래서 시세·환율이 없으면 받지 않는다 */
+    const px = num(x.px.T), fx = num(x.px.FX);
+    if (!(px > 0 && fx > 0)) { toast('TQQQ 시세·환율이 아직 없어 금액을 잴 수 없습니다 — 시세를 받은 뒤 다시 넣어 주세요'); el.value = old; return true; }
+    const amt = +(dq * px * fx / 1e4).toFixed(2);
+    x.xt = { q };
+    s.log = [{ d: latestKey(), dq, px, fx, amt, m: s.m === 'flow' ? 'flow' : 'gain', ts: Date.now() }].concat(s.log || []);
+    markDirty(latestKey());
+    toast(`별도 TQQQ ${fmtQ(q)}주 (${dq > 0 ? '+' : '−'}${fmtQ(Math.abs(dq))}주) — ${s.m === 'flow' ? `입출금: 원금 ${amt >= 0 ? '+' : '−'}${fmt(Math.abs(amt), 0)}만원` : '수익으로'}${s.ex ? ' · 지금은 제외 중' : ''}`);
+  }
+  schedulePush(); saveLocal(); xtSync();
+  return true;
+}
+/* 기록 한 줄을 수익 ↔ 입출금으로 바꾼다 — 그 줄의 금액만큼 이 TQQQ 의 원금이 늘거나 준다 */
+function xtFlip(i) {
+  const s = xtW(), e = s.log[i]; if (!e) return;
+  if (e.m !== 'flow' && !(num(e.px) > 0 && num(e.fx) > 0) && num(e.dq)) { toast('그 줄은 시세 없이 적혀 금액을 모릅니다 — 수량을 다시 고쳐 넣어 주세요'); return; }
+  e.m = e.m === 'flow' ? 'gain' : 'flow';
+  schedulePush(); saveLocal(); xtSync();
+  toast(`${String(e.d || '')} ${num(e.dq) > 0 ? '+' : '−'}${fmtQ(Math.abs(num(e.dq)))}주 — ${e.m === 'flow' ? '입출금(원금)으로' : '수익으로'} 바꿨습니다`);
+}
+
 /* ===================== 입출금 =====================
    수익금에 영향을 주지 않는 자금 이동. 금융자산과 기준원금이 같은 폭으로 움직이므로
    '주식 누적수익 = 과거 실현수익 + (주식계좌 − 기준원금)' 값은 그대로 유지된다.   */
@@ -2344,6 +2513,7 @@ const HOLD_FIELDS = x => [
   ['mm.T.q', '무매 TQQQ 보유', '주'], ['mm.T.c', '무매 TQQQ 매입금액', 'USD'],
   ['mm.S.q', '무매 SOXL 보유', '주'], ['mm.S.c', '무매 SOXL 매입금액', 'USD'],
   ['vr.T.q', 'VR TQQQ 보유', '주'], ['vr.T.c', 'VR TQQQ 매입금액', 'USD'],
+  ['xt'],                                                     // 별도 TQQQ — 수량 · 수익/입출금 · 제외(xtRowHtml)
   ['isa.q', 'ISA 레버리지 보유', '주'],
   ['usd', '외화예수금', 'USD'], ['krw', '원화예수금', '만원'],
   ['sav.h', '하나은행', '만원'], ['sav.w', '우리은행', '만원'],
@@ -2418,7 +2588,7 @@ function renderInput() {
     + `<div class="erow"><label style="color:var(--muted);font-size:11.5px">DC 평가액은 아래 보유 현황에서 직접 입력</label></div>`;
   const ak = $('#apiKey'); if (ak && document.activeElement !== ak) ak.value = (state.api && state.api.key) || '';
   const ks0 = dayKeys();
-  $('#holdEdit').innerHTML = HOLD_FIELDS(x).map(([p, l, u]) =>
+  $('#holdEdit').innerHTML = HOLD_FIELDS(x).map(([p, l, u]) => p === 'xt' ? xtRowHtml(x) :
     `<div class="erow"><label>${l} <span class="u">${u}</span></label>
      <input class="num" type="number" step="any" data-hold="${p}" value="${num(getPath(x, p))}"></div>`).join('')
     /* DC 과거 채우기 (2026-09-22). 좌수는 **기간마다 다를 수 있어** 따로 받는다 —
@@ -8011,7 +8181,7 @@ function cumulative() {
   const reCost = num(state.reCost != null ? state.reCost : (B['부동산'] || {}).cost);
   const rePast = num(state.rePast != null ? state.rePast : past['부동산']);
   const stPast = num(state.stPast != null ? state.stPast : (past['주식'] || 0) / 1e4);
-  const stock = stPast + (c.stockAcct - num(state.principal));
+  const stock = stPast + (c.stockAcct - num(state.principal) - xtCostMan());   // 별도 TQQQ 원금(입출금분)도 원금 — 0 이면 예전과 같다
   const re = reNow - reCost + rePast;
   const dc = c.dcv - dcCostWon() / 1e4;                   // 원금 = 손익기준 + 9/1 뒤 불입 (2026-10-06)
   const kid = c.kidV - num((B['자녀 QLD'] || {}).cost) / 1e4;
@@ -8058,7 +8228,7 @@ function renderPlan() {
     : hold
     + `<div class="grp-h" style="padding-left:15px">손익 기준값</div>` + plan
     + `<p class="note" style="padding:8px 15px 0">부동산 수익은 <b>대출을 뺀 평가액</b>(${fmt(num(x.re.ber) + num(x.re.dia), 0)}만원)에서 매입원가를 뺀 뒤 과거 실현수익을 더합니다. 대출은 부채라 수익 계산에 넣지 않습니다.
-       주식 수익은 과거 실현수익에 <b>기준원금 대비 증감분</b>(${fmt(c0.stockAcct - num(state.principal), 0)}만원)을 더합니다.
+       주식 수익은 과거 실현수익에 <b>기준원금 대비 증감분</b>(${fmt(c0.stockAcct - num(state.principal) - xtCostMan(), 0)}만원${xtCostMan() ? ` — 별도 TQQQ 원금 ${fmt(xtCostMan(), 0)}만원은 따로 빼며 기준원금에 더하지 않습니다` : ''})을 더합니다.
        입출금이 있으면 기준원금을 그만큼 조정해야 수익이 부풀지 않습니다.</p>`;
 
   /* 계획 수치가 비었으면 숨기지 말고 알린다.
@@ -8471,6 +8641,7 @@ $('#pxEdit').addEventListener('change', e => {
   toast('직접 입력값으로 고정했습니다');
 });
 $('#holdEdit').addEventListener('change', e => {
+  if (xtChange(e.target)) return;                     // 별도 TQQQ — 수량 · 수익/입출금 · 제외
   const p = e.target.dataset.hold; if (!p) return;
   setPath(latest(), p, +e.target.value);
   /* 미국주식 자리를 손으로 고쳤으면 그 시각을 남긴다 — 그보다 먼저 온 체결
@@ -8491,7 +8662,9 @@ $('#fx0').addEventListener('change', e => { state.fx0 = +e.target.value; schedul
 $('#principal').addEventListener('change', e => { state.principal = +e.target.value; schedulePush(); saveLocal(); renderAnalysis(); renderPlan(); });
 $('#apiKey').addEventListener('change', e => { state.api = state.api || {}; state.api.key = e.target.value.trim(); schedulePush(); saveLocal(); refreshQuotes(true); });
 $('#refreshBtn').addEventListener('click', () => refreshQuotes(true));
+$('#holdEdit').addEventListener('toggle', e => { if (e.target.matches && e.target.matches('.xtLog')) xtLogOpen = e.target.open; }, true);   // toggle 은 거품이 안 올라온다
 $('#holdEdit').addEventListener('click', e => {
+  const xf = e.target.closest('[data-xtflip]'); if (xf) { xtFlip(+xf.dataset.xtflip); return; }
   if (!e.target.closest('#dcFill')) return;
   const q = {}; DC_KEYS.forEach(k => q[k] = +(($('#dcq_' + k) || {}).value || 0));
   dcBackfill(($('#dcFrom') || {}).value, ($('#dcTo') || {}).value, q);
@@ -8587,14 +8760,14 @@ $('#expBtn').addEventListener('click', () => {
   const ks = dayKeys();
   const head = ['날짜', L('ber', '부동산A'), L('dia', '부동산B'), '대출', '무매TQQQ주수', '무매TQQQ매입', '무매SOXL주수', '무매SOXL매입',
     'VRTQQQ주수', 'VRTQQQ매입', 'ISA주수', '외화예수금', '원화예수금', '하나', '우리', 'DC평가', '자녀주수',
-    'TQQQ', 'SOXL', 'QLD', '레버리지', '환율', '금융', '자산', '전체'];
+    'TQQQ', 'SOXL', 'QLD', '레버리지', '환율', '금융', '자산', '전체', '별도TQQQ주수'];
   const lines = [head.join(',')];
   ks.forEach(k => {
     const x = state.days[k], c = calc(x);
     lines.push([k, x.re.ber, x.re.dia, x.re.loan, x.mm.T.q, x.mm.T.c, x.mm.S.q, x.mm.S.c,
       x.vr.T.q, x.vr.T.c, x.isa.q, x.usd, x.krw, x.sav.h, x.sav.w, x.dcv, c.kidQ.toFixed(4),
       x.px.T, x.px.S, x.px.QLD, x.px.LEV, x.px.FX,
-      c.fin.toFixed(2), c.asset.toFixed(2), c.total.toFixed(2)].join(','));
+      c.fin.toFixed(2), c.asset.toFixed(2), c.total.toFixed(2), c.xtQ].join(','));   // 별도 TQQQ(2026-11-21) — 합계에 든 수량, 제외면 0
   });
   const blob = '﻿' + lines.join('\n');
   navigator.clipboard ? navigator.clipboard.writeText(blob).then(
@@ -8727,6 +8900,8 @@ async function sbPushMeta(planNow) {
     { k: 'dcFlows', v: state.dcFlows || [] },
     /* DC 검증 기준(지난 읽기의 좌수·매입금액, 2026-10-06) — 기기마다 따로 놀면 늘어난 매입금액을 엉뚱한 기준으로 잰다 */
     { k: 'dcChk', v: state.dcChk || {} },
+    /* 별도 TQQQ 고르기·제외·고친 기록(2026-11-21) — 이 TQQQ 의 원금이 여기서 나온다. 기기마다 따로 놀면 누적수익이 다르다 */
+    { k: 'xt', v: state.xt || {} },
     /* 주문표를 만들다 터져도 나머지 동기화까지 막으면 안 된다.
        예전에는 이게 sbPushMeta 안에서 그대로 던져서, 실패하면 그날 원장이
        통째로 안 올라갔다. */
@@ -9395,6 +9570,7 @@ async function initSupabase() {
       if (meta.krwChk) state.krwChk = meta.krwChk;
       if (meta.dcFlows) state.dcFlows = meta.dcFlows;
       if (meta.dcChk) state.dcChk = meta.dcChk;
+      if (meta.xt) state.xt = meta.xt;
       state.ts = meta.ts; ensureMeta(); ensurePlan(); saveLocal(); renderAll();
       toast('서버에서 최신 기록을 불러왔습니다');
     } else if (!isEmptyLedger()) {
@@ -11178,6 +11354,8 @@ document.getElementById('p-ib')?.addEventListener('click', e => {
     renderSummary(); renderPlan();
   });
   try { matchMedia('(prefers-color-scheme:dark)').addEventListener('change', renderAll); } catch (e) { }
+  /* 맨 위 줄 맞추기(heroFit)는 글자 폭으로 잰다 — 웹 글꼴(IBM Plex Mono)이 늦게 들어오면 폭이 바뀐다 */
+  try { document.fonts.ready.then(() => { try { heroFit(); } catch (e) { } }); document.fonts.addEventListener('loadingdone', () => { try { heroFit(); } catch (e) { } }); } catch (e) { }
 })();
 
 </script>
