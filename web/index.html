@@ -852,7 +852,7 @@ const LS = 'jasan_ledger_v1';
 /* 빌드 시각. build.py 가 채워 넣는다.
    "지금 보고 있는 게 어느 버전인가" 를 두 번이나 못 답해서 넣었다 — 브라우저 캐시나
    설치 지연으로 옛 화면을 보고 있으면 아무리 고쳐도 그대로다. */
-const BUILD = '2026-11-21 08:40';
+const BUILD = '2026-11-27 16:49';
 const ACCTS = { '3020': 'mm', '3081': 'vr' };          // 계좌 앞 4자리 → 계정
 const ACCT_LABEL = { mm: '무매', vr: 'VR' };
 let state = null, dbRef = null, dirty = new Set(), pushT = null, remoteOn = false;
@@ -10612,8 +10612,10 @@ function apiRunBad(r) {
   const quiet = r.mode === 'live' ? ['주문 시간'] : ['주문 시간', '수집기와 겹치지 않음'];
   /* 더 거는 대폭락 줄이 빠지거나 거부된 것은 경고가 아니다(오늘 표는 나갔다) — 실행기 Report._hard 와 같다 */
   const hard = (r.lines || []).filter(l => !(l.extra && l.extra.alpha && (l.state === 'rejected' || l.state === 'skipped')));
+  /* raise_fail — 낮춰 낸 매수를 올리는 정정이 안 된 줄(실행기 2026-11-24). 줄은 '있음' 이지만 사람이 볼 일이다 */
   return (r.gates || []).some(g => !g.ok && !quiet.includes(g.name))
-    || hard.some(l => l.state === 'rejected' || l.state === 'unknown' || (r.mode === 'live' && l.state === 'skipped' && l.why));
+    || hard.some(l => l.state === 'rejected' || l.state === 'unknown' || (r.mode === 'live' && l.state === 'skipped' && l.why)
+      || !!(l.extra && l.extra.raise_fail));
 }
 const apiRunT = r => Date.parse((r && r.t) || '') || 0;
 /* 메리츠 조회가 잠깐 끊긴 판 — 뒤에 같은 계좌를 다시 읽은 판이 있으면 풀린 것이다 (2026-10-19, 사용자: "VR 관련 오류 … 확인바람").
@@ -10631,9 +10633,9 @@ function apiReadAfter(acct, after) {
    봉이 늦게 들어와 다음 판이 걸었는데도 경고가 30시간 남았다(검토 2026-10-25) */
 function apiCloseAfter(acct, after) {
   const ok = e => { const s = String(e.stopped || ''), n = e.n || {};
-    return num(n.sent) + num(n.have) > 0 || (/사이클 중간|이미 끝냈음/.test(s) && !/종가 확인 보류|메리츠 조회 실패/.test(s)); };
+    return num(n.sent) + num(n.have) + num(n.raised) > 0 || (/사이클 중간|이미 끝냈음/.test(s) && !/종가 확인 보류|메리츠 조회 실패/.test(s)); };
   const r = apiV('apiLast' + acct);
-  if (r && apiRunT(r) > after && ((r.lines || []).some(l => l.state === 'sent' || l.state === 'have') || ok(r))) return true;
+  if (r && apiRunT(r) > after && ((r.lines || []).some(l => ['sent', 'have', 'raised'].includes(l.state)) || ok(r))) return true;
   return (apiV('apiLog' + acct) || []).some(e => e && apiRunT(e) > after && ok(e));
 }
 /* 메리츠가 잠깐 안 닿은 장부 — 실행기 run.TRANSIENT 와 같은 낱말. 실행기(__main__._sync)와 같은 규칙으로 경고하지 않는다: 한 번이거나(fails < 2)
@@ -10921,8 +10923,9 @@ async function pushOff() {
    차례 — 위(#ibTop): 경고 → 자동매매(긴급 정지 · 무매 3020 · VR 3081 · 아침 체결 요약)
           가운데(#ibCommon, 정적 — 검증 결과 칸을 지킨다): 검증 버튼
           아래(#ibBody): 자리별 총액 → 메리츠 장부 대조(다 같으면 접힘) → 완료 사이클 → 설정 */
-const API_STATE = { dry: ['dry', 'var(--c3)'], sent: ['접수', 'var(--c2)'], have: ['있음', 'var(--ink2)'], skipped: ['건너뜀', 'var(--brass)'],
-  rejected: ['거부', 'var(--up)'], unknown: ['모름', 'var(--up)'], todo: ['남음', 'var(--muted)'] };
+/* raised — 상한 때문에 낮춰 낸 매수를 장 직전 판이 정정으로 올렸다(실행기 2026-11-24) */
+const API_STATE = { dry: ['dry', 'var(--c3)'], sent: ['접수', 'var(--c2)'], raised: ['정정', 'var(--c2)'], have: ['있음', 'var(--ink2)'],
+  skipped: ['건너뜀', 'var(--brass)'], rejected: ['거부', 'var(--up)'], unknown: ['모름', 'var(--up)'], todo: ['남음', 'var(--muted)'] };
 const apiPill = m => `<span class="mpill" style="${m === 'live' ? 'background:color-mix(in srgb,var(--up) 14%,transparent);color:var(--up)'
   : 'background:var(--surf3);color:var(--ink2)'}">${esc(m || '—')}</span>`;
 /* 예약 실행이 다음 판을 무엇으로 도는가 — 실행기가 장부마다 적는다(meta.apiMode: 저장소 변수 TRADE_MODE · TRADE_SCHEDULE).
@@ -10956,13 +10959,14 @@ function apiRunWhy(r) {
   const quiet = r.mode === 'live' ? ['주문 시간'] : ['주문 시간', '수집기와 겹치지 않음'];
   const g = (r.gates || []).filter(x => !x.ok && !quiet.includes(x.name)).map(x => x.name);
   const L = r.lines || [], c = st => L.filter(l => l.state === st && (st !== 'skipped' || (r.mode === 'live' && l.why))).length;
+  const nf = L.filter(l => l.extra && l.extra.raise_fail).length;
   return [g.slice(0, 2).join(' · '), c('rejected') ? `거부 ${c('rejected')}줄` : '', c('unknown') ? `모름 ${c('unknown')}줄` : '',
-    c('skipped') ? `건너뜀 ${c('skipped')}줄` : ''].filter(Boolean).join(' · ') || '빗장';
+    c('skipped') ? `건너뜀 ${c('skipped')}줄` : '', nf ? `정정 안 됨 ${nf}줄` : ''].filter(Boolean).join(' · ') || '빗장';
 }
-/* 판 기록과 이력을 한 모양으로 — 새것부터. cnt = 주문이 있는 줄(접수·있음·dry) */
+/* 판 기록과 이력을 한 모양으로 — 새것부터. cnt = 주문이 있는 줄(접수·정정·있음·dry) */
 function apiRunHist(acct) {
   const out = [], r = apiV('apiLast' + acct);
-  const live = ['sent', 'have', 'dry'];
+  const live = ['sent', 'raised', 'have', 'dry'];
   if (r) out.push({ t: apiRunT(r), bad: apiRunBad(r) && !apiHealed(acct, r), why: apiRunBad(r) ? apiRunWhy(r) : '', stopped: r.stopped || '',
     cnt: (r.lines || []).filter(l => live.includes(l.state)).length });
   (apiV('apiLog' + acct) || []).forEach(e => {
@@ -11037,16 +11041,24 @@ function apiRunRow(acct) {
   const L = r.lines || [];
   const lines = L.map(l => {
     const s = API_STATE[l.state] || [l.state, 'var(--ink2)'];
-    const why = l.why && l.state !== 'dry' && !(l.state === 'have' && /^이미/.test(String(l.why))) ? String(l.why) : '';
+    /* '이미 냄' 은 숨기되, 정정 이야기(올릴 수 있음 · 정정 안 됨 — 실행기 2026-11-24)가 붙은 줄은 보인다 */
+    const ex = l.extra || {}, rz = !!ex.raise_fail || ex.raise_hint != null;
+    const why = l.why && l.state !== 'dry' && !(l.state === 'have' && /^이미/.test(String(l.why)) && !rz) ? String(l.why) : '';
+    /* '있음' 줄은 메리츠에 실제로 걸린 값(extra.live_px — 실행기가 짝지은 주문)으로 — 줄의 px 는 이 판이 잰 상한이라 정정이 안 된 줄이
+       올라간 것처럼, 올린 줄이 낮춘 것처럼 보였다(검토 2026-11-24 2차) */
+    const px = ex.live_px != null ? num(ex.live_px) : num(l.px), low = l.capped || (ex.live_px != null && px < num(l.orig) - 0.005);
     return `<tr><td><span style="color:${s[1]};font-weight:600">${esc(s[0])}</span></td>
       <td style="text-align:left">${esc(l.sym)} ${l.side === 'B' ? '매수' : '매도'} ${esc(l.typ)}${l.tag ? ` <span class="u">${esc(l.tag)}</span>` : ''}</td>
-      <td class="num">${l.typ === 'MOC' ? '시장가' : '$' + fmt(num(l.px), 2)}${l.capped ? `<span class="u"> 원래 $${fmt(num(l.orig), 2)}</span>` : ''}</td>
+      <td class="num">${l.typ === 'MOC' ? '시장가' : '$' + fmt(px, 2)}${low && l.side === 'B' ? `<span class="u"> 원래 $${fmt(num(l.orig), 2)}</span>` : ''}</td>
       <td class="num">${fmt(num(l.qty), 0)}</td></tr>`
       + (why ? `<tr><td></td><td colspan="3" class="u" style="text-align:left;white-space:normal">${esc(why.slice(0, 200))}</td></tr>` : '');
   }).join('');
   const cnt = {}; L.forEach(l => { cnt[l.state] = (cnt[l.state] || 0) + 1; });
   const cntTxt = Object.keys(cnt).map(k => (API_STATE[k] || [k])[0] + ' ' + cnt[k]).join(' · ');
-  const notes = (r.notes || []).map(n => `<div>· ${esc(String(n).slice(0, 300))}</div>`).join('');
+  /* 무매 자동 정정(상한으로 낮춰 낸 매수를 장 직전 판이 올림, 실행기 2026-11-24) — 켜짐인지 · 꺼진 까닭(정정 시험 전 · TRADE_MODIFY=off) */
+  const mi = r.info && r.info.mod;
+  const notes = (mi ? [`자동 정정 ${mi.on ? '켜짐' : '꺼짐 — ' + (mi.why || '?')}`] : []).concat(r.notes || [])
+    .map(n => `<div>· ${esc(String(n).slice(0, 300))}</div>`).join('');
   /* 시각은 뜻 있는 마지막 판(주문·오류) — 주문 시간 밖에 늦게 깬 예비 예약의 '주문 시간이 아님' 이 아니라 */
   const S = apiRunStatus(acct, r), sb = S.lv === 'bad', mt = (S.m && S.m.t) || apiMeanT(acct) || apiRunT(r);
   return `<details class="apir" ${apiDet('run' + acct, sb)}>
